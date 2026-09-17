@@ -1,6 +1,7 @@
 --!nolint
 -- ============================================
--- Examination v16.0.7
+-- Examination v16.1.0
+-- 新增魔法子弹的队友穿透/尸体穿透以防止子弹被吞
 -- 此脚本使用AI生成
 -- 因使用混淆加密会导致手机用户无法正常使用所以没有使用混淆加密
 -- 请不要拿去缝合 此脚本永久免费
@@ -35,6 +36,8 @@ local autoQTEEnabled = false
 local shotgunNoPumpEnabled = false
 local pierceShieldEnabled = true
 local pierceHelmetEnabled = true
+local pierceTeammateEnabled = true
+local pierceCorpseEnabled = true
 local headSize = 4
 local slideDistanceMult = 2
 
@@ -327,7 +330,7 @@ local title = Instance.new("TextLabel", titleBar)
 title.Size = UDim2.new(1, -70, 1, 0)
 title.Position = UDim2.new(0, 10, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "Examination v16.0.7"
+title.Text = "Examination v16.1.0"
 title.TextColor3 = Color3.new(1, 1, 1)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 13
@@ -2044,7 +2047,7 @@ local function applyLayout(layout)
         end
     end
     layoutSwitchBtn.Text = (layout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-    title.Text = "Examination v16.0.7 - " .. (layout == "mobile" and "手机" or "电脑")
+    title.Text = "Examination v16.1.0 - " .. (layout == "mobile" and "手机" or "电脑")
     if isCollapsed then
         main.Size = UDim2.new(0, L.W, 0, L.TitleH)
     end
@@ -2056,7 +2059,7 @@ bindTap(layoutSwitchBtn, function()
 end)
 
 layoutSwitchBtn.Text = (currentLayout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-title.Text = "Examination v16.0.7 - " .. (currentLayout == "mobile" and "手机" or "电脑")
+title.Text = "Examination v16.1.0 - " .. (currentLayout == "mobile" and "手机" or "电脑")
 
 -- ============ 模块 17: 魔法子弹页 ============
 do
@@ -2131,7 +2134,6 @@ do
         return true
     end
 
-    -- ★ 严格掩体检测：CanCollide = true 一律阻挡
     local function isPointVisible(origin, targetPos, targetModel, excludeBase)
         local dir = targetPos - origin
         local dist = dir.Magnitude
@@ -2152,9 +2154,7 @@ do
             if r.Instance:IsDescendantOf(targetModel) then return true end
             local inst = r.Instance
             if inst:IsA("BasePart") then
-                -- ★ CanCollide=true 一律阻挡（不管透明度）
                 if inst.CanCollide then return false end
-                -- 不可碰撞 + 高透明 → 装饰跳过
                 if inst.Transparency >= 0.95 then
                     table.insert(exclude, inst)
                     local adv = (r.Position - curOrigin).Magnitude + 0.05
@@ -2263,6 +2263,8 @@ do
 
     local shieldCache = { list = {}, tick = 0 }
     local helmetCache = { list = {}, tick = 0 }
+    local teammateCache = { list = {}, tick = 0 }
+    local corpseCache = { list = {}, tick = 0 }
 
     local function collectShields()
         local now = tick()
@@ -2313,6 +2315,51 @@ do
         return list
     end
 
+    -- ★ 穿透队友：其他玩家角色的所有 BasePart
+    local function collectTeammates()
+        local now = tick()
+        if now - teammateCache.tick < 1 and #teammateCache.list > 0 then return teammateCache.list end
+        teammateCache.tick = now
+        local list = {}
+        local chars = Workspace:FindFirstChild("Characters")
+        if chars then
+            for _, m in ipairs(chars:GetChildren()) do
+                if m:IsA("Model") and m ~= lp.Character then
+                    if Players:GetPlayerFromCharacter(m) then
+                        for _, d in ipairs(m:GetDescendants()) do
+                            if d:IsA("BasePart") then table.insert(list, d) end
+                        end
+                    end
+                end
+            end
+        end
+        teammateCache.list = list
+        return list
+    end
+
+    -- ★ 穿透尸体：Humanoid.Health <= 0 的角色
+    local function collectCorpses()
+        local now = tick()
+        if now - corpseCache.tick < 1 and #corpseCache.list > 0 then return corpseCache.list end
+        corpseCache.tick = now
+        local list = {}
+        local chars = Workspace:FindFirstChild("Characters")
+        if chars then
+            for _, m in ipairs(chars:GetChildren()) do
+                if m:IsA("Model") and m ~= lp.Character then
+                    local hum = m:FindFirstChildOfClass("Humanoid")
+                    if hum and hum.Health <= 0 then
+                        for _, d in ipairs(m:GetDescendants()) do
+                            if d:IsA("BasePart") then table.insert(list, d) end
+                        end
+                    end
+                end
+            end
+        end
+        corpseCache.list = list
+        return list
+    end
+
     local function applyExtraFilter(behavior)
         if type(behavior) ~= "table" then return end
         local params = behavior.RaycastParams
@@ -2328,6 +2375,16 @@ do
         end
         if pierceHelmetEnabled then
             for _, s in ipairs(collectHelmets()) do
+                if s and s.Parent then table.insert(newFdi, s) end
+            end
+        end
+        if pierceTeammateEnabled then
+            for _, s in ipairs(collectTeammates()) do
+                if s and s.Parent then table.insert(newFdi, s) end
+            end
+        end
+        if pierceCorpseEnabled then
+            for _, s in ipairs(collectCorpses()) do
                 if s and s.Parent then table.insert(newFdi, s) end
             end
         end
@@ -2380,11 +2437,10 @@ do
         dot.BorderSizePixel = 0
         Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
 
-        -- ★ 头框旋转（保留 v15.2 美化）
         spawn(function()
             local deg = 0
             while bb and bb.Parent do
-                deg = (deg + 3) % 360
+                deg = (deg + 5) % 360
                 if f and f.Parent then f.Rotation = deg end
                 wait(0.03)
             end
@@ -2603,15 +2659,27 @@ do
         helmetCache.list = {}
     end, UDim2.new(0, 140, 0, 28))
 
-    toggleMagic("显示FOV圈", UDim2.new(0, 15, 0, 100), true, function(v)
+    -- ★ 新增：穿透队友 / 穿透尸体
+    toggleMagic("穿透队友", UDim2.new(0, 15, 0, 100), true, function(v)
+        pierceTeammateEnabled = v
+        teammateCache.tick = 0
+        teammateCache.list = {}
+    end, UDim2.new(0, 140, 0, 28))
+    toggleMagic("穿透尸体", UDim2.new(0, 165, 0, 100), true, function(v)
+        pierceCorpseEnabled = v
+        corpseCache.tick = 0
+        corpseCache.list = {}
+    end, UDim2.new(0, 140, 0, 28))
+
+    toggleMagic("显示FOV圈", UDim2.new(0, 15, 0, 132), true, function(v)
         mbShowFovCircle = v
         updateFov()
         updateLockBB()
     end, UDim2.new(0, 290, 0, 28))
 
     local charBox = Instance.new("Frame", magicPage)
-    charBox.Size = UDim2.new(1, -30, 0, 140)
-    charBox.Position = UDim2.new(0, 15, 0, 132)
+    charBox.Size = UDim2.new(1, -30, 0, 130)
+    charBox.Position = UDim2.new(0, 15, 0, 164)
     charBox.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
     charBox.BorderSizePixel = 0
     Instance.new("UICorner", charBox).CornerRadius = UDim.new(0, 6)
@@ -2688,7 +2756,7 @@ do
 
     local fovLbl = Instance.new("TextLabel", magicPage)
     fovLbl.Size = UDim2.new(0, 36, 0, 22)
-    fovLbl.Position = UDim2.new(0, 15, 0, 288)
+    fovLbl.Position = UDim2.new(0, 15, 0, 298)
     fovLbl.BackgroundTransparency = 1
     fovLbl.Text = "FOV:"
     fovLbl.TextColor3 = Color3.new(0.9, 0.9, 0.9)
@@ -2696,7 +2764,7 @@ do
     fovLbl.TextXAlignment = Enum.TextXAlignment.Left
     local fovInput = Instance.new("TextBox", magicPage)
     fovInput.Size = UDim2.new(0, 42, 0, 22)
-    fovInput.Position = UDim2.new(0, 48, 0, 288)
+    fovInput.Position = UDim2.new(0, 48, 0, 298)
     fovInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
     fovInput.TextColor3 = Color3.new(1, 1, 1)
     fovInput.Text = tostring(mbFovRadius)
@@ -2712,7 +2780,7 @@ do
 
     local bsLbl = Instance.new("TextLabel", magicPage)
     bsLbl.Size = UDim2.new(0, 32, 0, 22)
-    bsLbl.Position = UDim2.new(0, 100, 0, 288)
+    bsLbl.Position = UDim2.new(0, 100, 0, 298)
     bsLbl.BackgroundTransparency = 1
     bsLbl.Text = "框:"
     bsLbl.TextColor3 = Color3.new(0.9, 0.9, 0.9)
@@ -2720,7 +2788,7 @@ do
     bsLbl.TextXAlignment = Enum.TextXAlignment.Left
     local bsInput = Instance.new("TextBox", magicPage)
     bsInput.Size = UDim2.new(0, 42, 0, 22)
-    bsInput.Position = UDim2.new(0, 130, 0, 288)
+    bsInput.Position = UDim2.new(0, 130, 0, 298)
     bsInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
     bsInput.TextColor3 = Color3.new(1, 1, 1)
     bsInput.Text = tostring(mbBBSizeStuds)
@@ -2736,7 +2804,7 @@ do
 
     local wdLbl = Instance.new("TextLabel", magicPage)
     wdLbl.Size = UDim2.new(0, 30, 0, 22)
-    wdLbl.Position = UDim2.new(0, 182, 0, 288)
+    wdLbl.Position = UDim2.new(0, 182, 0, 298)
     wdLbl.BackgroundTransparency = 1
     wdLbl.Text = "距:"
     wdLbl.TextColor3 = Color3.new(0.9, 0.9, 0.9)
@@ -2744,7 +2812,7 @@ do
     wdLbl.TextXAlignment = Enum.TextXAlignment.Left
     local wdInput = Instance.new("TextBox", magicPage)
     wdInput.Size = UDim2.new(0, 60, 0, 22)
-    wdInput.Position = UDim2.new(0, 212, 0, 288)
+    wdInput.Position = UDim2.new(0, 212, 0, 298)
     wdInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
     wdInput.TextColor3 = Color3.new(1, 1, 1)
     wdInput.Text = tostring(mbWorldDistMax)
@@ -3331,9 +3399,9 @@ bindTap(closeBtn, function()
     pcall(function() StarterGui:SetCore("ResetButtonCallback", false) end)
     _G.ExaminationUI = nil
     gui:Destroy()
-    print("[Exam] v16.0.7 已完全卸载")
+    print("[Exam] v16.1.0 已完全卸载")
 end)
 
-print("[Exam] v16.0.7 已加载（布局=" .. currentLayout .. "）")
+print("[Exam] v16.1.0 已加载（布局=" .. currentLayout .. "）")
 
 -- ===END OF SCRIPT===
