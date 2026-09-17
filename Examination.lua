@@ -1,6 +1,6 @@
 --!nolint
 -- ============================================
--- Examination v16.3
+-- Examination v16.0
 -- 此脚本使用AI生成
 -- 因使用混淆加密会导致手机用户无法正常使用所以没有使用混淆
 -- 请不要拿去缝合 此脚本永久免费
@@ -329,7 +329,7 @@ local title = Instance.new("TextLabel", titleBar)
 title.Size = UDim2.new(1, -70, 1, 0)
 title.Position = UDim2.new(0, 10, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "Examination v16.3"
+title.Text = "Examination v16.0"
 title.TextColor3 = Color3.new(1, 1, 1)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 13
@@ -1566,12 +1566,12 @@ do
     end)
 end
 
--- ============ 模块 12: 无后座 v16.3（v16.0 逻辑 + 4 处卡顿优化） ============
+-- ============ 模块 12: 无后座 v15 ============
 do
     local NOOP = function() end
     local ZERO_V3 = Vector3.new()
     local recoilPatchedMTs = {}
-    local recoilPatchedInsts = {}   -- ★ 改 1: 普通 table（不用 weak）
+    local recoilPatchedInsts = setmetatable({}, { __mode = "k" })
     local recoilZeroLoop = nil
 
     local function isSpringLike(v)
@@ -1603,9 +1603,8 @@ do
 
         local oi = rawget(mt, "__index")
         if type(oi) == "function" then
-            -- ★ 改 2: 用实例标记代替 outer table 查找
             local newIndex = function(self, key)
-                if rawget(self, "__recoil_patched") then
+                if recoilPatchedInsts[self] then
                     if key == "Accelerate" then return NOOP end
                     if key == "_positionVelocity" then return function() return ZERO_V3, ZERO_V3 end end
                     if key == "Position" or key == "p" or key == "Value" then return ZERO_V3 end
@@ -1629,7 +1628,7 @@ do
             local oi2 = rawget(oi, "__index")
             if type(oi2) == "function" then
                 local newIndex2 = function(self, key)
-                    if rawget(self, "__recoil_patched") then
+                    if recoilPatchedInsts[self] then
                         if key == "Accelerate" then return NOOP end
                         if key == "_positionVelocity" then return function() return ZERO_V3, ZERO_V3 end end
                         if key == "Position" or key == "p" or key == "Value" then return ZERO_V3 end
@@ -1646,10 +1645,8 @@ do
 
     local function patchInstance(inst)
         if type(inst) ~= "table" then return false end
-        if rawget(inst, "__recoil_patched") then return false end
+        if recoilPatchedInsts[inst] then return false end
         if not isSpringLike(inst) then return false end
-        -- ★ 改 3: 打实例标记
-        rawset(inst, "__recoil_patched", true)
         recoilPatchedInsts[inst] = true
 
         local acc = rawget(inst, "Accelerate")
@@ -1672,13 +1669,14 @@ do
         if recoilZeroLoop then return end
         recoilZeroLoop = spawn(function()
             while recoilEnabled and gui.Parent do
-                -- ★ 改 4: 去掉每帧 pcall
                 for inst in pairs(recoilPatchedInsts) do
-                    rawset(inst, "_position0", ZERO_V3)
-                    rawset(inst, "_velocity0", ZERO_V3)
-                    rawset(inst, "_target", ZERO_V3)
-                    rawset(inst, "_position", ZERO_V3)
-                    rawset(inst, "_velocity", ZERO_V3)
+                    pcall(function()
+                        rawset(inst, "_position0", ZERO_V3)
+                        rawset(inst, "_velocity0", ZERO_V3)
+                        rawset(inst, "_target", ZERO_V3)
+                        rawset(inst, "_position", ZERO_V3)
+                        rawset(inst, "_velocity", ZERO_V3)
+                    end)
                 end
                 RunService.Heartbeat:Wait()
             end
@@ -1753,7 +1751,7 @@ do
     local function setup()
         if not recoilEnabled then
             stopZeroLoop()
-            recoilPatchedInsts = {}
+            recoilPatchedInsts = setmetatable({}, { __mode = "k" })
             recoilPatchedMTs = {}
             return
         end
@@ -2066,7 +2064,7 @@ local function applyLayout(layout)
         end
     end
     layoutSwitchBtn.Text = (layout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-    title.Text = "Examination v16.3 - " .. (layout == "mobile" and "手机" or "电脑")
+    title.Text = "Examination v16.0 - " .. (layout == "mobile" and "手机" or "电脑")
     if isCollapsed then
         main.Size = UDim2.new(0, L.W, 0, L.TitleH)
     end
@@ -2078,7 +2076,7 @@ bindTap(layoutSwitchBtn, function()
 end)
 
 layoutSwitchBtn.Text = (currentLayout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-title.Text = "Examination v16.3 - " .. (currentLayout == "mobile" and "手机" or "电脑")
+title.Text = "Examination v16.0 - " .. (currentLayout == "mobile" and "手机" or "电脑")
 
 -- ============ 模块 17: 魔法子弹页 ============
 do
@@ -3340,9 +3338,9 @@ bindTap(closeBtn, function()
     pcall(function() StarterGui:SetCore("ResetButtonCallback", false) end)
     _G.ExaminationUI = nil
     gui:Destroy()
-    print("[Exam] v16.3 已完全卸载")
+    print("[Exam] v16.0 已完全卸载")
 end)
 
-print("[Exam] v16.3 已加载（布局=" .. currentLayout .. "）")
+print("[Exam] v16.0 已加载（布局=" .. currentLayout .. "）")
 
 -- ===END OF SCRIPT===
