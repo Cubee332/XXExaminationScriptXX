@@ -1,10 +1,10 @@
 --!nolint
 -- ============================================
--- Examination v16.0
+-- Examination v16.0.7
 -- 此脚本使用AI生成
--- 因使用混淆加密会导致手机用户无法正常使用所以没有使用混淆
+-- 因使用混淆加密会导致手机用户无法正常使用所以没有使用混淆加密
 -- 请不要拿去缝合 此脚本永久免费
--- 若随意缝合会进行删库处理并不再提供给其他人
+-- 若随意缝合和偷源码会进行删库处理并停止对外更新( AI写的史山代码你也要？？？？)
 -- ============================================
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -45,8 +45,6 @@ local SHOTGUN_PUMP_IDS = {
     ["96917301511774"]  = true,
 }
 local SHOTGUN_SPEED_MULT = 100
-local SHOTGUN_FALLBACK_MIN = 0.3
-local SHOTGUN_FALLBACK_MAX = 1.2
 
 local cleanupFns = {}
 local _playerChars = {}
@@ -329,7 +327,7 @@ local title = Instance.new("TextLabel", titleBar)
 title.Size = UDim2.new(1, -70, 1, 0)
 title.Position = UDim2.new(0, 10, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "Examination v16.0"
+title.Text = "Examination v16.0.7"
 title.TextColor3 = Color3.new(1, 1, 1)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 13
@@ -1444,11 +1442,12 @@ do
     end)
 end
 
--- ============ 模块 11: 去除枪口遮挡 v2 ============
+-- ============ 模块 11: 去除枪口遮挡（v15.2 原版） ============
 do
-    local muzzleLoop = nil
+    local muzzleHbConn = nil
     local muzzleDisabledParts = {}
-
+    local lastTool = nil
+    local watchConn = nil
     local function findFirePoint()
         local char = lp.Character
         if not char then return nil, nil end
@@ -1459,14 +1458,12 @@ do
         end
         return nil, char
     end
-
     local function isPointInPart(p, part)
         local ok, rel = pcall(function() return part.CFrame:PointToObjectSpace(p) end)
         if not ok then return false end
         local half = part.Size * 0.5
         return math.abs(rel.X) <= half.X and math.abs(rel.Y) <= half.Y and math.abs(rel.Z) <= half.Z
     end
-
     local function findSupportPart(char, hrp)
         local rp = RaycastParams.new()
         rp.FilterDescendantsInstances = { char, Workspace.Terrain }
@@ -1475,30 +1472,28 @@ do
         if r then return r.Instance end
         return nil
     end
-
     local function restoreAll()
         for p, orig in pairs(muzzleDisabledParts) do
             if p and p.Parent then pcall(function() p.CanCollide = orig end) end
         end
         muzzleDisabledParts = {}
     end
-
     local function step()
+        if not muzzleEnabled then return end
         local fp, char = findFirePoint()
-        if not fp or not char then return 0 end
+        if not fp or not char then return end
         local hrp = char:FindFirstChild("HumanoidRootPart")
-        if not hrp then return 0 end
+        if not hrp then return end
         local fpPos = fp.WorldPosition
         local hrpPos = hrp.Position
         local supportPart = findSupportPart(char, hrp)
         local fpBelow = fpPos.Y < hrpPos.Y - 1.0
         local walls = {}
-
         local overlapParams = OverlapParams.new()
         overlapParams.FilterDescendantsInstances = { char, Workspace.Terrain }
         overlapParams.FilterType = Enum.RaycastFilterType.Exclude
-        overlapParams.MaxParts = 200
-        local ok1, near = pcall(function() return Workspace:GetPartBoundsInRadius(fpPos, 0.3, overlapParams) end)
+        overlapParams.MaxParts = 100
+        local ok1, near = pcall(function() return Workspace:GetPartBoundsInRadius(fpPos, 0.05, overlapParams) end)
         if ok1 and near then
             for _, p in ipairs(near) do
                 if p:IsA("BasePart") and p ~= supportPart and isPointInPart(fpPos, p) then
@@ -1506,67 +1501,61 @@ do
                 end
             end
         end
-
         if not fpBelow then
             local rp = RaycastParams.new()
             rp.FilterDescendantsInstances = { char, Workspace.Terrain }
             rp.FilterType = Enum.RaycastFilterType.Exclude
             local dir = hrpPos - fpPos
             if dir.Magnitude > 0.1 then
-                local steps = math.min(20, math.max(1, math.floor(dir.Magnitude / 0.3)))
+                local r = Workspace:Raycast(fpPos, dir, rp)
+                if r and r.Instance and r.Instance ~= supportPart then walls[r.Instance] = true end
+                local steps = math.min(15, math.max(1, math.floor(dir.Magnitude / 0.5)))
                 for i = 0, steps do
                     local samplePos = fpPos + dir * (i / steps)
-                    local r = Workspace:Raycast(samplePos, dir.Unit * 0.6, rp)
-                    if r and r.Instance and r.Instance ~= supportPart then
-                        walls[r.Instance] = true
-                    end
+                    local r2 = Workspace:Raycast(samplePos, dir.Unit * 0.8, rp)
+                    if r2 and r2.Instance and r2.Instance ~= supportPart then walls[r2.Instance] = true end
                 end
             end
         end
-
-        local count = 0
         for p in pairs(walls) do
-            if p and p.Parent and p.CanCollide then
+            if p and p.Parent then
                 muzzleDisabledParts[p] = p.CanCollide
                 pcall(function() p.CanCollide = false end)
-                count = count + 1
             end
         end
-        return count
     end
-
     local function setup()
-        if muzzleLoop then pcall(function() muzzleLoop:Disconnect() end); muzzleLoop = nil end
-        if not muzzleEnabled then
+        if muzzleHbConn then pcall(function() muzzleHbConn:Disconnect() end); muzzleHbConn = nil end
+        if watchConn then watchConn:Disconnect(); watchConn = nil end
+        if not muzzleEnabled then restoreAll(); lastTool = nil; return end
+        muzzleHbConn = RunService.Heartbeat:Connect(function()
+            if not muzzleEnabled then return end
             restoreAll()
-            return
-        end
-        muzzleLoop = spawn(function()
-            while muzzleEnabled and gui.Parent do
-                pcall(restoreAll)
-                pcall(step)
-                wait(0.3)
-            end
-            restoreAll()
-            muzzleLoop = nil
+            if UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then pcall(step) end
+        end)
+        watchConn = RunService.Heartbeat:Connect(function()
+            if not muzzleEnabled then return end
+            local char = lp.Character
+            local tool = char and char:FindFirstChildWhichIsA("Tool")
+            if tool ~= lastTool then lastTool = tool; restoreAll() end
         end)
     end
-
     toggleBase("去除枪口遮挡", "muzzle", false, function(v)
         muzzleEnabled = v
         setup()
     end)
     lp.CharacterAdded:Connect(function()
         wait(1)
-        if muzzleEnabled then restoreAll(); setup() end
+        if muzzleEnabled then restoreAll(); lastTool = nil; setup() end
     end)
     table.insert(cleanupFns, function()
-        if muzzleLoop then pcall(function() muzzleLoop:Disconnect() end); muzzleLoop = nil end
+        if muzzleHbConn then pcall(function() muzzleHbConn:Disconnect() end) end
+        if watchConn then watchConn:Disconnect() end
         restoreAll()
     end)
 end
 
--- ============ 模块 12: 无后座 v15 ============
+-- ============ 模块 12: 无后座（v16.0 Spring+Spring2 + metatable wrap + 每帧归零） ============
 do
     local NOOP = function() end
     local ZERO_V3 = Vector3.new()
@@ -1971,22 +1960,16 @@ do
     end)
 end
 
--- ============ 模块 16: 霰弹枪连发 ============
+-- ============ 模块 16: 霰弹枪连发（v16.0.2 ID 白名单） ============
 do
     local animatorConn = nil
-    local pumpCount = 0
 
     local function isTargetAnim(track)
         local an = track.Animation
-        if not an then return false, false end
+        if not an then return false end
         local id = tostring(an.AnimationId or ""):match("%d+")
-        if not id then return false, false end
-        if SHOTGUN_PUMP_IDS[id] then return true, "white" end
-        local len = track.Length or 0
-        if len >= SHOTGUN_FALLBACK_MIN and len <= SHOTGUN_FALLBACK_MAX then
-            return true, "range"
-        end
-        return false, false
+        if not id then return false end
+        return SHOTGUN_PUMP_IDS[id] == true
     end
 
     local function setupAnimator()
@@ -1999,9 +1982,7 @@ do
         if not animator then return end
         animatorConn = animator.AnimationPlayed:Connect(function(track)
             if not shotgunNoPumpEnabled then return end
-            local hit, mode = isTargetAnim(track)
-            if hit then
-                pumpCount = pumpCount + 1
+            if isTargetAnim(track) then
                 pcall(function() track:AdjustSpeed(SHOTGUN_SPEED_MULT) end)
             end
         end)
@@ -2010,7 +1991,6 @@ do
     toggleBase("霰弹枪连发", "shotgunNoPump", false, function(v)
         shotgunNoPumpEnabled = v
         if v then
-            pumpCount = 0
             setupAnimator()
         else
             if animatorConn then pcall(function() animatorConn:Disconnect() end); animatorConn = nil end
@@ -2064,7 +2044,7 @@ local function applyLayout(layout)
         end
     end
     layoutSwitchBtn.Text = (layout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-    title.Text = "Examination v16.0 - " .. (layout == "mobile" and "手机" or "电脑")
+    title.Text = "Examination v16.0.7 - " .. (layout == "mobile" and "手机" or "电脑")
     if isCollapsed then
         main.Size = UDim2.new(0, L.W, 0, L.TitleH)
     end
@@ -2076,15 +2056,15 @@ bindTap(layoutSwitchBtn, function()
 end)
 
 layoutSwitchBtn.Text = (currentLayout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-title.Text = "Examination v16.0 - " .. (currentLayout == "mobile" and "手机" or "电脑")
+title.Text = "Examination v16.0.7 - " .. (currentLayout == "mobile" and "手机" or "电脑")
 
 -- ============ 模块 17: 魔法子弹页 ============
 do
     local mbAimPartIndex = 1
     local mbFovRadius = 200
     local mbWorldDistMax = 5000
-    local mbBBSizeStuds = 1.5
-    local mbStudsOffsetY = 0
+    local mbBBSizeStuds = 2.0
+    local mbStudsOffsetY = 0.8
     local mbShowBox = false
     local mbRequireVisible = false
     local mbShowFovCircle = true
@@ -2151,6 +2131,7 @@ do
         return true
     end
 
+    -- ★ 严格掩体检测：CanCollide = true 一律阻挡
     local function isPointVisible(origin, targetPos, targetModel, excludeBase)
         local dir = targetPos - origin
         local dist = dir.Magnitude
@@ -2170,12 +2151,19 @@ do
             if not r then return true end
             if r.Instance:IsDescendantOf(targetModel) then return true end
             local inst = r.Instance
-            if inst:IsA("BasePart") and inst.CanCollide and inst.Transparency >= 0.9 then
-                table.insert(exclude, inst)
-                local adv = (r.Position - curOrigin).Magnitude + 0.05
-                curOrigin = r.Position + dirUnit * 0.05
-                remaining = remaining - adv
-                if remaining <= 0 then return true end
+            if inst:IsA("BasePart") then
+                -- ★ CanCollide=true 一律阻挡（不管透明度）
+                if inst.CanCollide then return false end
+                -- 不可碰撞 + 高透明 → 装饰跳过
+                if inst.Transparency >= 0.95 then
+                    table.insert(exclude, inst)
+                    local adv = (r.Position - curOrigin).Magnitude + 0.05
+                    curOrigin = r.Position + dirUnit * 0.05
+                    remaining = remaining - adv
+                    if remaining <= 0 then return true end
+                else
+                    return false
+                end
             else
                 return false
             end
@@ -2381,7 +2369,7 @@ do
         local s = Instance.new("UIStroke", f)
         s.Color = Color3.fromRGB(120, 255, 120)
         s.Thickness = 2
-        s.Transparency = 0.1
+        s.Transparency = 0.05
 
         local dot = Instance.new("Frame", bb)
         dot.Name = "CenterDot"
@@ -2392,6 +2380,7 @@ do
         dot.BorderSizePixel = 0
         Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
 
+        -- ★ 头框旋转（保留 v15.2 美化）
         spawn(function()
             local deg = 0
             while bb and bb.Parent do
@@ -2597,6 +2586,10 @@ do
     end, UDim2.new(0, 140, 0, 28))
     toggleMagic("掩体检测", UDim2.new(0, 165, 0, 36), false, function(v)
         mbRequireVisible = v
+        if not v then
+            cachedTarget = nil
+            lastFindTick = 0
+        end
     end, UDim2.new(0, 140, 0, 28))
 
     toggleMagic("穿透盾牌", UDim2.new(0, 15, 0, 68), true, function(v)
@@ -3338,9 +3331,9 @@ bindTap(closeBtn, function()
     pcall(function() StarterGui:SetCore("ResetButtonCallback", false) end)
     _G.ExaminationUI = nil
     gui:Destroy()
-    print("[Exam] v16.0 已完全卸载")
+    print("[Exam] v16.0.7 已完全卸载")
 end)
 
-print("[Exam] v16.0 已加载（布局=" .. currentLayout .. "）")
+print("[Exam] v16.0.7 已加载（布局=" .. currentLayout .. "）")
 
 -- ===END OF SCRIPT===
