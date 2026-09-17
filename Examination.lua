@@ -1,10 +1,10 @@
 --!nolint
 -- ============================================
--- Examination v16.1.0 新增魔法子弹的队友穿透/尸体穿透以防止子弹被吞
+-- Examination v16.1.1
 -- 此脚本使用AI生成
 -- 因使用混淆加密会导致手机用户无法正常使用所以没有使用混淆加密
 -- 请不要拿去缝合 此脚本永久免费
--- 若随意缝合和偷源码会进行删库处理并停止对外更新( AI写的史山代码你也要？？？？)
+-- 若随意缝合和偷源码自称是自制的该脚本会进行删库处理并停止对外更新( AI写的史山代码你也要？？？？)
 -- ============================================
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -45,8 +45,9 @@ local SHOTGUN_PUMP_IDS = {
     ["80315455447277"]  = true,
     ["89272072134105"]  = true,
     ["96917301511774"]  = true,
+    ["135326741887023"] = true, -- Beanbag Shotgun 拉栓
 }
-local SHOTGUN_SPEED_MULT = 100
+local SHOTGUN_SPEED_MULT = 1000
 
 local cleanupFns = {}
 local _playerChars = {}
@@ -329,7 +330,7 @@ local title = Instance.new("TextLabel", titleBar)
 title.Size = UDim2.new(1, -70, 1, 0)
 title.Position = UDim2.new(0, 10, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "Examination v16.1.0"
+title.Text = "Examination v16.1.1"
 title.TextColor3 = Color3.new(1, 1, 1)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 13
@@ -1962,7 +1963,7 @@ do
     end)
 end
 
--- ============ 模块 16: 霰弹枪连发（v16.0.2 ID 白名单） ============
+-- ============ 模块 16: 霰弹枪连发（v16.1.1 ID 白名单 + 1000x） ============
 do
     local animatorConn = nil
 
@@ -2046,7 +2047,7 @@ local function applyLayout(layout)
         end
     end
     layoutSwitchBtn.Text = (layout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-    title.Text = "Examination v16.1.0 - " .. (layout == "mobile" and "手机" or "电脑")
+    title.Text = "Examination v16.1.1 - " .. (layout == "mobile" and "手机" or "电脑")
     if isCollapsed then
         main.Size = UDim2.new(0, L.W, 0, L.TitleH)
     end
@@ -2058,7 +2059,7 @@ bindTap(layoutSwitchBtn, function()
 end)
 
 layoutSwitchBtn.Text = (currentLayout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-title.Text = "Examination v16.1.0 - " .. (currentLayout == "mobile" and "手机" or "电脑")
+title.Text = "Examination v16.1.1 - " .. (currentLayout == "mobile" and "手机" or "电脑")
 
 -- ============ 模块 17: 魔法子弹页 ============
 do
@@ -2314,7 +2315,6 @@ do
         return list
     end
 
-    -- ★ 穿透队友：其他玩家角色的所有 BasePart
     local function collectTeammates()
         local now = tick()
         if now - teammateCache.tick < 1 and #teammateCache.list > 0 then return teammateCache.list end
@@ -2336,7 +2336,6 @@ do
         return list
     end
 
-    -- ★ 穿透尸体：Humanoid.Health <= 0 的角色
     local function collectCorpses()
         local now = tick()
         if now - corpseCache.tick < 1 and #corpseCache.list > 0 then return corpseCache.list end
@@ -2658,7 +2657,6 @@ do
         helmetCache.list = {}
     end, UDim2.new(0, 140, 0, 28))
 
-    -- ★ 新增：穿透队友 / 穿透尸体
     toggleMagic("穿透队友", UDim2.new(0, 15, 0, 100), true, function(v)
         pierceTeammateEnabled = v
         teammateCache.tick = 0
@@ -3398,9 +3396,9 @@ bindTap(closeBtn, function()
     pcall(function() StarterGui:SetCore("ResetButtonCallback", false) end)
     _G.ExaminationUI = nil
     gui:Destroy()
-    print("[Exam] v16.1.0 已完全卸载")
+    print("[Exam] v16.1.1 已完全卸载")
 end)
 
-print("[Exam] v16.1.0 已加载（布局=" .. currentLayout .. "）")
+print("[Exam] v16.1.1 已加载（布局=" .. currentLayout .. "）")
 
 -- ===END OF SCRIPT===
