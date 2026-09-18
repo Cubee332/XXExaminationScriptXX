@@ -1,6 +1,6 @@
 --!nolint
 -- ============================================
--- Examination v16.1.2 修复了龙息喷没有连发的问题
+-- Examination v16.2.1 新增滑铲变向功能
 -- 此脚本使用AI生成
 -- 因使用混淆加密会导致手机用户无法正常使用所以没有使用混淆加密
 -- 请不要拿去缝合 此脚本永久免费
@@ -23,6 +23,7 @@ local headHitboxEnabled = false
 local autoInteractEnabled = false
 local forceResetEnabled = false
 local slideEnabled = false
+local slideSteerEnabled = false
 local nvgEnabled = false
 local elephantImmuneEnabled = false
 local radarBoostEnabled = false
@@ -45,8 +46,8 @@ local SHOTGUN_PUMP_IDS = {
     ["80315455447277"]  = true,
     ["89272072134105"]  = true,
     ["96917301511774"]  = true,
-    ["135326741887023"] = true, -- Beanbag Shotgun 拉栓
-    ["116710355675938"] = true, -- ★ 新霰弹枪 拉栓 (v16.1.2)
+    ["135326741887023"] = true,
+    ["116710355675938"] = true,
 }
 local SHOTGUN_SPEED_MULT = 1000
 
@@ -87,7 +88,7 @@ local function safeCleanup()
         pcall(function() _G.ExaminationUI:Destroy() end)
     end
     _G.ExaminationUI = nil
-    for _, k in ipairs({"_NR6UI","_MB2UI","_FH2UI","_MZ8UI","_MZ9UI","_MZ10UI","_MZ11UI","MBT2_UI","MBT2_FovCircle","MB_TargetLock","SPRadar_UI","ExamAutoQTE","ExamQTEProbe","ExamQTEUIProbe","ExamNetHook","ExamQTEDecomp","ExamHelmetTest","ExamR8Probe","ExamR8Decomp","ExamR8Capture","ExamR8v11","ExamR8v12","ExamR8v13","ExamR8v14","ExamR8v15","ExamShotgunTest","ExamMuzzle","ExamCanShoot","NewShotgunTest"}) do
+    for _, k in ipairs({"_NR6UI","_MB2UI","_FH2UI","_MZ8UI","_MZ9UI","_MZ10UI","_MZ11UI","MBT2_UI","MBT2_FovCircle","MB_TargetLock","SPRadar_UI","ExamAutoQTE","ExamQTEProbe","ExamQTEUIProbe","ExamNetHook","ExamQTEDecomp","ExamHelmetTest","ExamR8Probe","ExamR8Decomp","ExamR8Capture","ExamR8v11","ExamR8v12","ExamR8v13","ExamR8v14","ExamR8v15","ExamShotgunTest","ExamMuzzle","ExamCanShoot","NewShotgunTest","SlideSteer"}) do
         if _G[k] and _G[k].Parent then pcall(function() _G[k]:Destroy() end) end
         _G[k] = nil
     end
@@ -240,7 +241,7 @@ local currentLayout = detectLayout()
 
 local LAYOUT = {
     mobile = {
-        W = 320, H = 430, CenterOffset = -215,
+        W = 320, H = 470, CenterOffset = -235,
         TitleH = 34, TabY = 36, PageTop = 66,
         items = {
             cdLabel        = { p = UDim2.new(0, 15, 0, 4),   s = UDim2.new(1, -30, 0, 20) },
@@ -255,20 +256,21 @@ local LAYOUT = {
             hpBtn          = { p = UDim2.new(0, 165, 0, 58), s = UDim2.new(0, 140, 0, 28) },
             autoInteract   = { p = UDim2.new(0, 165, 0, 88), s = UDim2.new(0, 140, 0, 28) },
             slide          = { p = UDim2.new(0, 165, 0, 118),s = UDim2.new(0, 140, 0, 28) },
-            elephantImmune = { p = UDim2.new(0, 165, 0, 148),s = UDim2.new(0, 140, 0, 28) },
-            recoil         = { p = UDim2.new(0, 165, 0, 178),s = UDim2.new(0, 140, 0, 28) },
-            forceHeadshot  = { p = UDim2.new(0, 165, 0, 208),s = UDim2.new(0, 140, 0, 28) },
-            autoQTE        = { p = UDim2.new(0, 165, 0, 238),s = UDim2.new(0, 140, 0, 28) },
-            shotgunNoPump  = { p = UDim2.new(0, 165, 0, 268),s = UDim2.new(0, 140, 0, 28) },
-            layoutSwitch   = { p = UDim2.new(0, 15, 0, 302), s = UDim2.new(1, -30, 0, 26) },
-            headSizeLabel  = { p = UDim2.new(0, 15, 0, 336), s = UDim2.new(0, 45, 0, 22) },
-            headSizeInput  = { p = UDim2.new(0, 60, 0, 336), s = UDim2.new(0, 60, 0, 22) },
-            slideDistLabel = { p = UDim2.new(0, 165, 0, 336),s = UDim2.new(0, 90, 0, 22) },
-            slideDistInput = { p = UDim2.new(0, 255, 0, 336),s = UDim2.new(0, 55, 0, 22) },
+            slideSteer     = { p = UDim2.new(0, 165, 0, 148),s = UDim2.new(0, 140, 0, 28) },
+            elephantImmune = { p = UDim2.new(0, 165, 0, 178),s = UDim2.new(0, 140, 0, 28) },
+            recoil         = { p = UDim2.new(0, 165, 0, 208),s = UDim2.new(0, 140, 0, 28) },
+            forceHeadshot  = { p = UDim2.new(0, 165, 0, 238),s = UDim2.new(0, 140, 0, 28) },
+            autoQTE        = { p = UDim2.new(0, 165, 0, 268),s = UDim2.new(0, 140, 0, 28) },
+            shotgunNoPump  = { p = UDim2.new(0, 165, 0, 298),s = UDim2.new(0, 140, 0, 28) },
+            layoutSwitch   = { p = UDim2.new(0, 15, 0, 332), s = UDim2.new(1, -30, 0, 26) },
+            headSizeLabel  = { p = UDim2.new(0, 15, 0, 366), s = UDim2.new(0, 45, 0, 22) },
+            headSizeInput  = { p = UDim2.new(0, 60, 0, 366), s = UDim2.new(0, 60, 0, 22) },
+            slideDistLabel = { p = UDim2.new(0, 165, 0, 366),s = UDim2.new(0, 90, 0, 22) },
+            slideDistInput = { p = UDim2.new(0, 255, 0, 366),s = UDim2.new(0, 55, 0, 22) },
         },
     },
     desktop = {
-        W = 320, H = 680, CenterOffset = -340,
+        W = 320, H = 720, CenterOffset = -360,
         TitleH = 30, TabY = 33, PageTop = 63,
         items = {
             cdLabel        = { p = UDim2.new(0, 15, 0, 5),   s = UDim2.new(1, -30, 0, 22) },
@@ -280,19 +282,20 @@ local LAYOUT = {
             autoInteract   = { p = UDim2.new(0, 15, 0, 170), s = UDim2.new(1, -30, 0, 30) },
             forceReset     = { p = UDim2.new(0, 15, 0, 205), s = UDim2.new(1, -30, 0, 30) },
             slide          = { p = UDim2.new(0, 15, 0, 240), s = UDim2.new(1, -30, 0, 30) },
-            nvg            = { p = UDim2.new(0, 15, 0, 275), s = UDim2.new(1, -30, 0, 30) },
-            elephantImmune = { p = UDim2.new(0, 15, 0, 310), s = UDim2.new(1, -30, 0, 30) },
-            muzzle         = { p = UDim2.new(0, 15, 0, 345), s = UDim2.new(1, -30, 0, 30) },
-            recoil         = { p = UDim2.new(0, 15, 0, 380), s = UDim2.new(1, -30, 0, 30) },
-            chatForce      = { p = UDim2.new(0, 15, 0, 415), s = UDim2.new(1, -30, 0, 30) },
-            forceHeadshot  = { p = UDim2.new(0, 15, 0, 450), s = UDim2.new(1, -30, 0, 30) },
-            autoQTE        = { p = UDim2.new(0, 15, 0, 485), s = UDim2.new(1, -30, 0, 30) },
-            shotgunNoPump  = { p = UDim2.new(0, 15, 0, 520), s = UDim2.new(1, -30, 0, 30) },
-            layoutSwitch   = { p = UDim2.new(0, 15, 0, 555), s = UDim2.new(1, -30, 0, 28) },
-            headSizeLabel  = { p = UDim2.new(0, 15, 0, 590), s = UDim2.new(0, 60, 0, 20) },
-            headSizeInput  = { p = UDim2.new(0, 80, 0, 590), s = UDim2.new(0, 50, 0, 20) },
-            slideDistLabel = { p = UDim2.new(0, 135, 0, 590),s = UDim2.new(0, 100, 0, 20) },
-            slideDistInput = { p = UDim2.new(0, 240, 0, 590),s = UDim2.new(0, 60, 0, 20) },
+            slideSteer     = { p = UDim2.new(0, 15, 0, 275), s = UDim2.new(1, -30, 0, 30) },
+            nvg            = { p = UDim2.new(0, 15, 0, 310), s = UDim2.new(1, -30, 0, 30) },
+            elephantImmune = { p = UDim2.new(0, 15, 0, 345), s = UDim2.new(1, -30, 0, 30) },
+            muzzle         = { p = UDim2.new(0, 15, 0, 380), s = UDim2.new(1, -30, 0, 30) },
+            recoil         = { p = UDim2.new(0, 15, 0, 415), s = UDim2.new(1, -30, 0, 30) },
+            chatForce      = { p = UDim2.new(0, 15, 0, 450), s = UDim2.new(1, -30, 0, 30) },
+            forceHeadshot  = { p = UDim2.new(0, 15, 0, 485), s = UDim2.new(1, -30, 0, 30) },
+            autoQTE        = { p = UDim2.new(0, 15, 0, 520), s = UDim2.new(1, -30, 0, 30) },
+            shotgunNoPump  = { p = UDim2.new(0, 15, 0, 555), s = UDim2.new(1, -30, 0, 30) },
+            layoutSwitch   = { p = UDim2.new(0, 15, 0, 590), s = UDim2.new(1, -30, 0, 28) },
+            headSizeLabel  = { p = UDim2.new(0, 15, 0, 620), s = UDim2.new(0, 60, 0, 20) },
+            headSizeInput  = { p = UDim2.new(0, 80, 0, 620), s = UDim2.new(0, 50, 0, 20) },
+            slideDistLabel = { p = UDim2.new(0, 135, 0, 620),s = UDim2.new(0, 100, 0, 20) },
+            slideDistInput = { p = UDim2.new(0, 240, 0, 620),s = UDim2.new(0, 60, 0, 20) },
         },
     },
 }
@@ -331,7 +334,7 @@ local title = Instance.new("TextLabel", titleBar)
 title.Size = UDim2.new(1, -70, 1, 0)
 title.Position = UDim2.new(0, 10, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "Examination v16.1.2"
+title.Text = "Examination v16.2.1"
 title.TextColor3 = Color3.new(1, 1, 1)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 13
@@ -1257,6 +1260,61 @@ do
     end)
 end
 
+-- ============ 模块 6.5: 滑铲变向 ============
+do
+    local steerLoop = nil
+    local function setup()
+        if steerLoop then steerLoop:Disconnect(); steerLoop = nil end
+        if not slideSteerEnabled then return end
+        steerLoop = RunService.Heartbeat:Connect(function()
+            if not slideSteerEnabled then return end
+            local char = lp.Character
+            if not char then return end
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if not hum then return end
+            if hum:GetAttribute("sliding") ~= true then return end
+
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if not hrp then return end
+            local av = hrp:FindFirstChild("ActionVelocity")
+            if not av then return end
+
+            local isLinear = av:IsA("LinearVelocity")
+            local isVector = av:IsA("VectorForce")
+            if not (isLinear or isVector) then return end
+
+            local curVel = isLinear and av.VectorVelocity or av.Force
+            local mag = curVel.Magnitude
+            if mag < 0.1 then return end
+
+            local cam = workspace.CurrentCamera
+            if not cam then return end
+            local dir = cam.CFrame.LookVector
+            dir = Vector3.new(dir.X, 0, dir.Z)
+            if dir.Magnitude < 0.1 then return end
+            dir = dir.Unit
+
+            local newVel = dir * mag
+            if isLinear then
+                pcall(function() av.VectorVelocity = newVel end)
+            else
+                pcall(function() av.Force = newVel end)
+            end
+        end)
+    end
+    toggleBase("滑铲变向（视角朝哪滑哪）", "slideSteer", false, function(v)
+        slideSteerEnabled = v
+        setup()
+    end)
+    lp.CharacterAdded:Connect(function()
+        wait(2)
+        if slideSteerEnabled then setup() end
+    end)
+    table.insert(cleanupFns, function()
+        if steerLoop then pcall(function() steerLoop:Disconnect() end) end
+    end)
+end
+
 -- ============ 模块 7: 无限电量夜视仪 ============
 do
     local nvgBadgeHooked = false
@@ -1446,7 +1504,7 @@ do
     end)
 end
 
--- ============ 模块 11: 去除枪口遮挡（v15.2 原版） ============
+-- ============ 模块 11: 去除枪口遮挡 ============
 do
     local muzzleHbConn = nil
     local muzzleDisabledParts = {}
@@ -1559,7 +1617,7 @@ do
     end)
 end
 
--- ============ 模块 12: 无后座（v16.0 Spring+Spring2 + metatable wrap + 每帧归零） ============
+-- ============ 模块 12: 无后座 ============
 do
     local NOOP = function() end
     local ZERO_V3 = Vector3.new()
@@ -1964,7 +2022,7 @@ do
     end)
 end
 
--- ============ 模块 16: 霰弹枪连发（v16.1.2：+新 ID + 关闭时恢复 track） ============
+-- ============ 模块 16: 霰弹枪连发 ============
 do
     local animatorConn = nil
 
@@ -1976,7 +2034,6 @@ do
         return SHOTGUN_PUMP_IDS[id] == true
     end
 
-    -- ★ v16.1.2 新增：恢复所有目标 track Speed=1（解决关闭后残留）
     local function restoreTracks()
         local char = lp.Character
         if not char then return end
@@ -2017,7 +2074,6 @@ do
             setupAnimator()
         else
             if animatorConn then pcall(function() animatorConn:Disconnect() end); animatorConn = nil end
-            -- ★ 关闭时恢复 track
             pcall(restoreTracks)
         end
     end)
@@ -2070,7 +2126,7 @@ local function applyLayout(layout)
         end
     end
     layoutSwitchBtn.Text = (layout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-    title.Text = "Examination v16.1.2 - " .. (layout == "mobile" and "手机" or "电脑")
+    title.Text = "Examination v16.2.1 - " .. (layout == "mobile" and "手机" or "电脑")
     if isCollapsed then
         main.Size = UDim2.new(0, L.W, 0, L.TitleH)
     end
@@ -2082,7 +2138,7 @@ bindTap(layoutSwitchBtn, function()
 end)
 
 layoutSwitchBtn.Text = (currentLayout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-title.Text = "Examination v16.1.2 - " .. (currentLayout == "mobile" and "手机" or "电脑")
+title.Text = "Examination v16.2.1 - " .. (currentLayout == "mobile" and "手机" or "电脑")
 
 -- ============ 模块 17: 魔法子弹页 ============
 do
@@ -3403,6 +3459,7 @@ bindTap(closeBtn, function()
     autoInteractEnabled = false
     forceResetEnabled = false
     slideEnabled = false
+    slideSteerEnabled = false
     nvgEnabled = false
     elephantImmuneEnabled = false
     radarBoostEnabled = false
@@ -3419,9 +3476,9 @@ bindTap(closeBtn, function()
     pcall(function() StarterGui:SetCore("ResetButtonCallback", false) end)
     _G.ExaminationUI = nil
     gui:Destroy()
-    print("[Exam] v16.1.2 已完全卸载")
+    print("[Exam] v16.2.1 已完全卸载")
 end)
 
-print("[Exam] v16.1.2 已加载（布局=" .. currentLayout .. "）")
+print("[Exam] v16.2.1 已加载（布局=" .. currentLayout .. "）")
 
 -- ===END OF SCRIPT===
