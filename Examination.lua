@@ -1,6 +1,6 @@
 --!nolint
 -- ============================================
--- Examination v16.1.1
+-- Examination v16.1.2 修复了龙息喷没有连发的问题
 -- 此脚本使用AI生成
 -- 因使用混淆加密会导致手机用户无法正常使用所以没有使用混淆加密
 -- 请不要拿去缝合 此脚本永久免费
@@ -46,6 +46,7 @@ local SHOTGUN_PUMP_IDS = {
     ["89272072134105"]  = true,
     ["96917301511774"]  = true,
     ["135326741887023"] = true, -- Beanbag Shotgun 拉栓
+    ["116710355675938"] = true, -- ★ 新霰弹枪 拉栓 (v16.1.2)
 }
 local SHOTGUN_SPEED_MULT = 1000
 
@@ -86,7 +87,7 @@ local function safeCleanup()
         pcall(function() _G.ExaminationUI:Destroy() end)
     end
     _G.ExaminationUI = nil
-    for _, k in ipairs({"_NR6UI","_MB2UI","_FH2UI","_MZ8UI","_MZ9UI","_MZ10UI","_MZ11UI","MBT2_UI","MBT2_FovCircle","MB_TargetLock","SPRadar_UI","ExamAutoQTE","ExamQTEProbe","ExamQTEUIProbe","ExamNetHook","ExamQTEDecomp","ExamHelmetTest","ExamR8Probe","ExamR8Decomp","ExamR8Capture","ExamR8v11","ExamR8v12","ExamR8v13","ExamR8v14","ExamR8v15","ExamShotgunTest","ExamMuzzle","ExamCanShoot"}) do
+    for _, k in ipairs({"_NR6UI","_MB2UI","_FH2UI","_MZ8UI","_MZ9UI","_MZ10UI","_MZ11UI","MBT2_UI","MBT2_FovCircle","MB_TargetLock","SPRadar_UI","ExamAutoQTE","ExamQTEProbe","ExamQTEUIProbe","ExamNetHook","ExamQTEDecomp","ExamHelmetTest","ExamR8Probe","ExamR8Decomp","ExamR8Capture","ExamR8v11","ExamR8v12","ExamR8v13","ExamR8v14","ExamR8v15","ExamShotgunTest","ExamMuzzle","ExamCanShoot","NewShotgunTest"}) do
         if _G[k] and _G[k].Parent then pcall(function() _G[k]:Destroy() end) end
         _G[k] = nil
     end
@@ -330,7 +331,7 @@ local title = Instance.new("TextLabel", titleBar)
 title.Size = UDim2.new(1, -70, 1, 0)
 title.Position = UDim2.new(0, 10, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "Examination v16.1.1"
+title.Text = "Examination v16.1.2"
 title.TextColor3 = Color3.new(1, 1, 1)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 13
@@ -1963,7 +1964,7 @@ do
     end)
 end
 
--- ============ 模块 16: 霰弹枪连发（v16.1.1 ID 白名单 + 1000x） ============
+-- ============ 模块 16: 霰弹枪连发（v16.1.2：+新 ID + 关闭时恢复 track） ============
 do
     local animatorConn = nil
 
@@ -1973,6 +1974,25 @@ do
         local id = tostring(an.AnimationId or ""):match("%d+")
         if not id then return false end
         return SHOTGUN_PUMP_IDS[id] == true
+    end
+
+    -- ★ v16.1.2 新增：恢复所有目标 track Speed=1（解决关闭后残留）
+    local function restoreTracks()
+        local char = lp.Character
+        if not char then return end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not hum then return end
+        local ok, tracks = pcall(function() return hum:GetPlayingAnimationTracks() end)
+        if not ok or type(tracks) ~= "table" then return end
+        for _, t in ipairs(tracks) do
+            local an = t.Animation
+            if an then
+                local id = tostring(an.AnimationId or ""):match("%d+")
+                if id and SHOTGUN_PUMP_IDS[id] then
+                    pcall(function() t:AdjustSpeed(1) end)
+                end
+            end
+        end
     end
 
     local function setupAnimator()
@@ -1997,6 +2017,8 @@ do
             setupAnimator()
         else
             if animatorConn then pcall(function() animatorConn:Disconnect() end); animatorConn = nil end
+            -- ★ 关闭时恢复 track
+            pcall(restoreTracks)
         end
     end)
 
@@ -2008,6 +2030,7 @@ do
     table.insert(cleanupFns, function()
         shotgunNoPumpEnabled = false
         if animatorConn then pcall(function() animatorConn:Disconnect() end) end
+        pcall(restoreTracks)
     end)
 end
 
@@ -2047,7 +2070,7 @@ local function applyLayout(layout)
         end
     end
     layoutSwitchBtn.Text = (layout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-    title.Text = "Examination v16.1.1 - " .. (layout == "mobile" and "手机" or "电脑")
+    title.Text = "Examination v16.1.2 - " .. (layout == "mobile" and "手机" or "电脑")
     if isCollapsed then
         main.Size = UDim2.new(0, L.W, 0, L.TitleH)
     end
@@ -2059,7 +2082,7 @@ bindTap(layoutSwitchBtn, function()
 end)
 
 layoutSwitchBtn.Text = (currentLayout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-title.Text = "Examination v16.1.1 - " .. (currentLayout == "mobile" and "手机" or "电脑")
+title.Text = "Examination v16.1.2 - " .. (currentLayout == "mobile" and "手机" or "电脑")
 
 -- ============ 模块 17: 魔法子弹页 ============
 do
@@ -3396,9 +3419,9 @@ bindTap(closeBtn, function()
     pcall(function() StarterGui:SetCore("ResetButtonCallback", false) end)
     _G.ExaminationUI = nil
     gui:Destroy()
-    print("[Exam] v16.1.1 已完全卸载")
+    print("[Exam] v16.1.2 已完全卸载")
 end)
 
-print("[Exam] v16.1.1 已加载（布局=" .. currentLayout .. "）")
+print("[Exam] v16.1.2 已加载（布局=" .. currentLayout .. "）")
 
 -- ===END OF SCRIPT===
