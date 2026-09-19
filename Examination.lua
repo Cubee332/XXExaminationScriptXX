@@ -1,6 +1,6 @@
 --!nolint
 -- ============================================
--- Examination v16.2.1 新增滑铲变向功能
+-- Examination v16.2.4
 -- 此脚本使用AI生成
 -- 因使用混淆加密会导致手机用户无法正常使用所以没有使用混淆加密
 -- 请不要拿去缝合 此脚本永久免费
@@ -208,6 +208,19 @@ local function safeCleanup()
         pcall(function() _G._ElephantImmune_Loop:Disconnect() end)
         _G._ElephantImmune_Loop = nil
     end
+    -- ★ v16.2.4：恢复上次会话遗留的被禁脚本
+    if _G._ElephantImmune_DisabledScripts then
+        for s, orig in pairs(_G._ElephantImmune_DisabledScripts) do
+            if s and s.Parent then pcall(function() s.Disabled = orig end) end
+        end
+        _G._ElephantImmune_DisabledScripts = nil
+    end
+    if _G._KillPartBackup then
+        for p, orig in pairs(_G._KillPartBackup) do
+            if p and p.Parent then pcall(function() p.CanTouch = orig end) end
+        end
+        _G._KillPartBackup = nil
+    end
     if _G._RadarBoost_Conns then
         for _, c in ipairs(_G._RadarBoost_Conns) do pcall(function() c:Disconnect() end) end
     end
@@ -334,7 +347,7 @@ local title = Instance.new("TextLabel", titleBar)
 title.Size = UDim2.new(1, -70, 1, 0)
 title.Position = UDim2.new(0, 10, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "Examination v16.2.1"
+title.Text = "Examination v16.2.4"
 title.TextColor3 = Color3.new(1, 1, 1)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 13
@@ -653,8 +666,14 @@ do
     local espConnections = {}
     local ESP_HL_NEW = "_ExamESP_HL"
     local ESP_HB_NEW = "_ExamESP_HB"
-    local BIG = { ["SIN"]=true, ["Chimera"]=true, ["Gilbert"]=true, ["Mikhail"]=true }
-    local MINI = { ["RIF Miniboss"]=true, ["Dave"]=true, ["CombatEngineer"]=true, ["Vorax"]=true }
+    local BIG = {
+        ["SIN"]=true, ["Chimera"]=true, ["Gilbert"]=true, ["Mikhail"]=true,
+    }
+    local MINI = {
+        ["RIF Miniboss"]=true, ["Dave"]=true, ["CombatEngineer"]=true, ["Vorax"]=true,
+        ["Slasher1"]=true, ["Slasher2"]=true, ["Slasher3"]=true,
+        ["Slasher4"]=true, ["Slasher5"]=true, ["Slasher6"]=true,
+    }
     local C_NORMAL = Color3.fromRGB(255, 0, 0)
     local C_MINI = Color3.fromRGB(255, 140, 0)
     local C_BIG = Color3.fromRGB(170, 0, 255)
@@ -662,6 +681,18 @@ do
     local C_DRONE = Color3.fromRGB(255, 80, 200)
     local showESPName = true
     local showESPHealth = true
+
+    local function isAICharacter(m)
+        if not m or not m:IsA("Model") then return false end
+        if Players:GetPlayerFromCharacter(m) then return false end
+        if m:FindFirstChild("AI")
+           or m:FindFirstChild("GrabField")
+           or m:FindFirstChild("AmbushScenery") then
+            return true
+        end
+        return false
+    end
+
     local function isOurESPNode(c)
         if not c then return false end
         local n = c.Name
@@ -874,14 +905,14 @@ do
         if not espEnabled then return end
         if Workspace:FindFirstChild("Characters") then
             for _, v in ipairs(Workspace.Characters:GetChildren()) do
-                if v:FindFirstChild("AI") then
+                if isAICharacter(v) then
                     local c, t = classify(v)
                     highlightAI(v, c, t)
                 end
             end
             table.insert(espConnections, Workspace.Characters.ChildAdded:Connect(function(v)
                 wait(0.1)
-                if espEnabled and v:FindFirstChild("AI") then
+                if espEnabled and isAICharacter(v) then
                     local c, t = classify(v)
                     highlightAI(v, c, t)
                 end
@@ -1273,27 +1304,22 @@ do
             local hum = char:FindFirstChildOfClass("Humanoid")
             if not hum then return end
             if hum:GetAttribute("sliding") ~= true then return end
-
             local hrp = char:FindFirstChild("HumanoidRootPart")
             if not hrp then return end
             local av = hrp:FindFirstChild("ActionVelocity")
             if not av then return end
-
             local isLinear = av:IsA("LinearVelocity")
             local isVector = av:IsA("VectorForce")
             if not (isLinear or isVector) then return end
-
             local curVel = isLinear and av.VectorVelocity or av.Force
             local mag = curVel.Magnitude
             if mag < 0.1 then return end
-
             local cam = workspace.CurrentCamera
             if not cam then return end
             local dir = cam.CFrame.LookVector
             dir = Vector3.new(dir.X, 0, dir.Z)
             if dir.Magnitude < 0.1 then return end
             dir = dir.Unit
-
             local newVel = dir * mag
             if isLinear then
                 pcall(function() av.VectorVelocity = newVel end)
@@ -1452,7 +1478,7 @@ do
     end)
 end
 
--- ============ 模块 8: 免疫象脚 ============
+-- ============ 模块 8: 免疫象脚 + 致死区（v16.2.4 修复） ============
 do
     local keywords = {"elephant","lookatme","playerdiedbylooking","diedbylooking"}
     local function match(name)
@@ -1462,6 +1488,10 @@ do
         end
         return false
     end
+
+    -- ★ v16.2.4：记录被禁脚本 → 原 Disabled 值
+    local disabledScripts = {}
+
     local function disableScripts()
         local char = lp.Character
         if not char then return 0 end
@@ -1469,31 +1499,96 @@ do
         for _, d in ipairs(char:GetDescendants()) do
             if d:IsA("BaseScript") or d:IsA("LocalScript") or d:IsA("Script") then
                 if match(d.Name) and not d.Disabled then
+                    if disabledScripts[d] == nil then
+                        disabledScripts[d] = false
+                    end
                     local ok = pcall(function() d.Disabled = true end)
                     if ok then count = count + 1 end
                 end
             end
         end
+        _G._ElephantImmune_DisabledScripts = disabledScripts
         return count
     end
+
+    -- ★ v16.2.4：恢复所有被禁脚本
+    local function restoreScripts()
+        local n = 0
+        for s, orig in pairs(disabledScripts) do
+            if s and s.Parent then
+                pcall(function() s.Disabled = orig end)
+                n = n + 1
+            end
+        end
+        disabledScripts = {}
+        _G._ElephantImmune_DisabledScripts = nil
+        return n
+    end
+
+    local killParts = {}
+    local killPartBackup = {}
+    local killPartLoop = nil
+    local function collectKillParts()
+        local list = {}
+        for _, d in ipairs(Workspace:GetDescendants()) do
+            if d:IsA("BasePart") and d.Name == "KillPart" then
+                table.insert(list, d)
+            end
+        end
+        return list
+    end
+    local function killPartRestore()
+        if killPartLoop then pcall(function() killPartLoop:Disconnect() end); killPartLoop = nil end
+        for kp, orig in pairs(killPartBackup) do
+            if kp and kp.Parent then pcall(function() kp.CanTouch = orig end) end
+        end
+        killPartBackup = {}
+        killParts = {}
+        _G._KillPartBackup = nil
+    end
+    local function killPartSetup()
+        killPartRestore()
+        killParts = collectKillParts()
+        if #killParts == 0 then return end
+        for _, kp in ipairs(killParts) do
+            killPartBackup[kp] = kp.CanTouch
+        end
+        _G._KillPartBackup = killPartBackup
+        killPartLoop = RunService.Heartbeat:Connect(function()
+            if not elephantImmuneEnabled then return end
+            for _, kp in ipairs(killParts) do
+                if kp and kp.Parent and kp.CanTouch then
+                    pcall(function() kp.CanTouch = false end)
+                end
+            end
+        end)
+    end
+
     local function setup()
         if _G._ElephantImmune_Loop then
             _G._ElephantImmune_Loop:Disconnect()
             _G._ElephantImmune_Loop = nil
         end
-        if not elephantImmuneEnabled then return end
+        if not elephantImmuneEnabled then
+            killPartRestore()
+            restoreScripts()  -- ★ v16.2.4：关闭时恢复被禁脚本
+            return
+        end
         disableScripts()
         _G._ElephantImmune_Loop = RunService.Heartbeat:Connect(function()
             if not elephantImmuneEnabled then return end
             disableScripts()
         end)
+        killPartSetup()
     end
-    toggleBase("免疫象脚", "elephantImmune", false, function(v)
+    toggleBase("免疫象脚 + 致死区", "elephantImmune", false, function(v)
         elephantImmuneEnabled = v
         setup()
     end)
     lp.CharacterAdded:Connect(function()
         wait(1)
+        disabledScripts = {}
+        _G._ElephantImmune_DisabledScripts = nil
         if elephantImmuneEnabled then setup() end
     end)
     table.insert(cleanupFns, function()
@@ -1501,9 +1596,10 @@ do
             _G._ElephantImmune_Loop:Disconnect()
             _G._ElephantImmune_Loop = nil
         end
+        killPartRestore()
+        restoreScripts()  -- ★ v16.2.4：关闭时恢复被禁脚本
     end)
 end
-
 -- ============ 模块 11: 去除枪口遮挡 ============
 do
     local muzzleHbConn = nil
@@ -2126,7 +2222,7 @@ local function applyLayout(layout)
         end
     end
     layoutSwitchBtn.Text = (layout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-    title.Text = "Examination v16.2.1 - " .. (layout == "mobile" and "手机" or "电脑")
+    title.Text = "Examination v16.2.4 - " .. (layout == "mobile" and "手机" or "电脑")
     if isCollapsed then
         main.Size = UDim2.new(0, L.W, 0, L.TitleH)
     end
@@ -2138,7 +2234,7 @@ bindTap(layoutSwitchBtn, function()
 end)
 
 layoutSwitchBtn.Text = (currentLayout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-title.Text = "Examination v16.2.1 - " .. (currentLayout == "mobile" and "手机" or "电脑")
+title.Text = "Examination v16.2.4 - " .. (currentLayout == "mobile" and "手机" or "电脑")
 
 -- ============ 模块 17: 魔法子弹页 ============
 do
@@ -3007,7 +3103,9 @@ do
                         local c
                         if n == "SIN" or n == "Chimera" or n == "Gilbert" or n == "Mikhail" then
                             c = Color3.fromRGB(170, 0, 255)
-                        elseif n == "RIF Miniboss" or n == "Dave" or n == "CombatEngineer" or n == "Vorax" then
+                        elseif n == "RIF Miniboss" or n == "Dave" or n == "CombatEngineer" or n == "Vorax"
+                            or n == "Slasher1" or n == "Slasher2" or n == "Slasher3"
+                            or n == "Slasher4" or n == "Slasher5" or n == "Slasher6" then
                             c = Color3.fromRGB(255, 140, 0)
                         else
                             c = Color3.fromRGB(255, 0, 0)
@@ -3476,9 +3574,9 @@ bindTap(closeBtn, function()
     pcall(function() StarterGui:SetCore("ResetButtonCallback", false) end)
     _G.ExaminationUI = nil
     gui:Destroy()
-    print("[Exam] v16.2.1 已完全卸载")
+    print("[Exam] v16.2.4 已完全卸载")
 end)
 
-print("[Exam] v16.2.1 已加载（布局=" .. currentLayout .. "）")
+print("[Exam] v16.2.4 已加载（布局=" .. currentLayout .. "）")
 
 -- ===END OF SCRIPT===
