@@ -1,6 +1,6 @@
 --!nolint
 -- ============================================
--- Examination v16.2.4
+-- Examination v16.2.6
 -- 此脚本使用AI生成
 -- 因使用混淆加密会导致手机用户无法正常使用所以没有使用混淆加密
 -- 请不要拿去缝合 此脚本永久免费
@@ -40,6 +40,9 @@ local pierceTeammateEnabled = true
 local pierceCorpseEnabled = true
 local headSize = 4
 local slideDistanceMult = 2
+
+-- ★ v16.2.6：AI 模型所在的容器（Leaper 在 Reactor4）
+local AI_CONTAINERS = {"Characters", "Reactor1", "Reactor2", "Reactor3", "Reactor4"}
 
 local SHOTGUN_PUMP_IDS = {
     ["115903749552317"] = true,
@@ -175,9 +178,11 @@ local function safeCleanup()
         if btr then cleanESP(btr) end
     end
     cleanESP(Workspace:FindFirstChild("BTRDrone"))
-    local chars = Workspace:FindFirstChild("Characters")
-    if chars then
-        for _, c in ipairs(chars:GetChildren()) do cleanESP(c) end
+    for _, folderName in ipairs(AI_CONTAINERS) do
+        local folder = Workspace:FindFirstChild(folderName)
+        if folder then
+            for _, c in ipairs(folder:GetChildren()) do cleanESP(c) end
+        end
     end
     do
         local pg = lp:FindFirstChild("PlayerGui")
@@ -208,7 +213,6 @@ local function safeCleanup()
         pcall(function() _G._ElephantImmune_Loop:Disconnect() end)
         _G._ElephantImmune_Loop = nil
     end
-    -- ★ v16.2.4：恢复上次会话遗留的被禁脚本
     if _G._ElephantImmune_DisabledScripts then
         for s, orig in pairs(_G._ElephantImmune_DisabledScripts) do
             if s and s.Parent then pcall(function() s.Disabled = orig end) end
@@ -347,7 +351,7 @@ local title = Instance.new("TextLabel", titleBar)
 title.Size = UDim2.new(1, -70, 1, 0)
 title.Position = UDim2.new(0, 10, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "Examination v16.2.4"
+title.Text = "Examination v16.2.6"
 title.TextColor3 = Color3.new(1, 1, 1)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 13
@@ -661,19 +665,16 @@ do
     end)
 end
 
--- ============ 模块 2: AI ESP ============
+-- ============ 模块 2: AI ESP（v16.2.6：加 Leaper 四区 BOSS 紫） ============
 do
     local espConnections = {}
     local ESP_HL_NEW = "_ExamESP_HL"
     local ESP_HB_NEW = "_ExamESP_HB"
     local BIG = {
         ["SIN"]=true, ["Chimera"]=true, ["Gilbert"]=true, ["Mikhail"]=true,
+        ["Leaper"]=true, -- ★ v16.2.6：四区 BOSS
     }
-    local MINI = {
-        ["RIF Miniboss"]=true, ["Dave"]=true, ["CombatEngineer"]=true, ["Vorax"]=true,
-        ["Slasher1"]=true, ["Slasher2"]=true, ["Slasher3"]=true,
-        ["Slasher4"]=true, ["Slasher5"]=true, ["Slasher6"]=true,
-    }
+    local MINI = { ["RIF Miniboss"]=true, ["Dave"]=true, ["CombatEngineer"]=true, ["Vorax"]=true }
     local C_NORMAL = Color3.fromRGB(255, 0, 0)
     local C_MINI = Color3.fromRGB(255, 140, 0)
     local C_BIG = Color3.fromRGB(170, 0, 255)
@@ -682,12 +683,16 @@ do
     local showESPName = true
     local showESPHealth = true
 
+    -- ★ v16.2.6：isAICharacter 扩展
+    -- AI 判定：AI / GrabField / AmbushScenery / CharacterTeam / 名字 Leaper
     local function isAICharacter(m)
         if not m or not m:IsA("Model") then return false end
         if Players:GetPlayerFromCharacter(m) then return false end
+        if m.Name == "Leaper" then return true end
         if m:FindFirstChild("AI")
            or m:FindFirstChild("GrabField")
-           or m:FindFirstChild("AmbushScenery") then
+           or m:FindFirstChild("AmbushScenery")
+           or m:FindFirstChild("CharacterTeam") then
             return true
         end
         return false
@@ -730,8 +735,10 @@ do
             local hum = obj:FindFirstChildOfClass("Humanoid")
             tl.Text = genText(obj, hum, tagToPre(tag))
         end
-        local chars = Workspace:FindFirstChild("Characters")
-        if chars then for _, c in ipairs(chars:GetChildren()) do refreshIn(c) end end
+        for _, folderName in ipairs(AI_CONTAINERS) do
+            local folder = Workspace:FindFirstChild(folderName)
+            if folder then for _, c in ipairs(folder:GetChildren()) do refreshIn(c) end end
+        end
         local map = Workspace:FindFirstChild("Map")
         local btr = map and map:FindFirstChild("BTR-82 (BOSS)")
         if btr then refreshIn(btr) end
@@ -753,8 +760,10 @@ do
             if btr then cleanIn(btr) end
         end
         cleanIn(Workspace:FindFirstChild("BTRDrone"))
-        local chars = Workspace:FindFirstChild("Characters")
-        if chars then for _, c in ipairs(chars:GetChildren()) do cleanIn(c) end end
+        for _, folderName in ipairs(AI_CONTAINERS) do
+            local folder = Workspace:FindFirstChild(folderName)
+            if folder then for _, c in ipairs(folder:GetChildren()) do cleanIn(c) end end
+        end
     end
     local function clearESP()
         for _, conn in ipairs(espConnections) do pcall(function() conn:Disconnect() end) end
@@ -903,20 +912,24 @@ do
     local function setupESP()
         clearESP()
         if not espEnabled then return end
-        if Workspace:FindFirstChild("Characters") then
-            for _, v in ipairs(Workspace.Characters:GetChildren()) do
-                if isAICharacter(v) then
-                    local c, t = classify(v)
-                    highlightAI(v, c, t)
+        -- ★ v16.2.6：遍历所有 AI 容器（含 Reactor4）
+        for _, folderName in ipairs(AI_CONTAINERS) do
+            local folder = Workspace:FindFirstChild(folderName)
+            if folder then
+                for _, v in ipairs(folder:GetChildren()) do
+                    if isAICharacter(v) then
+                        local c, t = classify(v)
+                        highlightAI(v, c, t)
+                    end
                 end
+                table.insert(espConnections, folder.ChildAdded:Connect(function(v)
+                    wait(0.1)
+                    if espEnabled and isAICharacter(v) then
+                        local c, t = classify(v)
+                        highlightAI(v, c, t)
+                    end
+                end))
             end
-            table.insert(espConnections, Workspace.Characters.ChildAdded:Connect(function(v)
-                wait(0.1)
-                if espEnabled and isAICharacter(v) then
-                    local c, t = classify(v)
-                    highlightAI(v, c, t)
-                end
-            end))
         end
         local btr = getBTRModel()
         if btr then highlightBTR(btr) end
@@ -1478,7 +1491,7 @@ do
     end)
 end
 
--- ============ 模块 8: 免疫象脚 + 致死区（v16.2.4 修复） ============
+-- ============ 模块 8: 免疫象脚 ============
 do
     local keywords = {"elephant","lookatme","playerdiedbylooking","diedbylooking"}
     local function match(name)
@@ -1488,10 +1501,6 @@ do
         end
         return false
     end
-
-    -- ★ v16.2.4：记录被禁脚本 → 原 Disabled 值
-    local disabledScripts = {}
-
     local function disableScripts()
         local char = lp.Character
         if not char then return 0 end
@@ -1499,96 +1508,31 @@ do
         for _, d in ipairs(char:GetDescendants()) do
             if d:IsA("BaseScript") or d:IsA("LocalScript") or d:IsA("Script") then
                 if match(d.Name) and not d.Disabled then
-                    if disabledScripts[d] == nil then
-                        disabledScripts[d] = false
-                    end
                     local ok = pcall(function() d.Disabled = true end)
                     if ok then count = count + 1 end
                 end
             end
         end
-        _G._ElephantImmune_DisabledScripts = disabledScripts
         return count
     end
-
-    -- ★ v16.2.4：恢复所有被禁脚本
-    local function restoreScripts()
-        local n = 0
-        for s, orig in pairs(disabledScripts) do
-            if s and s.Parent then
-                pcall(function() s.Disabled = orig end)
-                n = n + 1
-            end
-        end
-        disabledScripts = {}
-        _G._ElephantImmune_DisabledScripts = nil
-        return n
-    end
-
-    local killParts = {}
-    local killPartBackup = {}
-    local killPartLoop = nil
-    local function collectKillParts()
-        local list = {}
-        for _, d in ipairs(Workspace:GetDescendants()) do
-            if d:IsA("BasePart") and d.Name == "KillPart" then
-                table.insert(list, d)
-            end
-        end
-        return list
-    end
-    local function killPartRestore()
-        if killPartLoop then pcall(function() killPartLoop:Disconnect() end); killPartLoop = nil end
-        for kp, orig in pairs(killPartBackup) do
-            if kp and kp.Parent then pcall(function() kp.CanTouch = orig end) end
-        end
-        killPartBackup = {}
-        killParts = {}
-        _G._KillPartBackup = nil
-    end
-    local function killPartSetup()
-        killPartRestore()
-        killParts = collectKillParts()
-        if #killParts == 0 then return end
-        for _, kp in ipairs(killParts) do
-            killPartBackup[kp] = kp.CanTouch
-        end
-        _G._KillPartBackup = killPartBackup
-        killPartLoop = RunService.Heartbeat:Connect(function()
-            if not elephantImmuneEnabled then return end
-            for _, kp in ipairs(killParts) do
-                if kp and kp.Parent and kp.CanTouch then
-                    pcall(function() kp.CanTouch = false end)
-                end
-            end
-        end)
-    end
-
     local function setup()
         if _G._ElephantImmune_Loop then
             _G._ElephantImmune_Loop:Disconnect()
             _G._ElephantImmune_Loop = nil
         end
-        if not elephantImmuneEnabled then
-            killPartRestore()
-            restoreScripts()  -- ★ v16.2.4：关闭时恢复被禁脚本
-            return
-        end
+        if not elephantImmuneEnabled then return end
         disableScripts()
         _G._ElephantImmune_Loop = RunService.Heartbeat:Connect(function()
             if not elephantImmuneEnabled then return end
             disableScripts()
         end)
-        killPartSetup()
     end
-    toggleBase("免疫象脚 + 致死区", "elephantImmune", false, function(v)
+    toggleBase("免疫象脚", "elephantImmune", false, function(v)
         elephantImmuneEnabled = v
         setup()
     end)
     lp.CharacterAdded:Connect(function()
         wait(1)
-        disabledScripts = {}
-        _G._ElephantImmune_DisabledScripts = nil
         if elephantImmuneEnabled then setup() end
     end)
     table.insert(cleanupFns, function()
@@ -1596,10 +1540,9 @@ do
             _G._ElephantImmune_Loop:Disconnect()
             _G._ElephantImmune_Loop = nil
         end
-        killPartRestore()
-        restoreScripts()  -- ★ v16.2.4：关闭时恢复被禁脚本
     end)
 end
+
 -- ============ 模块 11: 去除枪口遮挡 ============
 do
     local muzzleHbConn = nil
@@ -2222,7 +2165,7 @@ local function applyLayout(layout)
         end
     end
     layoutSwitchBtn.Text = (layout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-    title.Text = "Examination v16.2.4 - " .. (layout == "mobile" and "手机" or "电脑")
+    title.Text = "Examination v16.2.6 - " .. (layout == "mobile" and "手机" or "电脑")
     if isCollapsed then
         main.Size = UDim2.new(0, L.W, 0, L.TitleH)
     end
@@ -2234,7 +2177,7 @@ bindTap(layoutSwitchBtn, function()
 end)
 
 layoutSwitchBtn.Text = (currentLayout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-title.Text = "Examination v16.2.4 - " .. (currentLayout == "mobile" and "手机" or "电脑")
+title.Text = "Examination v16.2.6 - " .. (currentLayout == "mobile" and "手机" or "电脑")
 
 -- ============ 模块 17: 魔法子弹页 ============
 do
@@ -2384,6 +2327,8 @@ do
 
     local lastFindTick = 0
     local cachedTarget = nil
+
+    -- ★ v16.2.6：findTarget 遍历所有 AI 容器
     local function findTarget()
         local now = tick()
         if now - lastFindTick < 0.016 then return cachedTarget end
@@ -2395,8 +2340,6 @@ do
         if not cam then cachedTarget = nil; return nil end
         local vs = cam.ViewportSize
         local cx, cy = vs.X / 2, vs.Y / 2
-        local chars = Workspace:FindFirstChild("Characters")
-        if not chars then cachedTarget = nil; return nil end
         local myPos = myHrp.Position
         local r2 = mbFovRadius * mbFovRadius
         local best, bestD2 = nil, math.huge
@@ -2405,26 +2348,31 @@ do
         table.insert(excludeVis, cam)
         local vms = Workspace:FindFirstChild("Viewmodels")
         if vms then table.insert(excludeVis, vms) end
-        for _, m in ipairs(chars:GetChildren()) do
-            if m ~= myChar and m:IsA("Model") and isAlive(m) and isHostile(m) then
-                local aimPart = getAimPart(m)
-                local head = m:FindFirstChild("Head")
-                if aimPart and head then
-                    local wd = (aimPart.Position - myPos).Magnitude
-                    if wd <= mbWorldDistMax then
-                        local visible = true
-                        if mbRequireVisible then
-                            visible = isPointVisible(camPos, aimPart.Position, m, excludeVis)
-                        end
-                        if visible then
-                            local s, onScreen = cam:WorldToViewportPoint(head.Position)
-                            if onScreen and s.Z > 0 then
-                                local dx = s.X - cx
-                                local dy = s.Y - cy
-                                local d2 = dx*dx + dy*dy
-                                if d2 <= r2 and d2 < bestD2 then
-                                    bestD2 = d2
-                                    best = { model = m, head = head, aimPart = aimPart }
+        for _, folderName in ipairs(AI_CONTAINERS) do
+            local folder = Workspace:FindFirstChild(folderName)
+            if folder then
+                for _, m in ipairs(folder:GetChildren()) do
+                    if m ~= myChar and m:IsA("Model") and isAlive(m) and isHostile(m) then
+                        local aimPart = getAimPart(m)
+                        local head = m:FindFirstChild("Head")
+                        if aimPart and head then
+                            local wd = (aimPart.Position - myPos).Magnitude
+                            if wd <= mbWorldDistMax then
+                                local visible = true
+                                if mbRequireVisible then
+                                    visible = isPointVisible(camPos, aimPart.Position, m, excludeVis)
+                                end
+                                if visible then
+                                    local s, onScreen = cam:WorldToViewportPoint(head.Position)
+                                    if onScreen and s.Z > 0 then
+                                        local dx = s.X - cx
+                                        local dy = s.Y - cy
+                                        local d2 = dx*dx + dy*dy
+                                        if d2 <= r2 and d2 < bestD2 then
+                                            bestD2 = d2
+                                            best = { model = m, head = head, aimPart = aimPart }
+                                        end
+                                    end
                                 end
                             end
                         end
@@ -2441,26 +2389,32 @@ do
     local teammateCache = { list = {}, tick = 0 }
     local corpseCache = { list = {}, tick = 0 }
 
+    local function forEachModel(fn)
+        for _, folderName in ipairs(AI_CONTAINERS) do
+            local folder = Workspace:FindFirstChild(folderName)
+            if folder then
+                for _, m in ipairs(folder:GetChildren()) do
+                    if m:IsA("Model") then fn(m) end
+                end
+            end
+        end
+    end
+
     local function collectShields()
         local now = tick()
         if now - shieldCache.tick < 1 and #shieldCache.list > 0 then return shieldCache.list end
         shieldCache.tick = now
         local list = {}
-        local chars = Workspace:FindFirstChild("Characters")
-        if chars then
-            for _, m in ipairs(chars:GetChildren()) do
-                if m:IsA("Model") then
-                    for _, d in ipairs(m:GetDescendants()) do
-                        if d:IsA("BasePart") then
-                            local n = string.lower(d.Name)
-                            if n:find("shield", 1, true) or n:find("riot", 1, true) then
-                                table.insert(list, d)
-                            end
-                        end
+        forEachModel(function(m)
+            for _, d in ipairs(m:GetDescendants()) do
+                if d:IsA("BasePart") then
+                    local n = string.lower(d.Name)
+                    if n:find("shield", 1, true) or n:find("riot", 1, true) then
+                        table.insert(list, d)
                     end
                 end
             end
-        end
+        end)
         shieldCache.list = list
         return list
     end
@@ -2470,22 +2424,17 @@ do
         if now - helmetCache.tick < 1 and #helmetCache.list > 0 then return helmetCache.list end
         helmetCache.tick = now
         local list = {}
-        local chars = Workspace:FindFirstChild("Characters")
-        if chars then
-            for _, m in ipairs(chars:GetChildren()) do
-                if m:IsA("Model") then
-                    for _, d in ipairs(m:GetDescendants()) do
-                        if d:IsA("BasePart") then
-                            local n = string.lower(d.Name)
-                            if n:find("helmet", 1, true) or n:find("helm", 1, true)
-                               or n:find("visor", 1, true) then
-                                table.insert(list, d)
-                            end
-                        end
+        forEachModel(function(m)
+            for _, d in ipairs(m:GetDescendants()) do
+                if d:IsA("BasePart") then
+                    local n = string.lower(d.Name)
+                    if n:find("helmet", 1, true) or n:find("helm", 1, true)
+                       or n:find("visor", 1, true) then
+                        table.insert(list, d)
                     end
                 end
             end
-        end
+        end)
         helmetCache.list = list
         return list
     end
@@ -2495,18 +2444,13 @@ do
         if now - teammateCache.tick < 1 and #teammateCache.list > 0 then return teammateCache.list end
         teammateCache.tick = now
         local list = {}
-        local chars = Workspace:FindFirstChild("Characters")
-        if chars then
-            for _, m in ipairs(chars:GetChildren()) do
-                if m:IsA("Model") and m ~= lp.Character then
-                    if Players:GetPlayerFromCharacter(m) then
-                        for _, d in ipairs(m:GetDescendants()) do
-                            if d:IsA("BasePart") then table.insert(list, d) end
-                        end
-                    end
+        forEachModel(function(m)
+            if m ~= lp.Character and Players:GetPlayerFromCharacter(m) then
+                for _, d in ipairs(m:GetDescendants()) do
+                    if d:IsA("BasePart") then table.insert(list, d) end
                 end
             end
-        end
+        end)
         teammateCache.list = list
         return list
     end
@@ -2516,19 +2460,16 @@ do
         if now - corpseCache.tick < 1 and #corpseCache.list > 0 then return corpseCache.list end
         corpseCache.tick = now
         local list = {}
-        local chars = Workspace:FindFirstChild("Characters")
-        if chars then
-            for _, m in ipairs(chars:GetChildren()) do
-                if m:IsA("Model") and m ~= lp.Character then
-                    local hum = m:FindFirstChildOfClass("Humanoid")
-                    if hum and hum.Health <= 0 then
-                        for _, d in ipairs(m:GetDescendants()) do
-                            if d:IsA("BasePart") then table.insert(list, d) end
-                        end
+        forEachModel(function(m)
+            if m ~= lp.Character then
+                local hum = m:FindFirstChildOfClass("Humanoid")
+                if hum and hum.Health <= 0 then
+                    for _, d in ipairs(m:GetDescendants()) do
+                        if d:IsA("BasePart") then table.insert(list, d) end
                     end
                 end
             end
-        end
+        end)
         corpseCache.list = list
         return list
     end
@@ -2569,13 +2510,10 @@ do
     local function destroyLockBB()
         if lockBB and lockBB.Parent then pcall(function() lockBB:Destroy() end) end
         lockBB = nil; lockTarget = nil
-        local chars = Workspace:FindFirstChild("Characters")
-        if chars then
-            for _, c in ipairs(chars:GetChildren()) do
-                local bb = c:FindFirstChild("Exam_MB_LockBB")
-                if bb then pcall(function() bb:Destroy() end) end
-            end
-        end
+        forEachModel(function(m)
+            local bb = m:FindFirstChild("Exam_MB_LockBB")
+            if bb then pcall(function() bb:Destroy() end) end
+        end)
     end
     local function createLockBB(part)
         local bb = Instance.new("BillboardGui")
@@ -3009,7 +2947,7 @@ do
     end)
 end
 
--- ============ 模块 18: 雷达页 ============
+-- ============ 模块 18: 雷达页（v16.2.6：加 Leaper 紫 + 遍历所有容器） ============
 do
     local rpEnabled = false
     local rpUseHeartbeat = true
@@ -3032,11 +2970,6 @@ do
     local rpCacheRotLockedTick = 0
 
     local rpDotPool = {}
-    local rpCharsFolder = nil
-    local function rpRefreshCharsFolder()
-        rpCharsFolder = Workspace:FindFirstChild("Characters")
-    end
-    rpRefreshCharsFolder()
 
     local function rpGetMC()
         local pg = lp:FindFirstChild("PlayerGui")
@@ -3089,28 +3022,29 @@ do
     end
     local function rpCollectEnemies()
         local list = {}
-        if not rpCharsFolder then
-            rpRefreshCharsFolder()
-            if not rpCharsFolder then return list end
-        end
-        for _, model in ipairs(rpCharsFolder:GetChildren()) do
-            if model:IsA("Model") then
-                local hum = model:FindFirstChildOfClass("Humanoid")
-                local hrp = model:FindFirstChild("HumanoidRootPart")
-                if hum and hrp and hum.Health > 0 then
-                    if not _playerChars[model] then
-                        local n = model.Name
-                        local c
-                        if n == "SIN" or n == "Chimera" or n == "Gilbert" or n == "Mikhail" then
-                            c = Color3.fromRGB(170, 0, 255)
-                        elseif n == "RIF Miniboss" or n == "Dave" or n == "CombatEngineer" or n == "Vorax"
-                            or n == "Slasher1" or n == "Slasher2" or n == "Slasher3"
-                            or n == "Slasher4" or n == "Slasher5" or n == "Slasher6" then
-                            c = Color3.fromRGB(255, 140, 0)
-                        else
-                            c = Color3.fromRGB(255, 0, 0)
+        for _, folderName in ipairs(AI_CONTAINERS) do
+            local folder = Workspace:FindFirstChild(folderName)
+            if folder then
+                for _, model in ipairs(folder:GetChildren()) do
+                    if model:IsA("Model") then
+                        local hum = model:FindFirstChildOfClass("Humanoid")
+                        local hrp = model:FindFirstChild("HumanoidRootPart")
+                        if hum and hrp and hum.Health > 0 then
+                            if not _playerChars[model] then
+                                local n = model.Name
+                                local c
+                                -- ★ v16.2.6：Leaper 归紫
+                                if n == "SIN" or n == "Chimera" or n == "Gilbert"
+                                   or n == "Mikhail" or n == "Leaper" then
+                                    c = Color3.fromRGB(170, 0, 255)
+                                elseif n == "RIF Miniboss" or n == "Dave" or n == "CombatEngineer" or n == "Vorax" then
+                                    c = Color3.fromRGB(255, 140, 0)
+                                else
+                                    c = Color3.fromRGB(255, 0, 0)
+                                end
+                                list[#list+1] = { pos = hrp.Position, color = c, hrp = hrp }
+                            end
                         end
-                        list[#list+1] = { pos = hrp.Position, color = c, hrp = hrp }
                     end
                 end
             end
@@ -3300,14 +3234,6 @@ do
             else
                 wait(0.05)
             end
-        end
-    end)
-    spawn(function()
-        while gui.Parent do
-            if not rpCharsFolder or not rpCharsFolder.Parent then
-                rpRefreshCharsFolder()
-            end
-            wait(2)
         end
     end)
 
@@ -3574,9 +3500,9 @@ bindTap(closeBtn, function()
     pcall(function() StarterGui:SetCore("ResetButtonCallback", false) end)
     _G.ExaminationUI = nil
     gui:Destroy()
-    print("[Exam] v16.2.4 已完全卸载")
+    print("[Exam] v16.2.6 已完全卸载")
 end)
 
-print("[Exam] v16.2.4 已加载（布局=" .. currentLayout .. "）")
+print("[Exam] v16.2.6 已加载（布局=" .. currentLayout .. "）")
 
 -- ===END OF SCRIPT===
