@@ -1,6 +1,6 @@
 --!nolint
 -- ============================================
--- Examination v16.3.8 新增可控滑铲方向的变向模式 以及修复了一些bug
+-- Examination v16.4.8 修复了大部分无CD滑铲造成的BUG 兼容了一些功能
 -- 此脚本使用AI生成
 -- 因使用混淆加密会导致手机用户无法正常使用所以没有使用混淆加密
 -- 请不要拿去缝合 此脚本永久免费
@@ -36,6 +36,8 @@ local autoQTEEnabled = false
 local shotgunNoPumpEnabled = false
 local shieldFixEnabled = false
 local shieldVMEnabled = false
+local noCDEnabled = false
+local noCDActiveUntil = 0
 local pierceShieldEnabled = true
 local pierceHelmetEnabled = true
 local pierceTeammateEnabled = true
@@ -43,7 +45,7 @@ local pierceCorpseEnabled = true
 local headSize = 4
 local slideDistanceMult = 2
 local shieldVMAlpha = 0.70
-local slideSteerMode = "camera"  -- "camera" | "move"
+local slideSteerMode = "camera"
 
 local AI_CONTAINERS = {"Characters", "Reactor1", "Reactor2", "Reactor3", "Reactor4"}
 
@@ -151,25 +153,11 @@ local function safeCleanup()
         _G._shieldFixTargetTrySlide = nil
         _G._shieldFixOrigTrySlide = nil
     end
-    if _G._ShieldVMTestUI and _G._ShieldVMTestUI.Parent then
-        pcall(function() _G._ShieldVMTestUI:Destroy() end)
-        _G._ShieldVMTestUI = nil
-    end
-    if _G.NumberKeyBlockerTest and _G.NumberKeyBlockerTest.Parent then
-        pcall(function() _G.NumberKeyBlockerTest:Destroy() end)
-        _G.NumberKeyBlockerTest = nil
-    end
-    if _G.ShieldTransTestUI and _G.ShieldTransTestUI.Parent then
-        pcall(function() _G.ShieldTransTestUI:Destroy() end)
-        _G.ShieldTransTestUI = nil
-    end
-    if _G.ShieldVMTestUI and _G.ShieldVMTestUI.Parent then
-        pcall(function() _G.ShieldVMTestUI:Destroy() end)
-        _G.ShieldVMTestUI = nil
-    end
-    if _G.SlideSteerModeTest and _G.SlideSteerModeTest.Parent then
-        pcall(function() _G.SlideSteerModeTest:Destroy() end)
-        _G.SlideSteerModeTest = nil
+    for _, name in ipairs({"ShieldTransTestUI", "ShieldVMTestUI", "NumberKeyBlockerTest", "SlideSteerModeTest", "SlideCDProbeUI", "SlideNoCDTestUI", "SlideChainTraceUI", "SlideCDv3UI", "SlideCDv31UI", "v63DumpUI", "SlideNoCDv2UI", "SlideNoCDv21UI", "SlideNoCDv3UI", "SlideNoCDv31UI", "SlideAllUI", "SlideResetTestUI"}) do
+        if _G[name] and _G[name].Parent then
+            pcall(function() _G[name]:Destroy() end)
+            _G[name] = nil
+        end
     end
     local function destroyFov()
         local parents = {}
@@ -294,75 +282,91 @@ local function detectLayout()
     return "desktop"
 end
 local currentLayout = detectLayout()
+local currentTab = "base"
 
 local LAYOUT = {
     mobile = {
-        W = 320, H = 550, CenterOffset = -275,
+        W = 320, H = 570,
         TitleH = 34, TabY = 36, PageTop = 66,
         items = {
             cdLabel          = { p = UDim2.new(0, 15, 0, 4),   s = UDim2.new(1, -30, 0, 20) },
-            stamina          = { p = UDim2.new(0, 15, 0, 28),  s = UDim2.new(0, 140, 0, 26) },
-            nameBtn          = { p = UDim2.new(0, 15, 0, 60),  s = UDim2.new(0, 140, 0, 26) },
-            headHitbox       = { p = UDim2.new(0, 15, 0, 92),  s = UDim2.new(0, 140, 0, 26) },
-            forceReset       = { p = UDim2.new(0, 15, 0, 124), s = UDim2.new(0, 140, 0, 26) },
-            nvg              = { p = UDim2.new(0, 15, 0, 156), s = UDim2.new(0, 140, 0, 26) },
-            muzzle           = { p = UDim2.new(0, 15, 0, 188), s = UDim2.new(0, 140, 0, 26) },
-            chatForce        = { p = UDim2.new(0, 15, 0, 220), s = UDim2.new(0, 140, 0, 26) },
-            shieldSlide      = { p = UDim2.new(0, 15, 0, 252), s = UDim2.new(0, 140, 0, 26) },
-            shieldVM         = { p = UDim2.new(0, 15, 0, 284), s = UDim2.new(0, 140, 0, 26) },
-            esp              = { p = UDim2.new(0, 165, 0, 28), s = UDim2.new(0, 140, 0, 26) },
-            hpBtn            = { p = UDim2.new(0, 165, 0, 60), s = UDim2.new(0, 140, 0, 26) },
-            autoInteract     = { p = UDim2.new(0, 165, 0, 92), s = UDim2.new(0, 140, 0, 26) },
-            slide            = { p = UDim2.new(0, 165, 0, 124),s = UDim2.new(0, 140, 0, 26) },
-            slideSteer       = { p = UDim2.new(0, 165, 0, 156),s = UDim2.new(0, 140, 0, 26) },
-            slideSteerMode   = { p = UDim2.new(0, 165, 0, 188),s = UDim2.new(0, 140, 0, 26) },
-            elephantImmune   = { p = UDim2.new(0, 165, 0, 220),s = UDim2.new(0, 140, 0, 26) },
-            recoil           = { p = UDim2.new(0, 165, 0, 252),s = UDim2.new(0, 140, 0, 26) },
-            forceHeadshot    = { p = UDim2.new(0, 165, 0, 284),s = UDim2.new(0, 140, 0, 26) },
-            autoQTE          = { p = UDim2.new(0, 165, 0, 316),s = UDim2.new(0, 140, 0, 26) },
-            shotgunNoPump    = { p = UDim2.new(0, 165, 0, 348),s = UDim2.new(0, 140, 0, 26) },
-            layoutSwitch     = { p = UDim2.new(0, 15, 0, 382), s = UDim2.new(1, -30, 0, 26) },
-            headSizeLabel    = { p = UDim2.new(0, 15, 0, 418), s = UDim2.new(0, 50, 0, 22) },
-            headSizeInput    = { p = UDim2.new(0, 70, 0, 418), s = UDim2.new(0, 55, 0, 22) },
-            slideDistLabel   = { p = UDim2.new(0, 135, 0, 418),s = UDim2.new(0, 95, 0, 22) },
-            slideDistInput   = { p = UDim2.new(0, 235, 0, 418),s = UDim2.new(0, 70, 0, 22) },
-            shieldAlphaLabel = { p = UDim2.new(0, 15, 0, 444), s = UDim2.new(0, 90, 0, 22) },
-            shieldAlphaInput = { p = UDim2.new(0, 110, 0, 444),s = UDim2.new(0, 60, 0, 22) },
+            stamina          = { p = UDim2.new(0, 15, 0, 28),  s = UDim2.new(0, 140, 0, 28) },
+            nameBtn          = { p = UDim2.new(0, 15, 0, 62),  s = UDim2.new(0, 140, 0, 28) },
+            headHitbox       = { p = UDim2.new(0, 15, 0, 96),  s = UDim2.new(0, 140, 0, 28) },
+            forceReset       = { p = UDim2.new(0, 15, 0, 130), s = UDim2.new(0, 140, 0, 28) },
+            nvg              = { p = UDim2.new(0, 15, 0, 164), s = UDim2.new(0, 140, 0, 28) },
+            muzzle           = { p = UDim2.new(0, 15, 0, 198), s = UDim2.new(0, 140, 0, 28) },
+            chatForce        = { p = UDim2.new(0, 15, 0, 232), s = UDim2.new(0, 140, 0, 28) },
+            shieldSlide      = { p = UDim2.new(0, 15, 0, 266), s = UDim2.new(0, 140, 0, 28) },
+            shieldVM         = { p = UDim2.new(0, 15, 0, 300), s = UDim2.new(0, 140, 0, 28) },
+            noCD             = { p = UDim2.new(0, 15, 0, 334), s = UDim2.new(0, 140, 0, 28) },
+            esp              = { p = UDim2.new(0, 165, 0, 28), s = UDim2.new(0, 140, 0, 28) },
+            hpBtn            = { p = UDim2.new(0, 165, 0, 62), s = UDim2.new(0, 140, 0, 28) },
+            autoInteract     = { p = UDim2.new(0, 165, 0, 96), s = UDim2.new(0, 140, 0, 28) },
+            slide            = { p = UDim2.new(0, 165, 0, 130),s = UDim2.new(0, 140, 0, 28) },
+            slideSteer       = { p = UDim2.new(0, 165, 0, 164),s = UDim2.new(0, 140, 0, 28) },
+            slideSteerMode   = { p = UDim2.new(0, 165, 0, 198),s = UDim2.new(0, 140, 0, 28) },
+            elephantImmune   = { p = UDim2.new(0, 165, 0, 232),s = UDim2.new(0, 140, 0, 28) },
+            recoil           = { p = UDim2.new(0, 165, 0, 266),s = UDim2.new(0, 140, 0, 28) },
+            forceHeadshot    = { p = UDim2.new(0, 165, 0, 300),s = UDim2.new(0, 140, 0, 28) },
+            autoQTE          = { p = UDim2.new(0, 165, 0, 334),s = UDim2.new(0, 140, 0, 28) },
+            shotgunNoPump    = { p = UDim2.new(0, 165, 0, 368),s = UDim2.new(0, 140, 0, 28) },
+            layoutSwitch     = { p = UDim2.new(0, 15, 0, 406), s = UDim2.new(1, -30, 0, 28) },
+            headSizeLabel    = { p = UDim2.new(0, 15, 0, 442), s = UDim2.new(0, 50, 0, 22) },
+            headSizeInput    = { p = UDim2.new(0, 70, 0, 442), s = UDim2.new(0, 55, 0, 22) },
+            slideDistLabel   = { p = UDim2.new(0, 140, 0, 442),s = UDim2.new(0, 90, 0, 22) },
+            slideDistInput   = { p = UDim2.new(0, 235, 0, 442),s = UDim2.new(0, 70, 0, 22) },
+            shieldAlphaLabel = { p = UDim2.new(0, 15, 0, 470), s = UDim2.new(0, 90, 0, 22) },
+            shieldAlphaInput = { p = UDim2.new(0, 110, 0, 470),s = UDim2.new(0, 60, 0, 22) },
         },
     },
     desktop = {
-        W = 320, H = 830, CenterOffset = -415,
+        W = 320, H = 910,
         TitleH = 30, TabY = 33, PageTop = 63,
         items = {
             cdLabel          = { p = UDim2.new(0, 15, 0, 5),   s = UDim2.new(1, -30, 0, 22) },
-            stamina          = { p = UDim2.new(0, 15, 0, 32),  s = UDim2.new(1, -30, 0, 30) },
-            esp              = { p = UDim2.new(0, 15, 0, 66),  s = UDim2.new(1, -30, 0, 30) },
-            nameBtn          = { p = UDim2.new(0, 15, 0, 100), s = UDim2.new(0, 140, 0, 28) },
-            hpBtn            = { p = UDim2.new(0, 165, 0, 100),s = UDim2.new(0, 140, 0, 28) },
-            headHitbox       = { p = UDim2.new(0, 15, 0, 132), s = UDim2.new(1, -30, 0, 30) },
-            autoInteract     = { p = UDim2.new(0, 15, 0, 166), s = UDim2.new(1, -30, 0, 30) },
-            forceReset       = { p = UDim2.new(0, 15, 0, 200), s = UDim2.new(1, -30, 0, 30) },
-            slide            = { p = UDim2.new(0, 15, 0, 234), s = UDim2.new(1, -30, 0, 30) },
-            slideSteer       = { p = UDim2.new(0, 15, 0, 268), s = UDim2.new(1, -30, 0, 30) },
-            slideSteerMode   = { p = UDim2.new(0, 15, 0, 302), s = UDim2.new(1, -30, 0, 30) },
-            nvg              = { p = UDim2.new(0, 15, 0, 336), s = UDim2.new(1, -30, 0, 30) },
-            elephantImmune   = { p = UDim2.new(0, 15, 0, 370), s = UDim2.new(1, -30, 0, 30) },
-            muzzle           = { p = UDim2.new(0, 15, 0, 404), s = UDim2.new(1, -30, 0, 30) },
-            recoil           = { p = UDim2.new(0, 15, 0, 438), s = UDim2.new(1, -30, 0, 30) },
-            chatForce        = { p = UDim2.new(0, 15, 0, 472), s = UDim2.new(1, -30, 0, 30) },
-            forceHeadshot    = { p = UDim2.new(0, 15, 0, 506), s = UDim2.new(1, -30, 0, 30) },
-            autoQTE          = { p = UDim2.new(0, 15, 0, 540), s = UDim2.new(1, -30, 0, 30) },
-            shotgunNoPump    = { p = UDim2.new(0, 15, 0, 574), s = UDim2.new(1, -30, 0, 30) },
-            shieldSlide      = { p = UDim2.new(0, 15, 0, 608), s = UDim2.new(1, -30, 0, 30) },
-            shieldVM         = { p = UDim2.new(0, 15, 0, 642), s = UDim2.new(1, -30, 0, 30) },
-            layoutSwitch     = { p = UDim2.new(0, 15, 0, 676), s = UDim2.new(1, -30, 0, 24) },
-            headSizeLabel    = { p = UDim2.new(0, 15, 0, 702), s = UDim2.new(0, 50, 0, 20) },
-            headSizeInput    = { p = UDim2.new(0, 65, 0, 702), s = UDim2.new(0, 55, 0, 20) },
-            slideDistLabel   = { p = UDim2.new(0, 130, 0, 702),s = UDim2.new(0, 90, 0, 20) },
-            slideDistInput   = { p = UDim2.new(0, 225, 0, 702),s = UDim2.new(0, 75, 0, 20) },
-            shieldAlphaLabel = { p = UDim2.new(0, 15, 0, 726), s = UDim2.new(0, 90, 0, 20) },
-            shieldAlphaInput = { p = UDim2.new(0, 110, 0, 726),s = UDim2.new(0, 60, 0, 20) },
+            stamina          = { p = UDim2.new(0, 15, 0, 34),  s = UDim2.new(1, -30, 0, 30) },
+            esp              = { p = UDim2.new(0, 15, 0, 70),  s = UDim2.new(1, -30, 0, 30) },
+            nameBtn          = { p = UDim2.new(0, 15, 0, 106), s = UDim2.new(0, 140, 0, 28) },
+            hpBtn            = { p = UDim2.new(0, 165, 0, 106),s = UDim2.new(0, 140, 0, 28) },
+            headHitbox       = { p = UDim2.new(0, 15, 0, 142), s = UDim2.new(1, -30, 0, 30) },
+            autoInteract     = { p = UDim2.new(0, 15, 0, 178), s = UDim2.new(1, -30, 0, 30) },
+            forceReset       = { p = UDim2.new(0, 15, 0, 214), s = UDim2.new(1, -30, 0, 30) },
+            slide            = { p = UDim2.new(0, 15, 0, 250), s = UDim2.new(1, -30, 0, 30) },
+            slideSteer       = { p = UDim2.new(0, 15, 0, 286), s = UDim2.new(1, -30, 0, 30) },
+            slideSteerMode   = { p = UDim2.new(0, 15, 0, 322), s = UDim2.new(1, -30, 0, 30) },
+            nvg              = { p = UDim2.new(0, 15, 0, 358), s = UDim2.new(1, -30, 0, 30) },
+            elephantImmune   = { p = UDim2.new(0, 15, 0, 394), s = UDim2.new(1, -30, 0, 30) },
+            muzzle           = { p = UDim2.new(0, 15, 0, 430), s = UDim2.new(1, -30, 0, 30) },
+            recoil           = { p = UDim2.new(0, 15, 0, 466), s = UDim2.new(1, -30, 0, 30) },
+            chatForce        = { p = UDim2.new(0, 15, 0, 502), s = UDim2.new(1, -30, 0, 30) },
+            forceHeadshot    = { p = UDim2.new(0, 15, 0, 538), s = UDim2.new(1, -30, 0, 30) },
+            autoQTE          = { p = UDim2.new(0, 15, 0, 574), s = UDim2.new(1, -30, 0, 30) },
+            shotgunNoPump    = { p = UDim2.new(0, 15, 0, 610), s = UDim2.new(1, -30, 0, 30) },
+            shieldSlide      = { p = UDim2.new(0, 15, 0, 646), s = UDim2.new(1, -30, 0, 30) },
+            shieldVM         = { p = UDim2.new(0, 15, 0, 682), s = UDim2.new(1, -30, 0, 30) },
+            noCD             = { p = UDim2.new(0, 15, 0, 718), s = UDim2.new(1, -30, 0, 30) },
+            layoutSwitch     = { p = UDim2.new(0, 15, 0, 754), s = UDim2.new(1, -30, 0, 28) },
+            headSizeLabel    = { p = UDim2.new(0, 15, 0, 788), s = UDim2.new(0, 50, 0, 22) },
+            headSizeInput    = { p = UDim2.new(0, 65, 0, 788), s = UDim2.new(0, 55, 0, 22) },
+            slideDistLabel   = { p = UDim2.new(0, 130, 0, 788),s = UDim2.new(0, 90, 0, 22) },
+            slideDistInput   = { p = UDim2.new(0, 225, 0, 788),s = UDim2.new(0, 75, 0, 22) },
+            shieldAlphaLabel = { p = UDim2.new(0, 15, 0, 816), s = UDim2.new(0, 90, 0, 22) },
+            shieldAlphaInput = { p = UDim2.new(0, 110, 0, 816),s = UDim2.new(0, 60, 0, 22) },
         },
+    },
+}
+
+local TAB_HEIGHTS = {
+    mobile = {
+        base  = 570,
+        magic = 450,
+        radar = 320,
+    },
+    desktop = {
+        base  = 910,
+        magic = 450,
+        radar = 320,
     },
 }
 
@@ -372,7 +376,11 @@ if gethui then
     if ok and h then uiParent = h end
 end
 
-local L0 = LAYOUT[currentLayout]
+local function getTabHeight()
+    local th = TAB_HEIGHTS[currentLayout]
+    if th then return th[currentTab] or th.base end
+    return 570
+end
 
 local gui = Instance.new("ScreenGui")
 gui.Name = "ExaminationUI"
@@ -383,15 +391,15 @@ gui.Parent = uiParent
 _G.ExaminationUI = gui
 
 local main = Instance.new("Frame", gui)
-main.Size = UDim2.new(0, L0.W, 0, L0.H)
-main.Position = UDim2.new(0.5, -L0.W/2, 0.5, L0.CenterOffset)
+main.Size = UDim2.new(0, LAYOUT[currentLayout].W, 0, getTabHeight())
+main.Position = UDim2.new(0.5, -LAYOUT[currentLayout].W/2, 0.5, -getTabHeight()/2)
 main.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
 main.Active = false
 main.Draggable = false
 Instance.new("UICorner", main).CornerRadius = UDim.new(0, 8)
 
 local titleBar = Instance.new("Frame", main)
-titleBar.Size = UDim2.new(1, 0, 0, L0.TitleH)
+titleBar.Size = UDim2.new(1, 0, 0, LAYOUT[currentLayout].TitleH)
 titleBar.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
 titleBar.Active = false
 Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 8)
@@ -400,7 +408,7 @@ local title = Instance.new("TextLabel", titleBar)
 title.Size = UDim2.new(1, -70, 1, 0)
 title.Position = UDim2.new(0, 10, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "Examination v16.3.8"
+title.Text = "Examination v16.4.8"
 title.TextColor3 = Color3.new(1, 1, 1)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 13
@@ -449,7 +457,7 @@ Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 5)
 
 local tabBar = Instance.new("Frame", main)
 tabBar.Size = UDim2.new(1, -30, 0, 26)
-tabBar.Position = UDim2.new(0, 15, 0, L0.TabY)
+tabBar.Position = UDim2.new(0, 15, 0, LAYOUT[currentLayout].TabY)
 tabBar.BackgroundTransparency = 1
 
 local TAB_W = 1/3
@@ -472,24 +480,23 @@ local btnTabMagic = mkTabBtn("BtnMagic", "魔法子弹", TAB_W)
 local btnTabRadar = mkTabBtn("BtnRadar", "雷达", TAB_W * 2)
 
 local basePage = Instance.new("Frame", main)
-basePage.Size = UDim2.new(1, 0, 1, -L0.PageTop)
-basePage.Position = UDim2.new(0, 0, 0, L0.PageTop)
+basePage.Size = UDim2.new(1, 0, 1, -LAYOUT[currentLayout].PageTop)
+basePage.Position = UDim2.new(0, 0, 0, LAYOUT[currentLayout].PageTop)
 basePage.BackgroundTransparency = 1
 basePage.Visible = true
 
 local magicPage = Instance.new("Frame", main)
-magicPage.Size = UDim2.new(1, 0, 1, -L0.PageTop)
-magicPage.Position = UDim2.new(0, 0, 0, L0.PageTop)
+magicPage.Size = UDim2.new(1, 0, 1, -LAYOUT[currentLayout].PageTop)
+magicPage.Position = UDim2.new(0, 0, 0, LAYOUT[currentLayout].PageTop)
 magicPage.BackgroundTransparency = 1
 magicPage.Visible = false
 
 local radarPage = Instance.new("Frame", main)
-radarPage.Size = UDim2.new(1, 0, 1, -L0.PageTop)
-radarPage.Position = UDim2.new(0, 0, 0, L0.PageTop)
+radarPage.Size = UDim2.new(1, 0, 1, -LAYOUT[currentLayout].PageTop)
+radarPage.Position = UDim2.new(0, 0, 0, LAYOUT[currentLayout].PageTop)
 radarPage.BackgroundTransparency = 1
 radarPage.Visible = false
 
-local currentTab = "base"
 local C_TAB_ON = Color3.fromRGB(0, 120, 60)
 local C_TAB_OFF = Color3.fromRGB(70, 70, 70)
 local function switchTab(which)
@@ -497,6 +504,12 @@ local function switchTab(which)
     basePage.Visible = (which == "base")
     magicPage.Visible = (which == "magic")
     radarPage.Visible = (which == "radar")
+    local L = LAYOUT[currentLayout]
+    local h = getTabHeight()
+    main.Size = UDim2.new(0, L.W, 0, h)
+    basePage.Size = UDim2.new(1, 0, 1, -L.PageTop)
+    magicPage.Size = UDim2.new(1, 0, 1, -L.PageTop)
+    radarPage.Size = UDim2.new(1, 0, 1, -L.PageTop)
     btnTabBase.BackgroundColor3 = (which == "base") and C_TAB_ON or C_TAB_OFF
     btnTabMagic.BackgroundColor3 = (which == "magic") and C_TAB_ON or C_TAB_OFF
     btnTabRadar.BackgroundColor3 = (which == "radar") and C_TAB_ON or C_TAB_OFF
@@ -1350,7 +1363,7 @@ do
     end)
 end
 
--- ============ 模块 6.5: 滑铲变向（视角 / 移动） ============
+-- ============ 模块 6.5: 滑铲变向 ============
 do
     local steerLoop = nil
     local function computeDir(hum, cam)
@@ -1364,7 +1377,6 @@ do
             local md = hum.MoveDirection
             md = Vector3.new(md.X, 0, md.Z)
             if md.Magnitude < 0.1 then
-                -- 无输入 → 回退相机方向，避免乱甩
                 if cam then
                     local dir = cam.CFrame.LookVector
                     dir = Vector3.new(dir.X, 0, dir.Z)
@@ -1409,7 +1421,6 @@ do
         slideSteerEnabled = v
         setup()
     end)
-
     local modeBtn = Instance.new("TextButton", basePage)
     modeBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 100)
     modeBtn.TextColor3 = Color3.new(1, 1, 1)
@@ -1429,7 +1440,6 @@ do
         refreshModeText()
     end)
     refreshModeText()
-
     lp.CharacterAdded:Connect(function()
         wait(2)
         if slideSteerEnabled then setup() end
@@ -1438,6 +1448,7 @@ do
         if steerLoop then pcall(function() steerLoop:Disconnect() end) end
     end)
 end
+
 -- ============ 模块 7: 无限电量夜视仪 ============
 do
     local nvgBadgeHooked = false
@@ -1575,7 +1586,7 @@ do
     end)
 end
 
--- ============ 模块 8: 免疫象脚 + 致死区（v16.3.5 性能优化版） ============
+-- ============ 模块 8: 免疫象脚 + 致死区 ============
 do
     local keywords = {"elephant","lookatme","playerdiedbylooking","diedbylooking"}
     local function match(name)
@@ -1585,9 +1596,7 @@ do
         end
         return false
     end
-
     local disabledScripts = {}
-
     local function disableScripts()
         local char = lp.Character
         if not char then return 0 end
@@ -1606,7 +1615,6 @@ do
         _G._ElephantImmune_DisabledScripts = disabledScripts
         return count
     end
-
     local function restoreScripts()
         local n = 0
         for s, orig in pairs(disabledScripts) do
@@ -1619,10 +1627,8 @@ do
         _G._ElephantImmune_DisabledScripts = nil
         return n
     end
-
     local killParts = {}
     local killPartBackup = {}
-
     local function killPartRestore()
         for kp, orig in pairs(killPartBackup) do
             if kp and kp.Parent then
@@ -1638,15 +1644,12 @@ do
         killParts = {}
         _G._KillPartBackup = nil
     end
-
     local function neutralizeOne(kp)
         if not kp or not kp.Parent then return end
         if not killPartBackup[kp] then
             killPartBackup[kp] = {
-                Size = kp.Size,
-                CFrame = kp.CFrame,
-                CanTouch = kp.CanTouch,
-                CanCollide = kp.CanCollide,
+                Size = kp.Size, CFrame = kp.CFrame,
+                CanTouch = kp.CanTouch, CanCollide = kp.CanCollide,
             }
         end
         pcall(function()
@@ -1656,7 +1659,6 @@ do
             kp.CanCollide = false
         end)
     end
-
     local function killPartFullScan()
         killParts = {}
         for _, d in ipairs(Workspace:GetDescendants()) do
@@ -1667,7 +1669,6 @@ do
         end
         _G._KillPartBackup = killPartBackup
     end
-
     local killPartScanLoop = nil
     local function startKillPartScan()
         if killPartScanLoop then killPartScanLoop = nil end
@@ -1685,15 +1686,12 @@ do
                 end
                 for _, c in ipairs(Workspace:GetChildren()) do
                     scanOne(c)
-                    for _, cc in ipairs(c:GetChildren()) do
-                        scanOne(cc)
-                    end
+                    for _, cc in ipairs(c:GetChildren()) do scanOne(cc) end
                 end
             end
             killPartScanLoop = nil
         end)
     end
-
     local elephantLoop = nil
     local function startElephantLoop()
         if elephantLoop then pcall(function() elephantLoop:Disconnect() end); elephantLoop = nil end
@@ -1703,7 +1701,6 @@ do
             disableScripts()
         end)
     end
-
     local function setup()
         if elephantLoop then pcall(function() elephantLoop:Disconnect() end); elephantLoop = nil end
         if killPartScanLoop then killPartScanLoop = nil end
@@ -1717,7 +1714,6 @@ do
         startKillPartScan()
         startElephantLoop()
     end
-
     toggleBase("免疫象脚 + 致死区", "elephantImmune", false, function(v)
         elephantImmuneEnabled = v
         setup()
@@ -1736,7 +1732,6 @@ do
         restoreScripts()
     end)
 end
-
 -- ============ 模块 11: 去除枪口遮挡 ============
 do
     local muzzleHbConn = nil
@@ -1857,7 +1852,6 @@ do
     local recoilPatchedMTs = {}
     local recoilPatchedInsts = setmetatable({}, { __mode = "k" })
     local recoilZeroLoop = nil
-
     local function isSpringLike(v)
         if type(v) ~= "table" then return false end
         if rawget(v, "_position0") or rawget(v, "_velocity0")
@@ -1867,13 +1861,11 @@ do
         end
         return false
     end
-
     local function patchMetatable(mt)
         if type(mt) ~= "table" then return false end
         if recoilPatchedMTs[mt] then return false end
         recoilPatchedMTs[mt] = true
         local hit = false
-
         local acc = rawget(mt, "Accelerate")
         if type(acc) == "function" and acc ~= NOOP then
             pcall(function() rawset(mt, "Accelerate", NOOP) end)
@@ -1884,7 +1876,6 @@ do
             pcall(function() rawset(mt, "_positionVelocity", function() return ZERO_V3, ZERO_V3 end) end)
             hit = true
         end
-
         local oi = rawget(mt, "__index")
         if type(oi) == "function" then
             local newIndex = function(self, key)
@@ -1926,13 +1917,11 @@ do
         end
         return hit
     end
-
     local function patchInstance(inst)
         if type(inst) ~= "table" then return false end
         if recoilPatchedInsts[inst] then return false end
         if not isSpringLike(inst) then return false end
         recoilPatchedInsts[inst] = true
-
         local acc = rawget(inst, "Accelerate")
         if type(acc) == "function" and acc ~= NOOP then
             pcall(function() rawset(inst, "Accelerate", NOOP) end)
@@ -1941,14 +1930,10 @@ do
         if type(pv) == "function" then
             pcall(function() rawset(inst, "_positionVelocity", function() return ZERO_V3, ZERO_V3 end) end)
         end
-
         local mt = getmetatable(inst)
-        if mt and type(mt) == "table" then
-            patchMetatable(mt)
-        end
+        if mt and type(mt) == "table" then patchMetatable(mt) end
         return true
     end
-
     local function startZeroLoop()
         if recoilZeroLoop then return end
         recoilZeroLoop = spawn(function()
@@ -1967,24 +1952,17 @@ do
             recoilZeroLoop = nil
         end)
     end
-
     local function stopZeroLoop()
         if recoilZeroLoop then
             pcall(function() recoilZeroLoop:Disconnect() end)
             recoilZeroLoop = nil
         end
     end
-
     local recoilSpringModule = nil
     local recoilSpring2Module = nil
-    local recoilOrigNew = nil
-    local recoilOrigNew2 = nil
-
     local function hookModule(path, label)
         local p = ReplicatedStorage
-        for _, seg in ipairs(path) do
-            p = p and p:FindFirstChild(seg)
-        end
+        for _, seg in ipairs(path) do p = p and p:FindFirstChild(seg) end
         if not p then return end
         local ok, m = pcall(require, p)
         if not ok or type(m) ~= "table" then return end
@@ -2001,11 +1979,9 @@ do
         if label == "Spring" then
             if recoilSpringModule then return end
             recoilSpringModule = m
-            recoilOrigNew = newFn
         else
             if recoilSpring2Module then return end
             recoilSpring2Module = m
-            recoilOrigNew2 = newFn
         end
         local orig = newFn
         local mt = getmetatable(container)
@@ -2021,17 +1997,13 @@ do
         end)
         if mt then pcall(function() setmetatable(container, mt) end) end
     end
-
     local function rescan()
         pcall(function()
             for _, v in pairs(getgc(true)) do
-                if isSpringLike(v) then
-                    patchInstance(v)
-                end
+                if isSpringLike(v) then patchInstance(v) end
             end
         end)
     end
-
     local function setup()
         if not recoilEnabled then
             stopZeroLoop()
@@ -2044,17 +2016,14 @@ do
         rescan()
         startZeroLoop()
     end
-
     toggleBase("无后坐力", "recoil", false, function(v)
         recoilEnabled = v
         setup()
     end)
-
     lp.CharacterAdded:Connect(function()
         wait(1)
         if recoilEnabled then rescan() end
     end)
-
     table.insert(cleanupFns, function()
         recoilEnabled = false
         stopZeroLoop()
@@ -2208,10 +2177,8 @@ do
         local events = ReplicatedStorage:FindFirstChild("Events")
         if events then qteInputRemote = events:FindFirstChild("QTEInput") end
     end
-
     local qteConn = nil
     local lastQteTick = 0
-
     local function getRequested()
         if qteModule and type(qteModule.GetCurrentRequestedInput) == "function" then
             local ok, res = pcall(qteModule.GetCurrentRequestedInput)
@@ -2219,7 +2186,6 @@ do
         end
         return nil
     end
-
     local function fireHandleInput(keyName)
         if not qteModule or type(qteModule.HandleInput) ~= "function" then return end
         local now = tick()
@@ -2227,7 +2193,6 @@ do
         lastQteTick = now
         pcall(qteModule.HandleInput, keyName)
     end
-
     local function onQTEInput(keyName)
         if not autoQTEEnabled then return end
         task.spawn(function()
@@ -2237,19 +2202,16 @@ do
             fireHandleInput(targetKey)
         end)
     end
-
     local function setup()
         if qteConn then pcall(function() qteConn:Disconnect() end); qteConn = nil end
         if not autoQTEEnabled then return end
         if not qteInputRemote then return end
         qteConn = qteInputRemote.OnClientEvent:Connect(onQTEInput)
     end
-
     toggleBase("自动 QTE", "autoQTE", false, function(v)
         autoQTEEnabled = v
         setup()
     end)
-
     table.insert(cleanupFns, function()
         if qteConn then pcall(function() qteConn:Disconnect() end) end
     end)
@@ -2258,7 +2220,6 @@ end
 -- ============ 模块 16: 霰弹枪连发 ============
 do
     local animatorConn = nil
-
     local function isTargetAnim(track)
         local an = track.Animation
         if not an then return false end
@@ -2266,7 +2227,6 @@ do
         if not id then return false end
         return SHOTGUN_PUMP_IDS[id] == true
     end
-
     local function restoreTracks()
         local char = lp.Character
         if not char then return end
@@ -2284,7 +2244,6 @@ do
             end
         end
     end
-
     local function setupAnimator()
         if animatorConn then pcall(function() animatorConn:Disconnect() end); animatorConn = nil end
         local char = lp.Character
@@ -2300,7 +2259,6 @@ do
             end
         end)
     end
-
     toggleBase("霰弹枪连发", "shotgunNoPump", false, function(v)
         shotgunNoPumpEnabled = v
         if v then
@@ -2310,12 +2268,10 @@ do
             pcall(restoreTracks)
         end
     end)
-
     lp.CharacterAdded:Connect(function()
         wait(1)
         if shotgunNoPumpEnabled then setupAnimator() end
     end)
-
     table.insert(cleanupFns, function()
         shotgunNoPumpEnabled = false
         if animatorConn then pcall(function() animatorConn:Disconnect() end) end
@@ -2332,7 +2288,6 @@ do
     local startSlideFn = nil
     local origTrySlideFn = nil
     local trySlideHooked = false
-
     local pushLoop = nil
     local hudLoop = nil
 
@@ -2349,6 +2304,8 @@ do
     local function pushAttrs()
         local char = lp.Character
         if not char then return end
+        -- ★ noCD 激活中不压，让 noCD 的 true 生效
+        if noCDEnabled and noCDActiveUntil > tick() then return end
         pcall(function() char:SetAttribute("RiotShieldEquipped", false) end)
         for _, t in ipairs(char:GetChildren()) do
             if t:IsA("Tool") then
@@ -2371,9 +2328,7 @@ do
         end)
     end
 
-    local function stopPush()
-        pushLoop = nil
-    end
+    local function stopPush() pushLoop = nil end
 
     local function hookBadge()
         if badgeHooked or not hookfunction then return end
@@ -2428,6 +2383,9 @@ do
         origTrySlideFn = trySlideFn
         local ok = pcall(function()
             hookfunction(trySlideFn, function(...)
+                if not shieldFixEnabled then
+                    return origTrySlideFn(...)
+                end
                 local char = lp.Character
                 if not char then return false end
                 local hum = char:FindFirstChildOfClass("Humanoid")
@@ -2476,9 +2434,7 @@ do
         end)
     end
 
-    local function stopHudFix()
-        hudLoop = nil
-    end
+    local function stopHudFix() hudLoop = nil end
 
     local function setup()
         if shieldFixEnabled then
@@ -2520,13 +2476,11 @@ do
     local tracked = {}
     local scanLoop = nil
     local lastVM = nil
-
     local function getViewmodel()
         local cam = Workspace.CurrentCamera
         if not cam then return nil end
         return cam:FindFirstChild("RiotShieldViewmodel")
     end
-
     local function applyToVM(vm)
         if not vm then return 0 end
         local count = 0
@@ -2545,7 +2499,6 @@ do
         end
         return count
     end
-
     local function restoreAll()
         for p, orig in pairs(tracked) do
             if p and p.Parent then
@@ -2554,7 +2507,6 @@ do
         end
         tracked = {}
     end
-
     local function startScanLoop()
         if scanLoop then scanLoop:Disconnect(); scanLoop = nil end
         scanLoop = RunService.Heartbeat:Connect(function()
@@ -2568,7 +2520,6 @@ do
             end
         end)
     end
-
     spawn(function()
         while gui.Parent do
             wait(0.5)
@@ -2577,7 +2528,6 @@ do
             end
         end
     end)
-
     toggleBase("第一人称盾牌半透明", "shieldVM", false, function(v)
         shieldVMEnabled = v
         if v then
@@ -2593,7 +2543,6 @@ do
             lastVM = nil
         end
     end)
-
     local alphaLabel = Instance.new("TextLabel", basePage)
     alphaLabel.BackgroundTransparency = 1
     alphaLabel.Text = "盾牌透明度:"
@@ -2601,7 +2550,6 @@ do
     alphaLabel.Font = Enum.Font.Gotham; alphaLabel.TextSize = 11
     alphaLabel.TextXAlignment = Enum.TextXAlignment.Left
     reg(alphaLabel, "shieldAlphaLabel")
-
     local alphaInput = Instance.new("TextBox", basePage)
     alphaInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
     alphaInput.TextColor3 = Color3.new(1, 1, 1)
@@ -2622,7 +2570,6 @@ do
             alphaInput.Text = string.format("%.2f", shieldVMAlpha)
         end
     end)
-
     lp.CharacterAdded:Connect(function()
         wait(1)
         tracked = {}
@@ -2635,11 +2582,135 @@ do
             end
         end
     end)
-
     table.insert(cleanupFns, function()
         shieldVMEnabled = false
         if scanLoop then scanLoop:Disconnect() end
         restoreAll()
+    end)
+end
+
+-- ============ 模块 16.7: 无滑铲冷却（有bug慎用）v16.4.8 ============
+-- ★ 保留 v16.4.6 完整逻辑：humConn + bindKeyboard + 恢复循环
+-- ★ 只删 customSlide 强制推动 → 改为「只刷 CD 不推角色」
+-- ★ toggle 开启立即刷一次 CD
+do
+    local humConn = nil
+    local keyConn = nil
+    local slideGen = 0
+    local lastKeyTick = 0
+
+    -- ★ 立即刷 CD：压 Attribute=true 0.15s → 走 v63=true 清 u17
+    local function refreshCDNow()
+        local char = lp.Character
+        if not char then return end
+        noCDActiveUntil = tick() + 0.15
+        pcall(function() char:SetAttribute("RiotShieldEquipped", true) end)
+    end
+
+    local function bindHum()
+        if humConn then pcall(function() humConn:Disconnect() end); humConn = nil end
+        local char = lp.Character
+        if not char then return end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not hum then return end
+        humConn = hum:GetAttributeChangedSignal("sliding"):Connect(function()
+            local s = hum:GetAttribute("sliding")
+            if s == true then
+                slideGen = slideGen + 1
+                local myGen = slideGen
+                task.spawn(function()
+                    task.wait(0.5)
+                    if slideGen ~= myGen then return end
+                    if not noCDEnabled then return end
+                    local c = lp.Character
+                    if not c then return end
+                    local h = c:FindFirstChildOfClass("Humanoid")
+                    if not h or not h:GetAttribute("sliding") then return end
+                    noCDActiveUntil = tick() + 0.15
+                    pcall(function() c:SetAttribute("RiotShieldEquipped", true) end)
+                end)
+            end
+        end)
+    end
+
+    -- ★ 监听 C 键：撞墙中断后检测 u17 卡 → 只刷 CD，不推角色
+    local function bindKeyboard()
+        if keyConn then pcall(function() keyConn:Disconnect() end); keyConn = nil end
+        keyConn = UserInputService.InputBegan:Connect(function(input, gpe)
+            if not noCDEnabled then return end
+            if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+            if input.KeyCode ~= Enum.KeyCode.C then return end
+            local now = tick()
+            if now - lastKeyTick < 0.3 then return end
+            lastKeyTick = now
+            -- ★ 0.15s 后检测：没滑 + 移动中 → u17 卡 → 只刷 CD
+            task.spawn(function()
+                task.wait(0.15)
+                local char = lp.Character
+                if not char then return end
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if not hum then return end
+                local sliding = hum:GetAttribute("sliding")
+                local moving = hum.MoveDirection.Magnitude > 0.1
+                if not sliding and moving then
+                    -- ★ u17 卡 → 只刷 CD，不推角色
+                    noCDActiveUntil = tick() + 0.15
+                    pcall(function() char:SetAttribute("RiotShieldEquipped", true) end)
+                end
+            end)
+        end)
+    end
+
+    -- 恢复循环：noCDActiveUntil 过期后压回 false
+    spawn(function()
+        while gui.Parent do
+            wait(0.05)
+            if noCDEnabled and noCDActiveUntil > 0 and noCDActiveUntil <= tick() then
+                local char = lp.Character
+                if char then
+                    pcall(function() char:SetAttribute("RiotShieldEquipped", false) end)
+                end
+                noCDActiveUntil = 0
+            end
+        end
+    end)
+
+    toggleBase("无滑铲冷却（有bug慎用）", "noCD", false, function(v)
+        noCDEnabled = v
+        if v then
+            bindHum()
+            bindKeyboard()
+            -- ★ 开启立即刷一次 CD
+            refreshCDNow()
+        else
+            noCDActiveUntil = 0
+            if humConn then pcall(function() humConn:Disconnect() end); humConn = nil end
+            if keyConn then pcall(function() keyConn:Disconnect() end); keyConn = nil end
+            local char = lp.Character
+            if char then
+                pcall(function() char:SetAttribute("RiotShieldEquipped", false) end)
+            end
+        end
+    end)
+
+    lp.CharacterAdded:Connect(function()
+        wait(1)
+        if noCDEnabled then
+            bindHum()
+            bindKeyboard()
+            refreshCDNow()
+        end
+    end)
+
+    table.insert(cleanupFns, function()
+        noCDEnabled = false
+        noCDActiveUntil = 0
+        if humConn then pcall(function() humConn:Disconnect() end) end
+        if keyConn then pcall(function() keyConn:Disconnect() end) end
+        local char = lp.Character
+        if char then
+            pcall(function() char:SetAttribute("RiotShieldEquipped", false) end)
+        end
     end)
 end
 
@@ -2653,14 +2724,10 @@ layoutSwitchBtn.Active = true
 Instance.new("UICorner", layoutSwitchBtn).CornerRadius = UDim.new(0, 5)
 reg(layoutSwitchBtn, "layoutSwitch")
 
+local isCollapsed = false
 local function applyLayout(layout)
-    if isCollapsed then
-        main.Size = UDim2.new(0, main.Size.X.Offset, 0, LAYOUT[currentLayout].TitleH)
-    end
     currentLayout = layout
     local L = LAYOUT[layout]
-    main.Size = UDim2.new(0, L.W, 0, L.H)
-    main.Position = UDim2.new(0.5, -L.W/2, 0.5, L.CenterOffset)
     titleBar.Size = UDim2.new(1, 0, 0, L.TitleH)
     tabBar.Position = UDim2.new(0, 15, 0, L.TabY)
     basePage.Size = UDim2.new(1, 0, 1, -L.PageTop)
@@ -2678,11 +2745,15 @@ local function applyLayout(layout)
             end
         end
     end
-    layoutSwitchBtn.Text = (layout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-    title.Text = "Examination v16.3.8 - " .. (layout == "mobile" and "手机" or "电脑")
+    local h = getTabHeight()
     if isCollapsed then
         main.Size = UDim2.new(0, L.W, 0, L.TitleH)
+    else
+        main.Size = UDim2.new(0, L.W, 0, h)
     end
+    main.Position = UDim2.new(0.5, -L.W/2, 0.5, -h/2)
+    layoutSwitchBtn.Text = (layout == "mobile") and "切换为电脑UI" or "切换为手机UI"
+    title.Text = "Examination v16.4.8 - " .. (layout == "mobile" and "手机" or "电脑")
 end
 
 bindTap(layoutSwitchBtn, function()
@@ -2691,7 +2762,7 @@ bindTap(layoutSwitchBtn, function()
 end)
 
 layoutSwitchBtn.Text = (currentLayout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-title.Text = "Examination v16.3.8 - " .. (currentLayout == "mobile" and "手机" or "电脑")
+title.Text = "Examination v16.4.8 - " .. (currentLayout == "mobile" and "手机" or "电脑")
 
 -- ============ 模块 17: 魔法子弹页 ============
 do
@@ -2930,7 +3001,6 @@ do
         shieldCache.list = list
         return list
     end
-
     local function collectHelmets()
         local now = tick()
         if now - helmetCache.tick < 1 and #helmetCache.list > 0 then return helmetCache.list end
@@ -2950,7 +3020,6 @@ do
         helmetCache.list = list
         return list
     end
-
     local function collectTeammates()
         local now = tick()
         if now - teammateCache.tick < 1 and #teammateCache.list > 0 then return teammateCache.list end
@@ -2966,7 +3035,6 @@ do
         teammateCache.list = list
         return list
     end
-
     local function collectCorpses()
         local now = tick()
         if now - corpseCache.tick < 1 and #corpseCache.list > 0 then return corpseCache.list end
@@ -2985,7 +3053,6 @@ do
         corpseCache.list = list
         return list
     end
-
     local function applyExtraFilter(behavior)
         if type(behavior) ~= "table" then return end
         local params = behavior.RaycastParams
@@ -3038,7 +3105,6 @@ do
         bb.MaxDistance = mbWorldDistMax
         bb.ResetOnSpawn = false
         bb.Parent = part
-
         local f = Instance.new("Frame", bb)
         f.Name = "BoxFrame"
         f.Size = UDim2.new(1, 0, 1, 0)
@@ -3050,7 +3116,6 @@ do
         s.Color = Color3.fromRGB(120, 255, 120)
         s.Thickness = 2
         s.Transparency = 0.05
-
         local dot = Instance.new("Frame", bb)
         dot.Name = "CenterDot"
         dot.Size = UDim2.new(0, 4, 0, 4)
@@ -3059,7 +3124,6 @@ do
         dot.BackgroundColor3 = Color3.fromRGB(120, 255, 120)
         dot.BorderSizePixel = 0
         Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
-
         spawn(function()
             local deg = 0
             while bb and bb.Parent do
@@ -3098,7 +3162,6 @@ do
     local mbOrigInvoke = nil
     local mbRaycastModule = nil
     local mbHookInstalled = false
-
     local function getFirePos(tool)
         if not tool or not tool:IsA("Tool") then return nil end
         local core = tool:FindFirstChild("Handle") or tool:FindFirstChildWhichIsA("BasePart")
@@ -3107,7 +3170,6 @@ do
         if fp and fp:IsA("Attachment") then return fp.WorldPosition end
         return core.Position
     end
-
     local function forceAimPart(hitData)
         if type(hitData) ~= "table" then return false end
         local hum = hitData[1]
@@ -3139,7 +3201,6 @@ do
         end
         return true
     end
-
     local function installHook()
         if mbHookInstalled then return end
         mbHookInstalled = true
@@ -3300,7 +3361,7 @@ do
     end, UDim2.new(0, 290, 0, 28))
 
     local charBox = Instance.new("Frame", magicPage)
-    charBox.Size = UDim2.new(1, -30, 0, 130)
+    charBox.Size = UDim2.new(1, -30, 0, 150)
     charBox.Position = UDim2.new(0, 15, 0, 164)
     charBox.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
     charBox.BorderSizePixel = 0
@@ -3326,20 +3387,20 @@ do
         Instance.new("UICorner", b).CornerRadius = UDim.new(0, 3)
         return b
     end
-    partBtns[1] = makePartBtn(46, 6, 38, 30)
-    partBtns[2] = makePartBtn(49, 40, 32, 42)
-    partBtns[3] = makePartBtn(31, 40, 16, 42)
-    partBtns[4] = makePartBtn(83, 40, 16, 42)
-    partBtns[5] = makePartBtn(50, 86, 16, 42)
-    partBtns[6] = makePartBtn(64, 86, 16, 42)
+    partBtns[1] = makePartBtn(47, 8, 36, 28)
+    partBtns[2] = makePartBtn(47, 40, 36, 44)
+    partBtns[3] = makePartBtn(29, 40, 16, 44)
+    partBtns[4] = makePartBtn(85, 40, 16, 44)
+    partBtns[5] = makePartBtn(47, 88, 16, 42)
+    partBtns[6] = makePartBtn(67, 88, 16, 42)
 
     local rightInfo = Instance.new("Frame", charBox)
-    rightInfo.Size = UDim2.new(1, -140, 1, 0)
-    rightInfo.Position = UDim2.new(0, 135, 0, 0)
+    rightInfo.Size = UDim2.new(1, -145, 1, 0)
+    rightInfo.Position = UDim2.new(0, 140, 0, 0)
     rightInfo.BackgroundTransparency = 1
     local infoTitle = Instance.new("TextLabel", rightInfo)
     infoTitle.Size = UDim2.new(1, 0, 0, 18)
-    infoTitle.Position = UDim2.new(0, 0, 0, 12)
+    infoTitle.Position = UDim2.new(0, 0, 0, 16)
     infoTitle.BackgroundTransparency = 1
     infoTitle.Text = "当前锁定"
     infoTitle.TextColor3 = Color3.fromRGB(150, 150, 150)
@@ -3347,13 +3408,13 @@ do
     infoTitle.TextSize = 11
     infoTitle.TextXAlignment = Enum.TextXAlignment.Left
     local infoValue = Instance.new("TextLabel", rightInfo)
-    infoValue.Size = UDim2.new(1, 0, 0, 40)
-    infoValue.Position = UDim2.new(0, 0, 0, 34)
+    infoValue.Size = UDim2.new(1, 0, 0, 44)
+    infoValue.Position = UDim2.new(0, 0, 0, 42)
     infoValue.BackgroundTransparency = 1
     infoValue.Text = "头部"
     infoValue.TextColor3 = Color3.fromRGB(0, 220, 120)
     infoValue.Font = Enum.Font.GothamBold
-    infoValue.TextSize = 22
+    infoValue.TextSize = 24
     infoValue.TextXAlignment = Enum.TextXAlignment.Left
 
     local function refreshAimSelection()
@@ -3378,7 +3439,7 @@ do
 
     local fovLbl = Instance.new("TextLabel", magicPage)
     fovLbl.Size = UDim2.new(0, 36, 0, 22)
-    fovLbl.Position = UDim2.new(0, 15, 0, 298)
+    fovLbl.Position = UDim2.new(0, 15, 0, 322)
     fovLbl.BackgroundTransparency = 1
     fovLbl.Text = "FOV:"
     fovLbl.TextColor3 = Color3.new(0.9, 0.9, 0.9)
@@ -3386,7 +3447,7 @@ do
     fovLbl.TextXAlignment = Enum.TextXAlignment.Left
     local fovInput = Instance.new("TextBox", magicPage)
     fovInput.Size = UDim2.new(0, 42, 0, 22)
-    fovInput.Position = UDim2.new(0, 48, 0, 298)
+    fovInput.Position = UDim2.new(0, 48, 0, 322)
     fovInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
     fovInput.TextColor3 = Color3.new(1, 1, 1)
     fovInput.Text = tostring(mbFovRadius)
@@ -3402,7 +3463,7 @@ do
 
     local bsLbl = Instance.new("TextLabel", magicPage)
     bsLbl.Size = UDim2.new(0, 32, 0, 22)
-    bsLbl.Position = UDim2.new(0, 100, 0, 298)
+    bsLbl.Position = UDim2.new(0, 100, 0, 322)
     bsLbl.BackgroundTransparency = 1
     bsLbl.Text = "框:"
     bsLbl.TextColor3 = Color3.new(0.9, 0.9, 0.9)
@@ -3410,7 +3471,7 @@ do
     bsLbl.TextXAlignment = Enum.TextXAlignment.Left
     local bsInput = Instance.new("TextBox", magicPage)
     bsInput.Size = UDim2.new(0, 42, 0, 22)
-    bsInput.Position = UDim2.new(0, 130, 0, 298)
+    bsInput.Position = UDim2.new(0, 130, 0, 322)
     bsInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
     bsInput.TextColor3 = Color3.new(1, 1, 1)
     bsInput.Text = tostring(mbBBSizeStuds)
@@ -3426,7 +3487,7 @@ do
 
     local wdLbl = Instance.new("TextLabel", magicPage)
     wdLbl.Size = UDim2.new(0, 30, 0, 22)
-    wdLbl.Position = UDim2.new(0, 182, 0, 298)
+    wdLbl.Position = UDim2.new(0, 182, 0, 322)
     wdLbl.BackgroundTransparency = 1
     wdLbl.Text = "距:"
     wdLbl.TextColor3 = Color3.new(0.9, 0.9, 0.9)
@@ -3434,7 +3495,7 @@ do
     wdLbl.TextXAlignment = Enum.TextXAlignment.Left
     local wdInput = Instance.new("TextBox", magicPage)
     wdInput.Size = UDim2.new(0, 60, 0, 22)
-    wdInput.Position = UDim2.new(0, 212, 0, 298)
+    wdInput.Position = UDim2.new(0, 212, 0, 322)
     wdInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
     wdInput.TextColor3 = Color3.new(1, 1, 1)
     wdInput.Text = tostring(mbWorldDistMax)
@@ -3464,7 +3525,6 @@ do
     local rpEnabled = false
     local rpUseHeartbeat = true
     local rpShowArrow = true
-
     local RP_SAMPLE_INTERVAL = 0.02
     local RP_RADIUS_IN = 150
     local RP_RADIUS_OUT = 200
@@ -3473,16 +3533,12 @@ do
     local RP_EDGE_FADE = 1.25
     local RP_MAP_RADIUS = 0.43
     local RP_ARROW_DIST = 8
-
     local rpRadarRadius = RP_RADIUS_OUT
-
     local rpCacheInside = false
     local rpCacheInsideTick = 0
     local rpCacheRotLocked = false
     local rpCacheRotLockedTick = 0
-
     local rpDotPool = {}
-
     local function rpGetMC()
         local pg = lp:FindFirstChild("PlayerGui")
         if not pg then return nil end
@@ -3611,13 +3667,11 @@ do
         d.BorderSizePixel = 0
         d.ZIndex = 50
         Instance.new("UICorner", d).CornerRadius = UDim.new(1, 0)
-
         local s = Instance.new("UIStroke", d)
         s.Name = "Outline"
         s.Thickness = 1
         s.Transparency = 0.2
         s.Color = Color3.fromRGB(0, 0, 0)
-
         local core = Instance.new("Frame", d)
         core.Name = "Core"
         core.Size = UDim2.new(0.4, 0, 0.4, 0)
@@ -3627,7 +3681,6 @@ do
         core.BackgroundTransparency = 0.5
         core.BorderSizePixel = 0
         Instance.new("UICorner", core).CornerRadius = UDim.new(1, 0)
-
         local ar = Instance.new("TextLabel", d)
         ar.Name = "ArrowLabel"
         ar.Size = UDim2.new(0, 10, 0, 10)
@@ -3643,7 +3696,6 @@ do
         ar.Rotation = 0
         ar.ZIndex = 51
         ar.Visible = true
-
         d.Parent = hl
         rpDotPool[i] = d
         return d
@@ -3661,20 +3713,15 @@ do
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
         if not hrp then return end
         local ppos = hrp.Position
-
         rpRadarRadius = rpIsInsideFacilityCached(ppos) and RP_RADIUS_IN or RP_RADIUS_OUT
         local locked = rpIsRotLockedCached()
         local heading = locked and Vector2.new(0, -1) or rpGetHeading()
-
         local enemies = rpCollectEnemies()
-
         for i, e in ipairs(enemies) do
             local dot = rpEnsureDot(hl, i)
             local pos, clamped = rpCalcPos(e.pos, ppos, heading)
-
             local dy = math.abs(e.pos.Y - ppos.Y)
             local isSameLayer = dy <= RP_LAYER_THRESHOLD
-
             local ar = dot:FindFirstChild("ArrowLabel")
             if ar then
                 if rpShowArrow then
@@ -3692,16 +3739,12 @@ do
                     if ar.Visible then ar.Visible = false end
                 end
             end
-
             if pos then
                 dot.Position = pos
                 if not dot.Visible then dot.Visible = true end
-                if dot.BackgroundColor3 ~= e.color then
-                    dot.BackgroundColor3 = e.color
-                end
+                if dot.BackgroundColor3 ~= e.color then dot.BackgroundColor3 = e.color end
                 local wantSize = clamped and UDim2.new(0, 5, 0, 5) or UDim2.new(0, 7, 0, 7)
                 if dot.Size ~= wantSize then dot.Size = wantSize end
-
                 local wantTrans
                 if isSameLayer then
                     wantTrans = clamped and 0.35 or 0
@@ -3709,15 +3752,11 @@ do
                     wantTrans = RP_DIFF_LAYER_TRANSPARENCY
                     if clamped and wantTrans < 0.35 then wantTrans = 0.35 end
                 end
-                if dot.BackgroundTransparency ~= wantTrans then
-                    dot.BackgroundTransparency = wantTrans
-                end
+                if dot.BackgroundTransparency ~= wantTrans then dot.BackgroundTransparency = wantTrans end
                 local core = dot:FindFirstChild("Core")
                 if core then
                     local coreTrans = wantTrans + 0.5 * (1 - wantTrans)
-                    if core.BackgroundTransparency ~= coreTrans then
-                        core.BackgroundTransparency = coreTrans
-                    end
+                    if core.BackgroundTransparency ~= coreTrans then core.BackgroundTransparency = coreTrans end
                 end
             else
                 if dot.Visible then dot.Visible = false end
@@ -3940,7 +3979,7 @@ do
     end, UDim2.new(0, 290, 0, 28))
 
     local rpTip = Instance.new("TextLabel", radarPage)
-    rpTip.Size = UDim2.new(1, -30, 0, 80)
+    rpTip.Size = UDim2.new(1, -30, 0, 60)
     rpTip.Position = UDim2.new(0, 15, 0, 140)
     rpTip.BackgroundTransparency = 1
     rpTip.Text = "箭头贴在圆点外沿  |  不同层半透明  |  超出边缘钉住"
@@ -3961,7 +4000,6 @@ do
 end
 
 -- ============ 折叠 ============
-local isCollapsed = false
 local function setCollapsed(v)
     isCollapsed = v
     local L = LAYOUT[currentLayout]
@@ -3972,7 +4010,7 @@ local function setCollapsed(v)
         end
         collapseBtn.Text = "▼"
     else
-        main.Size = UDim2.new(0, L.W, 0, L.H)
+        main.Size = UDim2.new(0, L.W, 0, getTabHeight())
         for _, child in ipairs(main:GetChildren()) do
             if child ~= titleBar and child:IsA("GuiObject")
                and child ~= basePage and child ~= magicPage and child ~= radarPage then
@@ -4007,15 +4045,17 @@ bindTap(closeBtn, function()
     shotgunNoPumpEnabled = false
     shieldFixEnabled = false
     shieldVMEnabled = false
+    noCDEnabled = false
+    noCDActiveUntil = 0
     wait(0.7)
     for _, fn in ipairs(cleanupFns) do pcall(fn) end
     cleanupFns = {}
     pcall(function() StarterGui:SetCore("ResetButtonCallback", false) end)
     _G.ExaminationUI = nil
     gui:Destroy()
-    print("[Exam] v16.3.8 已完全卸载")
+    print("[Exam] v16.4.8 已完全卸载")
 end)
 
-print("[Exam] v16.3.8 已加载（布局=" .. currentLayout .. "）")
+print("[Exam] v16.4.8 已加载（布局=" .. currentLayout .. "）")
 
 -- ===END OF SCRIPT===
