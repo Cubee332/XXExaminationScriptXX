@@ -1,6 +1,6 @@
 --!nolint
 -- ============================================
--- Examination v16.2.8
+-- Examination v16.3.8 新增可控滑铲方向双选项 以及修复了一些bug
 -- 此脚本使用AI生成
 -- 因使用混淆加密会导致手机用户无法正常使用所以没有使用混淆加密
 -- 请不要拿去缝合 此脚本永久免费
@@ -34,12 +34,16 @@ local forceHeadshotEnabled = false
 local chatForceEnabled = false
 local autoQTEEnabled = false
 local shotgunNoPumpEnabled = false
+local shieldFixEnabled = false
+local shieldVMEnabled = false
 local pierceShieldEnabled = true
 local pierceHelmetEnabled = true
 local pierceTeammateEnabled = true
 local pierceCorpseEnabled = true
 local headSize = 4
 local slideDistanceMult = 2
+local shieldVMAlpha = 0.70
+local slideSteerMode = "camera"  -- "camera" | "move"
 
 local AI_CONTAINERS = {"Characters", "Reactor1", "Reactor2", "Reactor3", "Reactor4"}
 
@@ -138,6 +142,35 @@ local function safeCleanup()
     _G._MB2Raycast = nil; _G._MB2OrigRaycastNew = nil
     if _G._FH2Net and _G._FH2OrigInvoke then pcall(function() _G._FH2Net.InvokeServer = _G._FH2OrigInvoke end) end
     _G._FH2Net = nil; _G._FH2OrigInvoke = nil
+    if _G._shieldFixOrigBadge and hookfunction then
+        pcall(function() hookfunction(BadgeService.UserHasBadgeAsync, _G._shieldFixOrigBadge) end)
+        _G._shieldFixOrigBadge = nil
+    end
+    if _G._shieldFixTargetTrySlide and _G._shieldFixOrigTrySlide and hookfunction then
+        pcall(function() hookfunction(_G._shieldFixTargetTrySlide, _G._shieldFixOrigTrySlide) end)
+        _G._shieldFixTargetTrySlide = nil
+        _G._shieldFixOrigTrySlide = nil
+    end
+    if _G._ShieldVMTestUI and _G._ShieldVMTestUI.Parent then
+        pcall(function() _G._ShieldVMTestUI:Destroy() end)
+        _G._ShieldVMTestUI = nil
+    end
+    if _G.NumberKeyBlockerTest and _G.NumberKeyBlockerTest.Parent then
+        pcall(function() _G.NumberKeyBlockerTest:Destroy() end)
+        _G.NumberKeyBlockerTest = nil
+    end
+    if _G.ShieldTransTestUI and _G.ShieldTransTestUI.Parent then
+        pcall(function() _G.ShieldTransTestUI:Destroy() end)
+        _G.ShieldTransTestUI = nil
+    end
+    if _G.ShieldVMTestUI and _G.ShieldVMTestUI.Parent then
+        pcall(function() _G.ShieldVMTestUI:Destroy() end)
+        _G.ShieldVMTestUI = nil
+    end
+    if _G.SlideSteerModeTest and _G.SlideSteerModeTest.Parent then
+        pcall(function() _G.SlideSteerModeTest:Destroy() end)
+        _G.SlideSteerModeTest = nil
+    end
     local function destroyFov()
         local parents = {}
         if gethui then local ok, h = pcall(gethui); if ok and h then table.insert(parents, h) end end
@@ -212,7 +245,6 @@ local function safeCleanup()
         pcall(function() _G._ElephantImmune_Loop:Disconnect() end)
         _G._ElephantImmune_Loop = nil
     end
-    -- ★ v16.2.8：恢复上次遗留的被禁脚本
     if _G._ElephantImmune_DisabledScripts then
         for s, orig in pairs(_G._ElephantImmune_DisabledScripts) do
             if s and s.Parent then pcall(function() s.Disabled = orig end) end
@@ -221,7 +253,14 @@ local function safeCleanup()
     end
     if _G._KillPartBackup then
         for p, orig in pairs(_G._KillPartBackup) do
-            if p and p.Parent then pcall(function() p.CanTouch = orig end) end
+            if p and p.Parent then
+                pcall(function()
+                    p.Size = orig.Size
+                    p.CFrame = orig.CFrame
+                    p.CanTouch = orig.CanTouch
+                    p.CanCollide = orig.CanCollide
+                end)
+            end
         end
         _G._KillPartBackup = nil
     end
@@ -258,61 +297,71 @@ local currentLayout = detectLayout()
 
 local LAYOUT = {
     mobile = {
-        W = 320, H = 470, CenterOffset = -235,
+        W = 320, H = 550, CenterOffset = -275,
         TitleH = 34, TabY = 36, PageTop = 66,
         items = {
-            cdLabel        = { p = UDim2.new(0, 15, 0, 4),   s = UDim2.new(1, -30, 0, 20) },
-            stamina        = { p = UDim2.new(0, 15, 0, 28),  s = UDim2.new(0, 140, 0, 28) },
-            nameBtn        = { p = UDim2.new(0, 15, 0, 58),  s = UDim2.new(0, 140, 0, 28) },
-            headHitbox     = { p = UDim2.new(0, 15, 0, 88),  s = UDim2.new(0, 140, 0, 28) },
-            forceReset     = { p = UDim2.new(0, 15, 0, 118), s = UDim2.new(0, 140, 0, 28) },
-            nvg            = { p = UDim2.new(0, 15, 0, 148), s = UDim2.new(0, 140, 0, 28) },
-            muzzle         = { p = UDim2.new(0, 15, 0, 178), s = UDim2.new(0, 140, 0, 28) },
-            chatForce      = { p = UDim2.new(0, 15, 0, 208), s = UDim2.new(0, 140, 0, 28) },
-            esp            = { p = UDim2.new(0, 165, 0, 28), s = UDim2.new(0, 140, 0, 28) },
-            hpBtn          = { p = UDim2.new(0, 165, 0, 58), s = UDim2.new(0, 140, 0, 28) },
-            autoInteract   = { p = UDim2.new(0, 165, 0, 88), s = UDim2.new(0, 140, 0, 28) },
-            slide          = { p = UDim2.new(0, 165, 0, 118),s = UDim2.new(0, 140, 0, 28) },
-            slideSteer     = { p = UDim2.new(0, 165, 0, 148),s = UDim2.new(0, 140, 0, 28) },
-            elephantImmune = { p = UDim2.new(0, 165, 0, 178),s = UDim2.new(0, 140, 0, 28) },
-            recoil         = { p = UDim2.new(0, 165, 0, 208),s = UDim2.new(0, 140, 0, 28) },
-            forceHeadshot  = { p = UDim2.new(0, 165, 0, 238),s = UDim2.new(0, 140, 0, 28) },
-            autoQTE        = { p = UDim2.new(0, 165, 0, 268),s = UDim2.new(0, 140, 0, 28) },
-            shotgunNoPump  = { p = UDim2.new(0, 165, 0, 298),s = UDim2.new(0, 140, 0, 28) },
-            layoutSwitch   = { p = UDim2.new(0, 15, 0, 332), s = UDim2.new(1, -30, 0, 26) },
-            headSizeLabel  = { p = UDim2.new(0, 15, 0, 366), s = UDim2.new(0, 45, 0, 22) },
-            headSizeInput  = { p = UDim2.new(0, 60, 0, 366), s = UDim2.new(0, 60, 0, 22) },
-            slideDistLabel = { p = UDim2.new(0, 165, 0, 366),s = UDim2.new(0, 90, 0, 22) },
-            slideDistInput = { p = UDim2.new(0, 255, 0, 366),s = UDim2.new(0, 55, 0, 22) },
+            cdLabel          = { p = UDim2.new(0, 15, 0, 4),   s = UDim2.new(1, -30, 0, 20) },
+            stamina          = { p = UDim2.new(0, 15, 0, 28),  s = UDim2.new(0, 140, 0, 26) },
+            nameBtn          = { p = UDim2.new(0, 15, 0, 60),  s = UDim2.new(0, 140, 0, 26) },
+            headHitbox       = { p = UDim2.new(0, 15, 0, 92),  s = UDim2.new(0, 140, 0, 26) },
+            forceReset       = { p = UDim2.new(0, 15, 0, 124), s = UDim2.new(0, 140, 0, 26) },
+            nvg              = { p = UDim2.new(0, 15, 0, 156), s = UDim2.new(0, 140, 0, 26) },
+            muzzle           = { p = UDim2.new(0, 15, 0, 188), s = UDim2.new(0, 140, 0, 26) },
+            chatForce        = { p = UDim2.new(0, 15, 0, 220), s = UDim2.new(0, 140, 0, 26) },
+            shieldSlide      = { p = UDim2.new(0, 15, 0, 252), s = UDim2.new(0, 140, 0, 26) },
+            shieldVM         = { p = UDim2.new(0, 15, 0, 284), s = UDim2.new(0, 140, 0, 26) },
+            esp              = { p = UDim2.new(0, 165, 0, 28), s = UDim2.new(0, 140, 0, 26) },
+            hpBtn            = { p = UDim2.new(0, 165, 0, 60), s = UDim2.new(0, 140, 0, 26) },
+            autoInteract     = { p = UDim2.new(0, 165, 0, 92), s = UDim2.new(0, 140, 0, 26) },
+            slide            = { p = UDim2.new(0, 165, 0, 124),s = UDim2.new(0, 140, 0, 26) },
+            slideSteer       = { p = UDim2.new(0, 165, 0, 156),s = UDim2.new(0, 140, 0, 26) },
+            slideSteerMode   = { p = UDim2.new(0, 165, 0, 188),s = UDim2.new(0, 140, 0, 26) },
+            elephantImmune   = { p = UDim2.new(0, 165, 0, 220),s = UDim2.new(0, 140, 0, 26) },
+            recoil           = { p = UDim2.new(0, 165, 0, 252),s = UDim2.new(0, 140, 0, 26) },
+            forceHeadshot    = { p = UDim2.new(0, 165, 0, 284),s = UDim2.new(0, 140, 0, 26) },
+            autoQTE          = { p = UDim2.new(0, 165, 0, 316),s = UDim2.new(0, 140, 0, 26) },
+            shotgunNoPump    = { p = UDim2.new(0, 165, 0, 348),s = UDim2.new(0, 140, 0, 26) },
+            layoutSwitch     = { p = UDim2.new(0, 15, 0, 382), s = UDim2.new(1, -30, 0, 26) },
+            headSizeLabel    = { p = UDim2.new(0, 15, 0, 418), s = UDim2.new(0, 50, 0, 22) },
+            headSizeInput    = { p = UDim2.new(0, 70, 0, 418), s = UDim2.new(0, 55, 0, 22) },
+            slideDistLabel   = { p = UDim2.new(0, 135, 0, 418),s = UDim2.new(0, 95, 0, 22) },
+            slideDistInput   = { p = UDim2.new(0, 235, 0, 418),s = UDim2.new(0, 70, 0, 22) },
+            shieldAlphaLabel = { p = UDim2.new(0, 15, 0, 444), s = UDim2.new(0, 90, 0, 22) },
+            shieldAlphaInput = { p = UDim2.new(0, 110, 0, 444),s = UDim2.new(0, 60, 0, 22) },
         },
     },
     desktop = {
-        W = 320, H = 720, CenterOffset = -360,
+        W = 320, H = 830, CenterOffset = -415,
         TitleH = 30, TabY = 33, PageTop = 63,
         items = {
-            cdLabel        = { p = UDim2.new(0, 15, 0, 5),   s = UDim2.new(1, -30, 0, 22) },
-            stamina        = { p = UDim2.new(0, 15, 0, 35),  s = UDim2.new(1, -30, 0, 30) },
-            esp            = { p = UDim2.new(0, 15, 0, 70),  s = UDim2.new(1, -30, 0, 30) },
-            nameBtn        = { p = UDim2.new(0, 15, 0, 104), s = UDim2.new(0, 140, 0, 28) },
-            hpBtn          = { p = UDim2.new(0, 165, 0, 104),s = UDim2.new(0, 140, 0, 28) },
-            headHitbox     = { p = UDim2.new(0, 15, 0, 135), s = UDim2.new(1, -30, 0, 30) },
-            autoInteract   = { p = UDim2.new(0, 15, 0, 170), s = UDim2.new(1, -30, 0, 30) },
-            forceReset     = { p = UDim2.new(0, 15, 0, 205), s = UDim2.new(1, -30, 0, 30) },
-            slide          = { p = UDim2.new(0, 15, 0, 240), s = UDim2.new(1, -30, 0, 30) },
-            slideSteer     = { p = UDim2.new(0, 15, 0, 275), s = UDim2.new(1, -30, 0, 30) },
-            nvg            = { p = UDim2.new(0, 15, 0, 310), s = UDim2.new(1, -30, 0, 30) },
-            elephantImmune = { p = UDim2.new(0, 15, 0, 345), s = UDim2.new(1, -30, 0, 30) },
-            muzzle         = { p = UDim2.new(0, 15, 0, 380), s = UDim2.new(1, -30, 0, 30) },
-            recoil         = { p = UDim2.new(0, 15, 0, 415), s = UDim2.new(1, -30, 0, 30) },
-            chatForce      = { p = UDim2.new(0, 15, 0, 450), s = UDim2.new(1, -30, 0, 30) },
-            forceHeadshot  = { p = UDim2.new(0, 15, 0, 485), s = UDim2.new(1, -30, 0, 30) },
-            autoQTE        = { p = UDim2.new(0, 15, 0, 520), s = UDim2.new(1, -30, 0, 30) },
-            shotgunNoPump  = { p = UDim2.new(0, 15, 0, 555), s = UDim2.new(1, -30, 0, 30) },
-            layoutSwitch   = { p = UDim2.new(0, 15, 0, 590), s = UDim2.new(1, -30, 0, 28) },
-            headSizeLabel  = { p = UDim2.new(0, 15, 0, 620), s = UDim2.new(0, 60, 0, 20) },
-            headSizeInput  = { p = UDim2.new(0, 80, 0, 620), s = UDim2.new(0, 50, 0, 20) },
-            slideDistLabel = { p = UDim2.new(0, 135, 0, 620),s = UDim2.new(0, 100, 0, 20) },
-            slideDistInput = { p = UDim2.new(0, 240, 0, 620),s = UDim2.new(0, 60, 0, 20) },
+            cdLabel          = { p = UDim2.new(0, 15, 0, 5),   s = UDim2.new(1, -30, 0, 22) },
+            stamina          = { p = UDim2.new(0, 15, 0, 32),  s = UDim2.new(1, -30, 0, 30) },
+            esp              = { p = UDim2.new(0, 15, 0, 66),  s = UDim2.new(1, -30, 0, 30) },
+            nameBtn          = { p = UDim2.new(0, 15, 0, 100), s = UDim2.new(0, 140, 0, 28) },
+            hpBtn            = { p = UDim2.new(0, 165, 0, 100),s = UDim2.new(0, 140, 0, 28) },
+            headHitbox       = { p = UDim2.new(0, 15, 0, 132), s = UDim2.new(1, -30, 0, 30) },
+            autoInteract     = { p = UDim2.new(0, 15, 0, 166), s = UDim2.new(1, -30, 0, 30) },
+            forceReset       = { p = UDim2.new(0, 15, 0, 200), s = UDim2.new(1, -30, 0, 30) },
+            slide            = { p = UDim2.new(0, 15, 0, 234), s = UDim2.new(1, -30, 0, 30) },
+            slideSteer       = { p = UDim2.new(0, 15, 0, 268), s = UDim2.new(1, -30, 0, 30) },
+            slideSteerMode   = { p = UDim2.new(0, 15, 0, 302), s = UDim2.new(1, -30, 0, 30) },
+            nvg              = { p = UDim2.new(0, 15, 0, 336), s = UDim2.new(1, -30, 0, 30) },
+            elephantImmune   = { p = UDim2.new(0, 15, 0, 370), s = UDim2.new(1, -30, 0, 30) },
+            muzzle           = { p = UDim2.new(0, 15, 0, 404), s = UDim2.new(1, -30, 0, 30) },
+            recoil           = { p = UDim2.new(0, 15, 0, 438), s = UDim2.new(1, -30, 0, 30) },
+            chatForce        = { p = UDim2.new(0, 15, 0, 472), s = UDim2.new(1, -30, 0, 30) },
+            forceHeadshot    = { p = UDim2.new(0, 15, 0, 506), s = UDim2.new(1, -30, 0, 30) },
+            autoQTE          = { p = UDim2.new(0, 15, 0, 540), s = UDim2.new(1, -30, 0, 30) },
+            shotgunNoPump    = { p = UDim2.new(0, 15, 0, 574), s = UDim2.new(1, -30, 0, 30) },
+            shieldSlide      = { p = UDim2.new(0, 15, 0, 608), s = UDim2.new(1, -30, 0, 30) },
+            shieldVM         = { p = UDim2.new(0, 15, 0, 642), s = UDim2.new(1, -30, 0, 30) },
+            layoutSwitch     = { p = UDim2.new(0, 15, 0, 676), s = UDim2.new(1, -30, 0, 24) },
+            headSizeLabel    = { p = UDim2.new(0, 15, 0, 702), s = UDim2.new(0, 50, 0, 20) },
+            headSizeInput    = { p = UDim2.new(0, 65, 0, 702), s = UDim2.new(0, 55, 0, 20) },
+            slideDistLabel   = { p = UDim2.new(0, 130, 0, 702),s = UDim2.new(0, 90, 0, 20) },
+            slideDistInput   = { p = UDim2.new(0, 225, 0, 702),s = UDim2.new(0, 75, 0, 20) },
+            shieldAlphaLabel = { p = UDim2.new(0, 15, 0, 726), s = UDim2.new(0, 90, 0, 20) },
+            shieldAlphaInput = { p = UDim2.new(0, 110, 0, 726),s = UDim2.new(0, 60, 0, 20) },
         },
     },
 }
@@ -351,7 +400,7 @@ local title = Instance.new("TextLabel", titleBar)
 title.Size = UDim2.new(1, -70, 1, 0)
 title.Position = UDim2.new(0, 10, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "Examination v16.2.8"
+title.Text = "Examination v16.3.8"
 title.TextColor3 = Color3.new(1, 1, 1)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 13
@@ -1301,9 +1350,31 @@ do
     end)
 end
 
--- ============ 模块 6.5: 滑铲变向 ============
+-- ============ 模块 6.5: 滑铲变向（视角 / 移动） ============
 do
     local steerLoop = nil
+    local function computeDir(hum, cam)
+        if slideSteerMode == "camera" then
+            if not cam then return nil end
+            local dir = cam.CFrame.LookVector
+            dir = Vector3.new(dir.X, 0, dir.Z)
+            if dir.Magnitude < 0.1 then return nil end
+            return dir.Unit
+        else
+            local md = hum.MoveDirection
+            md = Vector3.new(md.X, 0, md.Z)
+            if md.Magnitude < 0.1 then
+                -- 无输入 → 回退相机方向，避免乱甩
+                if cam then
+                    local dir = cam.CFrame.LookVector
+                    dir = Vector3.new(dir.X, 0, dir.Z)
+                    if dir.Magnitude > 0.1 then return dir.Unit end
+                end
+                return nil
+            end
+            return md.Unit
+        end
+    end
     local function setup()
         if steerLoop then steerLoop:Disconnect(); steerLoop = nil end
         if not slideSteerEnabled then return end
@@ -1324,12 +1395,8 @@ do
             local curVel = isLinear and av.VectorVelocity or av.Force
             local mag = curVel.Magnitude
             if mag < 0.1 then return end
-            local cam = workspace.CurrentCamera
-            if not cam then return end
-            local dir = cam.CFrame.LookVector
-            dir = Vector3.new(dir.X, 0, dir.Z)
-            if dir.Magnitude < 0.1 then return end
-            dir = dir.Unit
+            local dir = computeDir(hum, workspace.CurrentCamera)
+            if not dir then return end
             local newVel = dir * mag
             if isLinear then
                 pcall(function() av.VectorVelocity = newVel end)
@@ -1342,6 +1409,27 @@ do
         slideSteerEnabled = v
         setup()
     end)
+
+    local modeBtn = Instance.new("TextButton", basePage)
+    modeBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 100)
+    modeBtn.TextColor3 = Color3.new(1, 1, 1)
+    modeBtn.Font = Enum.Font.GothamBold
+    modeBtn.TextSize = 11
+    modeBtn.Active = true
+    Instance.new("UICorner", modeBtn).CornerRadius = UDim.new(0, 5)
+    reg(modeBtn, "slideSteerMode")
+    local function refreshModeText()
+        modeBtn.Text = (slideSteerMode == "camera") and "变向模式: 视角控制" or "变向模式: 移动控制"
+        modeBtn.BackgroundColor3 = (slideSteerMode == "camera")
+            and Color3.fromRGB(60, 60, 100)
+            or Color3.fromRGB(150, 80, 60)
+    end
+    bindTap(modeBtn, function()
+        slideSteerMode = (slideSteerMode == "camera") and "move" or "camera"
+        refreshModeText()
+    end)
+    refreshModeText()
+
     lp.CharacterAdded:Connect(function()
         wait(2)
         if slideSteerEnabled then setup() end
@@ -1350,7 +1438,6 @@ do
         if steerLoop then pcall(function() steerLoop:Disconnect() end) end
     end)
 end
-
 -- ============ 模块 7: 无限电量夜视仪 ============
 do
     local nvgBadgeHooked = false
@@ -1488,7 +1575,7 @@ do
     end)
 end
 
--- ============ 模块 8: 免疫象脚 + 致死区（v16.2.8 修复） ============
+-- ============ 模块 8: 免疫象脚 + 致死区（v16.3.5 性能优化版） ============
 do
     local keywords = {"elephant","lookatme","playerdiedbylooking","diedbylooking"}
     local function match(name)
@@ -1499,7 +1586,6 @@ do
         return false
     end
 
-    -- ★ v16.2.8：记录被禁脚本 → 原 Disabled 值
     local disabledScripts = {}
 
     local function disableScripts()
@@ -1521,7 +1607,6 @@ do
         return count
     end
 
-    -- ★ v16.2.8：恢复所有被禁脚本
     local function restoreScripts()
         local n = 0
         for s, orig in pairs(disabledScripts) do
@@ -1537,60 +1622,102 @@ do
 
     local killParts = {}
     local killPartBackup = {}
-    local killPartLoop = nil
-    local function collectKillParts()
-        local list = {}
-        for _, d in ipairs(Workspace:GetDescendants()) do
-            if d:IsA("BasePart") and d.Name == "KillPart" then
-                table.insert(list, d)
-            end
-        end
-        return list
-    end
+
     local function killPartRestore()
-        if killPartLoop then pcall(function() killPartLoop:Disconnect() end); killPartLoop = nil end
         for kp, orig in pairs(killPartBackup) do
-            if kp and kp.Parent then pcall(function() kp.CanTouch = orig end) end
+            if kp and kp.Parent then
+                pcall(function()
+                    kp.Size = orig.Size
+                    kp.CFrame = orig.CFrame
+                    kp.CanTouch = orig.CanTouch
+                    kp.CanCollide = orig.CanCollide
+                end)
+            end
         end
         killPartBackup = {}
         killParts = {}
         _G._KillPartBackup = nil
     end
-    local function killPartSetup()
-        killPartRestore()
-        killParts = collectKillParts()
-        if #killParts == 0 then return end
-        for _, kp in ipairs(killParts) do
-            killPartBackup[kp] = kp.CanTouch
+
+    local function neutralizeOne(kp)
+        if not kp or not kp.Parent then return end
+        if not killPartBackup[kp] then
+            killPartBackup[kp] = {
+                Size = kp.Size,
+                CFrame = kp.CFrame,
+                CanTouch = kp.CanTouch,
+                CanCollide = kp.CanCollide,
+            }
+        end
+        pcall(function()
+            kp.Size = Vector3.new(0.001, 0.001, 0.001)
+            kp.CFrame = CFrame.new(99999, 99999, 99999)
+            kp.CanTouch = false
+            kp.CanCollide = false
+        end)
+    end
+
+    local function killPartFullScan()
+        killParts = {}
+        for _, d in ipairs(Workspace:GetDescendants()) do
+            if d:IsA("BasePart") and d.Name == "KillPart" then
+                table.insert(killParts, d)
+                neutralizeOne(d)
+            end
         end
         _G._KillPartBackup = killPartBackup
-        killPartLoop = RunService.Heartbeat:Connect(function()
-            if not elephantImmuneEnabled then return end
-            for _, kp in ipairs(killParts) do
-                if kp and kp.Parent and kp.CanTouch then
-                    pcall(function() kp.CanTouch = false end)
+    end
+
+    local killPartScanLoop = nil
+    local function startKillPartScan()
+        if killPartScanLoop then killPartScanLoop = nil end
+        killPartScanLoop = spawn(function()
+            while elephantImmuneEnabled and gui.Parent do
+                wait(2)
+                if not elephantImmuneEnabled then break end
+                local function scanOne(inst)
+                    if inst:IsA("BasePart") and inst.Name == "KillPart" then
+                        if not killPartBackup[inst] then
+                            table.insert(killParts, inst)
+                            neutralizeOne(inst)
+                        end
+                    end
+                end
+                for _, c in ipairs(Workspace:GetChildren()) do
+                    scanOne(c)
+                    for _, cc in ipairs(c:GetChildren()) do
+                        scanOne(cc)
+                    end
                 end
             end
+            killPartScanLoop = nil
+        end)
+    end
+
+    local elephantLoop = nil
+    local function startElephantLoop()
+        if elephantLoop then pcall(function() elephantLoop:Disconnect() end); elephantLoop = nil end
+        if not elephantImmuneEnabled then return end
+        elephantLoop = RunService.Heartbeat:Connect(function()
+            if not elephantImmuneEnabled then return end
+            disableScripts()
         end)
     end
 
     local function setup()
-        if _G._ElephantImmune_Loop then
-            _G._ElephantImmune_Loop:Disconnect()
-            _G._ElephantImmune_Loop = nil
-        end
+        if elephantLoop then pcall(function() elephantLoop:Disconnect() end); elephantLoop = nil end
+        if killPartScanLoop then killPartScanLoop = nil end
         if not elephantImmuneEnabled then
             killPartRestore()
             restoreScripts()
             return
         end
         disableScripts()
-        _G._ElephantImmune_Loop = RunService.Heartbeat:Connect(function()
-            if not elephantImmuneEnabled then return end
-            disableScripts()
-        end)
-        killPartSetup()
+        killPartFullScan()
+        startKillPartScan()
+        startElephantLoop()
     end
+
     toggleBase("免疫象脚 + 致死区", "elephantImmune", false, function(v)
         elephantImmuneEnabled = v
         setup()
@@ -1602,14 +1729,14 @@ do
         if elephantImmuneEnabled then setup() end
     end)
     table.insert(cleanupFns, function()
-        if _G._ElephantImmune_Loop then
-            _G._ElephantImmune_Loop:Disconnect()
-            _G._ElephantImmune_Loop = nil
-        end
+        elephantImmuneEnabled = false
+        if elephantLoop then elephantLoop:Disconnect() end
+        if killPartScanLoop then killPartScanLoop = nil end
         killPartRestore()
         restoreScripts()
     end)
 end
+
 -- ============ 模块 11: 去除枪口遮挡 ============
 do
     local muzzleHbConn = nil
@@ -2196,6 +2323,326 @@ do
     end)
 end
 
+-- ============ 模块 16.5: 修复盾牌滑铲/疾跑 ============
+do
+    local SLIDE_BADGE_ID = 3938313051889761
+    local origBadgeAsync = nil
+    local badgeHooked = false
+    local trySlideFn = nil
+    local startSlideFn = nil
+    local origTrySlideFn = nil
+    local trySlideHooked = false
+
+    local pushLoop = nil
+    local hudLoop = nil
+
+    local function findPostureFrame()
+        local pg = lp:FindFirstChild("PlayerGui")
+        if not pg then return nil end
+        local gGui = pg:FindFirstChild("Gui")
+        if not gGui then return nil end
+        local posture = gGui:FindFirstChild("Posture")
+        if posture and posture:IsA("GuiObject") then return posture end
+        return nil
+    end
+
+    local function pushAttrs()
+        local char = lp.Character
+        if not char then return end
+        pcall(function() char:SetAttribute("RiotShieldEquipped", false) end)
+        for _, t in ipairs(char:GetChildren()) do
+            if t:IsA("Tool") then
+                local ok, v = pcall(function() return t:GetAttribute("RiotShieldTool") end)
+                if ok and v == true then
+                    pcall(function() t:SetAttribute("RiotShieldTool", false) end)
+                end
+            end
+        end
+    end
+
+    local function startPush()
+        if pushLoop then return end
+        pushLoop = spawn(function()
+            while shieldFixEnabled and gui.Parent do
+                pcall(pushAttrs)
+                wait(0.05)
+            end
+            pushLoop = nil
+        end)
+    end
+
+    local function stopPush()
+        pushLoop = nil
+    end
+
+    local function hookBadge()
+        if badgeHooked or not hookfunction then return end
+        if _G._shieldFixOrigBadge then
+            badgeHooked = true
+            return
+        end
+        origBadgeAsync = BadgeService.UserHasBadgeAsync
+        local ok = pcall(function()
+            hookfunction(BadgeService.UserHasBadgeAsync, function(self, uid, bid)
+                if bid == SLIDE_BADGE_ID then return true end
+                return origBadgeAsync(self, uid, bid)
+            end)
+        end)
+        if ok then
+            badgeHooked = true
+            _G._shieldFixOrigBadge = origBadgeAsync
+        end
+    end
+
+    local function findSlideFns()
+        trySlideFn = nil
+        startSlideFn = nil
+        if not getgc or not getinfo then return false end
+        local ok, gc = pcall(function() return getgc(true) end)
+        if not ok or type(gc) ~= "table" then return false end
+        for _, v in pairs(gc) do
+            if type(v) == "function" then
+                local ok2, info = pcall(function() return getinfo(v) end)
+                if ok2 and type(info) == "table" then
+                    local s = (info.source or ""):lower()
+                    if s:find("movementcontroller", 1, true) then
+                        local n = info.name or ""
+                        if n == "TrySlide" and not trySlideFn then
+                            trySlideFn = v
+                        elseif n == "StartSlide" and not startSlideFn then
+                            startSlideFn = v
+                        end
+                    end
+                end
+            end
+        end
+        return trySlideFn ~= nil and startSlideFn ~= nil
+    end
+
+    local function hookTrySlide()
+        if trySlideHooked then return end
+        if not trySlideFn or not startSlideFn then
+            if not findSlideFns() then return end
+        end
+        if not hookfunction then return end
+        origTrySlideFn = trySlideFn
+        local ok = pcall(function()
+            hookfunction(trySlideFn, function(...)
+                local char = lp.Character
+                if not char then return false end
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if not hum or hum.Health <= 0 then return false end
+                if hum:GetAttribute("sliding") then return false end
+                task.spawn(startSlideFn)
+                return true
+            end)
+        end)
+        if ok then
+            trySlideHooked = true
+            _G._shieldFixTargetTrySlide = trySlideFn
+            _G._shieldFixOrigTrySlide = origTrySlideFn
+            _G._shieldFixStartSlide = startSlideFn
+        end
+    end
+
+    local function restoreTrySlide()
+        if trySlideHooked and origTrySlideFn and hookfunction then
+            pcall(function() hookfunction(origTrySlideFn, origTrySlideFn) end)
+            trySlideHooked = false
+        end
+        _G._shieldFixTargetTrySlide = nil
+        _G._shieldFixOrigTrySlide = nil
+        _G._shieldFixStartSlide = nil
+    end
+
+    local function startHudFix()
+        if hudLoop then return end
+        hudLoop = spawn(function()
+            while shieldFixEnabled and gui.Parent do
+                local char = lp.Character
+                if char then
+                    local state = char:GetAttribute("RiotShieldState")
+                    local active = state and state ~= "Inactive" and state ~= ""
+                    if active then
+                        local posture = findPostureFrame()
+                        if posture and not posture.Visible then
+                            pcall(function() posture.Visible = true end)
+                        end
+                    end
+                end
+                wait(0.05)
+            end
+            hudLoop = nil
+        end)
+    end
+
+    local function stopHudFix()
+        hudLoop = nil
+    end
+
+    local function setup()
+        if shieldFixEnabled then
+            hookBadge()
+            findSlideFns()
+            hookTrySlide()
+            startPush()
+            startHudFix()
+        else
+            stopPush()
+            stopHudFix()
+            restoreTrySlide()
+        end
+    end
+
+    toggleBase("修复盾牌滑铲/疾跑", "shieldSlide", false, function(v)
+        shieldFixEnabled = v
+        setup()
+    end)
+
+    lp.CharacterAdded:Connect(function()
+        wait(1)
+        if shieldFixEnabled then
+            findSlideFns()
+            hookTrySlide()
+        end
+    end)
+
+    table.insert(cleanupFns, function()
+        shieldFixEnabled = false
+        stopPush()
+        stopHudFix()
+        restoreTrySlide()
+    end)
+end
+
+-- ============ 模块 16.6: 第一人称盾牌半透明 ============
+do
+    local tracked = {}
+    local scanLoop = nil
+    local lastVM = nil
+
+    local function getViewmodel()
+        local cam = Workspace.CurrentCamera
+        if not cam then return nil end
+        return cam:FindFirstChild("RiotShieldViewmodel")
+    end
+
+    local function applyToVM(vm)
+        if not vm then return 0 end
+        local count = 0
+        for _, d in ipairs(vm:GetDescendants()) do
+            if d:IsA("BasePart") then
+                if tracked[d] == nil then
+                    tracked[d] = d.Transparency
+                end
+                if tracked[d] < 0.95 then
+                    if math.abs(d.Transparency - shieldVMAlpha) > 0.01 then
+                        pcall(function() d.Transparency = shieldVMAlpha end)
+                    end
+                    count = count + 1
+                end
+            end
+        end
+        return count
+    end
+
+    local function restoreAll()
+        for p, orig in pairs(tracked) do
+            if p and p.Parent then
+                pcall(function() p.Transparency = orig end)
+            end
+        end
+        tracked = {}
+    end
+
+    local function startScanLoop()
+        if scanLoop then scanLoop:Disconnect(); scanLoop = nil end
+        scanLoop = RunService.Heartbeat:Connect(function()
+            if not shieldVMEnabled then return end
+            local vm = getViewmodel()
+            if vm ~= lastVM then
+                lastVM = vm
+                if vm then applyToVM(vm) end
+            elseif vm then
+                applyToVM(vm)
+            end
+        end)
+    end
+
+    spawn(function()
+        while gui.Parent do
+            wait(0.5)
+            for p in pairs(tracked) do
+                if not p or not p.Parent then tracked[p] = nil end
+            end
+        end
+    end)
+
+    toggleBase("第一人称盾牌半透明", "shieldVM", false, function(v)
+        shieldVMEnabled = v
+        if v then
+            local vm = getViewmodel()
+            if vm then
+                lastVM = vm
+                applyToVM(vm)
+            end
+            startScanLoop()
+        else
+            if scanLoop then scanLoop:Disconnect(); scanLoop = nil end
+            restoreAll()
+            lastVM = nil
+        end
+    end)
+
+    local alphaLabel = Instance.new("TextLabel", basePage)
+    alphaLabel.BackgroundTransparency = 1
+    alphaLabel.Text = "盾牌透明度:"
+    alphaLabel.TextColor3 = Color3.new(0.9, 0.9, 0.9)
+    alphaLabel.Font = Enum.Font.Gotham; alphaLabel.TextSize = 11
+    alphaLabel.TextXAlignment = Enum.TextXAlignment.Left
+    reg(alphaLabel, "shieldAlphaLabel")
+
+    local alphaInput = Instance.new("TextBox", basePage)
+    alphaInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    alphaInput.TextColor3 = Color3.new(1, 1, 1)
+    alphaInput.Text = string.format("%.2f", shieldVMAlpha)
+    alphaInput.Font = Enum.Font.Gotham; alphaInput.TextSize = 11; alphaInput.BorderSizePixel = 0
+    Instance.new("UICorner", alphaInput).CornerRadius = UDim.new(0, 4)
+    reg(alphaInput, "shieldAlphaInput")
+    alphaInput.FocusLost:Connect(function()
+        local val = tonumber(alphaInput.Text)
+        if val and val >= 0.0 and val <= 0.99 then
+            shieldVMAlpha = val
+            alphaInput.Text = string.format("%.2f", val)
+            if shieldVMEnabled then
+                local vm = getViewmodel()
+                if vm then applyToVM(vm) end
+            end
+        else
+            alphaInput.Text = string.format("%.2f", shieldVMAlpha)
+        end
+    end)
+
+    lp.CharacterAdded:Connect(function()
+        wait(1)
+        tracked = {}
+        lastVM = nil
+        if shieldVMEnabled then
+            local vm = getViewmodel()
+            if vm then
+                lastVM = vm
+                applyToVM(vm)
+            end
+        end
+    end)
+
+    table.insert(cleanupFns, function()
+        shieldVMEnabled = false
+        if scanLoop then scanLoop:Disconnect() end
+        restoreAll()
+    end)
+end
+
 -- ============ 布局切换按钮 ============
 local layoutSwitchBtn = Instance.new("TextButton", basePage)
 layoutSwitchBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 100)
@@ -2232,7 +2679,7 @@ local function applyLayout(layout)
         end
     end
     layoutSwitchBtn.Text = (layout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-    title.Text = "Examination v16.2.8 - " .. (layout == "mobile" and "手机" or "电脑")
+    title.Text = "Examination v16.3.8 - " .. (layout == "mobile" and "手机" or "电脑")
     if isCollapsed then
         main.Size = UDim2.new(0, L.W, 0, L.TitleH)
     end
@@ -2244,7 +2691,7 @@ bindTap(layoutSwitchBtn, function()
 end)
 
 layoutSwitchBtn.Text = (currentLayout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-title.Text = "Examination v16.2.8 - " .. (currentLayout == "mobile" and "手机" or "电脑")
+title.Text = "Examination v16.3.8 - " .. (currentLayout == "mobile" and "手机" or "电脑")
 
 -- ============ 模块 17: 魔法子弹页 ============
 do
@@ -3558,15 +4005,17 @@ bindTap(closeBtn, function()
     chatForceEnabled = false
     autoQTEEnabled = false
     shotgunNoPumpEnabled = false
+    shieldFixEnabled = false
+    shieldVMEnabled = false
     wait(0.7)
     for _, fn in ipairs(cleanupFns) do pcall(fn) end
     cleanupFns = {}
     pcall(function() StarterGui:SetCore("ResetButtonCallback", false) end)
     _G.ExaminationUI = nil
     gui:Destroy()
-    print("[Exam] v16.2.8 已完全卸载")
+    print("[Exam] v16.3.8 已完全卸载")
 end)
 
-print("[Exam] v16.2.8 已加载（布局=" .. currentLayout .. "）")
+print("[Exam] v16.3.8 已加载（布局=" .. currentLayout .. "）")
 
 -- ===END OF SCRIPT===
