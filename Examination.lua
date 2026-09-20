@@ -1,6 +1,6 @@
 --!nolint
 -- ============================================
--- Examination v16.4.8 修复了大部分无CD滑铲造成的BUG 兼容了一些功能
+-- Examination v16.4.9 调整了一些设置
 -- 此脚本使用AI生成
 -- 因使用混淆加密会导致手机用户无法正常使用所以没有使用混淆加密
 -- 请不要拿去缝合 此脚本永久免费
@@ -44,7 +44,7 @@ local pierceTeammateEnabled = true
 local pierceCorpseEnabled = true
 local headSize = 4
 local slideDistanceMult = 2
-local shieldVMAlpha = 0.70
+local shieldVMAlpha = 0.9
 local slideSteerMode = "camera"
 
 local AI_CONTAINERS = {"Characters", "Reactor1", "Reactor2", "Reactor3", "Reactor4"}
@@ -408,7 +408,7 @@ local title = Instance.new("TextLabel", titleBar)
 title.Size = UDim2.new(1, -70, 1, 0)
 title.Position = UDim2.new(0, 10, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "Examination v16.4.8"
+title.Text = "Examination v16.4.9"
 title.TextColor3 = Color3.new(1, 1, 1)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 13
@@ -2304,7 +2304,6 @@ do
     local function pushAttrs()
         local char = lp.Character
         if not char then return end
-        -- ★ noCD 激活中不压，让 noCD 的 true 生效
         if noCDEnabled and noCDActiveUntil > tick() then return end
         pcall(function() char:SetAttribute("RiotShieldEquipped", false) end)
         for _, t in ipairs(char:GetChildren()) do
@@ -2589,17 +2588,13 @@ do
     end)
 end
 
--- ============ 模块 16.7: 无滑铲冷却（有bug慎用）v16.4.8 ============
--- ★ 保留 v16.4.6 完整逻辑：humConn + bindKeyboard + 恢复循环
--- ★ 只删 customSlide 强制推动 → 改为「只刷 CD 不推角色」
--- ★ toggle 开启立即刷一次 CD
+-- ============ 模块 16.7: 无滑铲冷却（有bug慎用）v16.4.9 ============
 do
     local humConn = nil
     local keyConn = nil
     local slideGen = 0
     local lastKeyTick = 0
 
-    -- ★ 立即刷 CD：压 Attribute=true 0.15s → 走 v63=true 清 u17
     local function refreshCDNow()
         local char = lp.Character
         if not char then return end
@@ -2633,7 +2628,6 @@ do
         end)
     end
 
-    -- ★ 监听 C 键：撞墙中断后检测 u17 卡 → 只刷 CD，不推角色
     local function bindKeyboard()
         if keyConn then pcall(function() keyConn:Disconnect() end); keyConn = nil end
         keyConn = UserInputService.InputBegan:Connect(function(input, gpe)
@@ -2643,7 +2637,6 @@ do
             local now = tick()
             if now - lastKeyTick < 0.3 then return end
             lastKeyTick = now
-            -- ★ 0.15s 后检测：没滑 + 移动中 → u17 卡 → 只刷 CD
             task.spawn(function()
                 task.wait(0.15)
                 local char = lp.Character
@@ -2653,7 +2646,6 @@ do
                 local sliding = hum:GetAttribute("sliding")
                 local moving = hum.MoveDirection.Magnitude > 0.1
                 if not sliding and moving then
-                    -- ★ u17 卡 → 只刷 CD，不推角色
                     noCDActiveUntil = tick() + 0.15
                     pcall(function() char:SetAttribute("RiotShieldEquipped", true) end)
                 end
@@ -2661,7 +2653,6 @@ do
         end)
     end
 
-    -- 恢复循环：noCDActiveUntil 过期后压回 false
     spawn(function()
         while gui.Parent do
             wait(0.05)
@@ -2680,7 +2671,6 @@ do
         if v then
             bindHum()
             bindKeyboard()
-            -- ★ 开启立即刷一次 CD
             refreshCDNow()
         else
             noCDActiveUntil = 0
@@ -2753,7 +2743,7 @@ local function applyLayout(layout)
     end
     main.Position = UDim2.new(0.5, -L.W/2, 0.5, -h/2)
     layoutSwitchBtn.Text = (layout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-    title.Text = "Examination v16.4.8 - " .. (layout == "mobile" and "手机" or "电脑")
+    title.Text = "Examination v16.4.9 - " .. (layout == "mobile" and "手机" or "电脑")
 end
 
 bindTap(layoutSwitchBtn, function()
@@ -2762,7 +2752,7 @@ bindTap(layoutSwitchBtn, function()
 end)
 
 layoutSwitchBtn.Text = (currentLayout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-title.Text = "Examination v16.4.8 - " .. (currentLayout == "mobile" and "手机" or "电脑")
+title.Text = "Examination v16.4.9 - " .. (currentLayout == "mobile" and "手机" or "电脑")
 
 -- ============ 模块 17: 魔法子弹页 ============
 do
@@ -4053,9 +4043,9 @@ bindTap(closeBtn, function()
     pcall(function() StarterGui:SetCore("ResetButtonCallback", false) end)
     _G.ExaminationUI = nil
     gui:Destroy()
-    print("[Exam] v16.4.8 已完全卸载")
+    print("[Exam] v16.4.9 已完全卸载")
 end)
 
-print("[Exam] v16.4.8 已加载（布局=" .. currentLayout .. "）")
+print("[Exam] v16.4.9 已加载（布局=" .. currentLayout .. "）")
 
 -- ===END OF SCRIPT===
