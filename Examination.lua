@@ -1,6 +1,6 @@
 --!nolint
 -- ============================================
--- Examination v16.4.9 修复了一些bug
+-- Examination v16.4.10 优化魔法子弹逻辑，魔法子弹新增：若未锁定敌人关闭穿透生效功能
 -- 此脚本使用AI生成
 -- 因使用混淆加密会导致手机用户无法正常使用所以没有使用混淆加密
 -- 请不要拿去缝合 此脚本永久免费
@@ -408,7 +408,7 @@ local title = Instance.new("TextLabel", titleBar)
 title.Size = UDim2.new(1, -70, 1, 0)
 title.Position = UDim2.new(0, 10, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "Examination v16.4.9"
+title.Text = "Examination v16.4.10"
 title.TextColor3 = Color3.new(1, 1, 1)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 13
@@ -1732,6 +1732,7 @@ do
         restoreScripts()
     end)
 end
+
 -- ============ 模块 11: 去除枪口遮挡 ============
 do
     local muzzleHbConn = nil
@@ -2588,7 +2589,7 @@ do
     end)
 end
 
--- ============ 模块 16.7: 无滑铲冷却（有bug慎用）v16.4.9 ============
+-- ============ 模块 16.7: 无滑铲冷却（有bug慎用）v16.4.10 ============
 do
     local humConn = nil
     local keyConn = nil
@@ -2743,7 +2744,7 @@ local function applyLayout(layout)
     end
     main.Position = UDim2.new(0.5, -L.W/2, 0.5, -h/2)
     layoutSwitchBtn.Text = (layout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-    title.Text = "Examination v16.4.9 - " .. (layout == "mobile" and "手机" or "电脑")
+    title.Text = "Examination v16.4.10 - " .. (layout == "mobile" and "手机" or "电脑")
 end
 
 bindTap(layoutSwitchBtn, function()
@@ -2752,8 +2753,7 @@ bindTap(layoutSwitchBtn, function()
 end)
 
 layoutSwitchBtn.Text = (currentLayout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-title.Text = "Examination v16.4.9 - " .. (currentLayout == "mobile" and "手机" or "电脑")
-
+title.Text = "Examination v16.4.10 - " .. (currentLayout == "mobile" and "手机" or "电脑")
 -- ============ 模块 17: 魔法子弹页 ============
 do
     local mbAimPartIndex = 1
@@ -2764,6 +2764,7 @@ do
     local mbShowBox = false
     local mbRequireVisible = false
     local mbShowFovCircle = true
+    local mbOnlyWhenLocked = true
 
     local AIM_PARTS = {
         { name = "Head",      label = "头部" },
@@ -2847,8 +2848,32 @@ do
             if r.Instance:IsDescendantOf(targetModel) then return true end
             local inst = r.Instance
             if inst:IsA("BasePart") then
-                if inst.CanCollide then return false end
-                if inst.Transparency >= 0.95 then
+                local skip = false
+                local ln = string.lower(inst.Name)
+                if pierceShieldEnabled and (ln:find("shield", 1, true) or ln:find("riot", 1, true)) then
+                    skip = true
+                elseif pierceHelmetEnabled and (ln:find("helmet", 1, true) or ln:find("helm", 1, true) or ln:find("visor", 1, true)) then
+                    skip = true
+                else
+                    local mdl = inst:FindFirstAncestorOfClass("Model")
+                    if mdl and mdl ~= lp.Character then
+                        if pierceTeammateEnabled and Players:GetPlayerFromCharacter(mdl) then
+                            skip = true
+                        elseif pierceCorpseEnabled then
+                            local h = mdl:FindFirstChildOfClass("Humanoid")
+                            if h and h.Health <= 0 then skip = true end
+                        end
+                    end
+                end
+                if skip then
+                    table.insert(exclude, inst)
+                    local adv = (r.Position - curOrigin).Magnitude + 0.05
+                    curOrigin = r.Position + dirUnit * 0.05
+                    remaining = remaining - adv
+                    if remaining <= 0 then return true end
+                elseif inst.CanCollide then
+                    return false
+                elseif inst.Transparency >= 0.95 then
                     table.insert(exclude, inst)
                     local adv = (r.Position - curOrigin).Magnitude + 0.05
                     curOrigin = r.Position + dirUnit * 0.05
@@ -3047,6 +3072,9 @@ do
         if type(behavior) ~= "table" then return end
         local params = behavior.RaycastParams
         if typeof(params) ~= "RaycastParams" then return end
+        if mbOnlyWhenLocked then
+            if not findTarget() then return end
+        end
         local fdi = params.FilterDescendantsInstances
         if type(fdi) ~= "table" then return end
         local newFdi = {}
@@ -3348,7 +3376,11 @@ do
         mbShowFovCircle = v
         updateFov()
         updateLockBB()
-    end, UDim2.new(0, 290, 0, 28))
+    end, UDim2.new(0, 140, 0, 28))
+
+    toggleMagic("若未锁定敌人相关穿透不生效", UDim2.new(0, 165, 0, 132), true, function(v)
+        mbOnlyWhenLocked = v
+    end, UDim2.new(0, 140, 0, 28))
 
     local charBox = Instance.new("Frame", magicPage)
     charBox.Size = UDim2.new(1, -30, 0, 150)
@@ -4043,9 +4075,9 @@ bindTap(closeBtn, function()
     pcall(function() StarterGui:SetCore("ResetButtonCallback", false) end)
     _G.ExaminationUI = nil
     gui:Destroy()
-    print("[Exam] v16.4.9 已完全卸载")
+    print("[Exam] v16.4.10 已完全卸载")
 end)
 
-print("[Exam] v16.4.9 已加载（布局=" .. currentLayout .. "）")
+print("[Exam] v16.4.10 已加载（布局=" .. currentLayout .. "）")
 
 -- ===END OF SCRIPT===
