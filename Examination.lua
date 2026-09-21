@@ -1,6 +1,6 @@
 --!nolint
 -- ============================================
--- Examination v16.4.9 调整了一些设置
+-- Examination v16.4.9 修复了一些bug
 -- 此脚本使用AI生成
 -- 因使用混淆加密会导致手机用户无法正常使用所以没有使用混淆加密
 -- 请不要拿去缝合 此脚本永久免费
@@ -2666,7 +2666,7 @@ do
         end
     end)
 
-    toggleBase("无滑铲冷却（有bug慎用）", "noCD", false, function(v)
+    toggleBase("实验型无滑铲冷却（会导致盾牌无法防御和其他bug）", "noCD", false, function(v)
         noCDEnabled = v
         if v then
             bindHum()
