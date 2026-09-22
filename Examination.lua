@@ -1,6 +1,6 @@
 --!nolint
 -- ============================================
--- Examination v16.5.2 新增魔法子弹360°锁定
+-- Examination v16.5.9 优化了魔法子弹
 -- 此脚本使用AI生成
 -- 因使用混淆加密会导致手机用户无法正常使用所以没有使用混淆加密
 -- 请不要拿去缝合 此脚本永久免费
@@ -48,6 +48,7 @@ local slideDistanceMult = 2
 local shieldVMAlpha = 0.9
 local slideSteerMode = "camera"
 local mbTargetMode = 1
+local autoFireEnabled = false
 
 local AI_CONTAINERS = {"Characters", "Reactor1", "Reactor2", "Reactor3", "Reactor4"}
 
@@ -114,7 +115,7 @@ local function safeCleanup()
         pcall(function() _G.ExaminationUI:Destroy() end)
     end
     _G.ExaminationUI = nil
-    for _, k in ipairs({"_NR6UI","_MB2UI","_FH2UI","_MZ8UI","_MZ9UI","_MZ10UI","_MZ11UI","MBT2_UI","MBT2_FovCircle","MB_TargetLock","SPRadar_UI","ExamAutoQTE","ExamQTEProbe","ExamQTEUIProbe","ExamNetHook","ExamQTEDecomp","ExamHelmetTest","ExamR8Probe","ExamR8Decomp","ExamR8Capture","ExamR8v11","ExamR8v12","ExamR8v13","ExamR8v14","ExamR8v15","ExamShotgunTest","ExamMuzzle","ExamCanShoot","NewShotgunTest","SlideSteer"}) do
+    for _, k in ipairs({"_NR6UI","_MB2UI","_FH2UI","_MZ8UI","_MZ9UI","_MZ10UI","_MZ11UI","MBT2_UI","MBT2_FovCircle","MB_TargetLock","SPRadar_UI","ExamAutoQTE","ExamQTEProbe","ExamQTEUIProbe","ExamNetHook","ExamQTEDecomp","ExamHelmetTest","ExamR8Probe","ExamR8Decomp","ExamR8Capture","ExamR8v11","ExamR8v12","ExamR8v13","ExamR8v14","ExamR8v15","ExamShotgunTest","ExamMuzzle","ExamCanShoot","NewShotgunTest","SlideSteer","ExamRadiusTip"}) do
         if _G[k] and _G[k].Parent then pcall(function() _G[k]:Destroy() end) end
         _G[k] = nil
     end
@@ -290,6 +291,15 @@ local function safeCleanup()
         local oldLbl = mc0:FindFirstChild("SignalBoosterLabel")
         if oldLbl then pcall(function() oldLbl:Destroy() end) end
     end
+    for _, n in ipairs({"ExamRadiusRing", "ExamRadiusFace"}) do
+        for _, d in ipairs(Workspace:GetChildren()) do
+            if d.Name == n then pcall(function() d:Destroy() end) end
+        end
+    end
+    if _G.ExamRadiusTip and _G.ExamRadiusTip.Parent then
+        pcall(function() _G.ExamRadiusTip:Destroy() end)
+    end
+    _G.ExamRadiusTip = nil
 end
 pcall(safeCleanup)
 
@@ -376,16 +386,8 @@ local LAYOUT = {
 }
 
 local TAB_HEIGHTS = {
-    mobile = {
-        base  = 570,
-        magic = 480,
-        radar = 320,
-    },
-    desktop = {
-        base  = 910,
-        magic = 480,
-        radar = 320,
-    },
+    mobile = { base = 570, magic = 600, radar = 320 },
+    desktop = { base = 910, magic = 600, radar = 320 },
 }
 
 local uiParent = CoreGui
@@ -426,7 +428,7 @@ local title = Instance.new("TextLabel", titleBar)
 title.Size = UDim2.new(1, -70, 1, 0)
 title.Position = UDim2.new(0, 10, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "Examination v16.5.2"
+title.Text = "Examination v16.5.9"
 title.TextColor3 = Color3.new(1, 1, 1)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 13
@@ -1754,6 +1756,7 @@ do
         restoreScripts()
     end)
 end
+
 -- ============ 模块 11: 去除枪口遮挡 ============
 do
     local muzzleHbConn = nil
@@ -2768,7 +2771,7 @@ local function applyLayout(layout)
     end
     main.Position = UDim2.new(0.5, -L.W/2, 0.5, -h/2)
     layoutSwitchBtn.Text = (layout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-    title.Text = "Examination v16.5.2 - " .. (layout == "mobile" and "手机" or "电脑")
+    title.Text = "Examination v16.6.0 - " .. (layout == "mobile" and "手机" or "电脑")
 end
 
 bindTap(layoutSwitchBtn, function()
@@ -2777,20 +2780,63 @@ bindTap(layoutSwitchBtn, function()
 end)
 
 layoutSwitchBtn.Text = (currentLayout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-title.Text = "Examination v16.5.2 - " .. (currentLayout == "mobile" and "手机" or "电脑")
+title.Text = "Examination v16.6.0 - " .. (currentLayout == "mobile" and "手机" or "电脑")
 
--- ============ 模块 17: 魔法子弹页 ============
-do
+-- ============ 右下角提示系统 ============
+local tipGui = Instance.new("ScreenGui")
+tipGui.Name = "ExamRadiusTip"
+tipGui.ResetOnSpawn = false
+tipGui.DisplayOrder = 200
+tipGui.Parent = uiParent
+_G.ExamRadiusTip = tipGui
+local tipLbl = Instance.new("TextLabel")
+tipLbl.Size = UDim2.new(0, 360, 0, 32)
+tipLbl.Position = UDim2.new(1, -370, 1, -44)
+tipLbl.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+tipLbl.BackgroundTransparency = 0.1
+tipLbl.TextColor3 = Color3.fromRGB(255, 200, 100)
+tipLbl.Font = Enum.Font.GothamBold
+tipLbl.TextSize = 12
+tipLbl.Visible = false
+tipLbl.BorderSizePixel = 0
+tipLbl.TextWrapped = true
+Instance.new("UICorner", tipLbl).CornerRadius = UDim.new(0, 6)
+tipLbl.Parent = tipGui
+
+local tipToken = 0
+local function showCountdownTip(msg, duration)
+    tipToken = tipToken + 1
+    local myToken = tipToken
+    local endAt = tick() + (duration or 10)
+    tipLbl.Visible = true
+    while tick() < endAt do
+        if tipToken ~= myToken then return end
+        local remain = math.max(0, math.ceil(endAt - tick()))
+        tipLbl.Text = msg .. "  [" .. remain .. "s]"
+        task.wait(0.15)
+    end
+    if tipToken == myToken then tipLbl.Visible = false end
+end
+
+-- ============ 模块 17: 魔法子弹页（IIFE，无自动开火） ============
+(function()
     local mbAimPartIndex = 1
     local mbFovRadius = 200
     local mbWorldDistMax = 5000
     local mbBBSizeStuds = 2.0
     local mbStudsOffsetY = 0.8
-    -- ★ v16.5.2：默认开启
     local mbShowBox = true
     local mbRequireVisible = true
     local mbShowFovCircle = true
     local mbOnlyWhenLocked = true
+
+    local mbShowRadiusCircle = false
+    local radiusMode = "line"
+    local RADIUS_LIMIT = 500
+    local RING_SEGMENTS = 24
+    local radiusRingParts = {}
+    local radiusFacePart = nil
+    local wasTooLarge = false
 
     local AIM_PARTS = {
         { name = "Head",      label = "头部" },
@@ -2953,15 +2999,16 @@ do
 
     local lastFindTick = 0
     local cachedTarget = nil
+    local findLastReason = "init"
     local function findTarget()
         local now = tick()
         if now - lastFindTick < 0.016 then return cachedTarget end
         lastFindTick = now
         local myChar = lp.Character
         local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
-        if not myHrp then cachedTarget = nil; return nil end
+        if not myHrp then cachedTarget = nil; findLastReason = "no-hrp"; return nil end
         local cam = Workspace.CurrentCamera
-        if not cam then cachedTarget = nil; return nil end
+        if not cam then cachedTarget = nil; findLastReason = "no-cam"; return nil end
         local vs = cam.ViewportSize
         local cx, cy = vs.X / 2, vs.Y / 2
         local myPos = myHrp.Position
@@ -2970,15 +3017,16 @@ do
         local bestScreenD2 = math.huge
         local bestWorldD = math.huge
         local camPos = cam.CFrame.Position
-        local excludeVis = { lp.Character, Workspace.Terrain }
-        table.insert(excludeVis, cam)
+        local excludeVis = { lp.Character, Workspace.Terrain, cam }
         local vms = Workspace:FindFirstChild("Viewmodels")
         if vms then table.insert(excludeVis, vms) end
+        local candidates, visBlocked, outFov = 0, 0, 0
         for _, folderName in ipairs(AI_CONTAINERS) do
             local folder = Workspace:FindFirstChild(folderName)
             if folder then
                 for _, m in ipairs(folder:GetChildren()) do
                     if m ~= myChar and m:IsA("Model") and isAlive(m) and isHostile(m) then
+                        candidates = candidates + 1
                         local aimPart = getAimPart(m)
                         local head = m:FindFirstChild("Head")
                         if aimPart and head then
@@ -2988,7 +3036,9 @@ do
                                 if mbRequireVisible then
                                     visible = isPointVisible(camPos, aimPart.Position, m, excludeVis)
                                 end
-                                if visible then
+                                if not visible then
+                                    visBlocked = visBlocked + 1
+                                else
                                     if mbTargetMode == 3 then
                                         if wd < bestWorldD then
                                             bestWorldD = wd
@@ -3013,6 +3063,8 @@ do
                                                     end
                                                 end
                                             end
+                                        else
+                                            outFov = outFov + 1
                                         end
                                     end
                                 end
@@ -3022,128 +3074,144 @@ do
                 end
             end
         end
+        if best then findLastReason = "locked"
+        elseif candidates == 0 then findLastReason = "no-hostiles"
+        elseif visBlocked == candidates then findLastReason = "all-blocked"
+        elseif outFov == candidates - visBlocked then findLastReason = "all-outFOV"
+        else findLastReason = "no-target" end
         cachedTarget = best
         return best
     end
 
-    local shieldCache = { list = {}, tick = 0 }
-    local helmetCache = { list = {}, tick = 0 }
-    local teammateCache = { list = {}, tick = 0 }
-    local corpseCache = { list = {}, tick = 0 }
-
-    local function forEachModel(fn)
-        for _, folderName in ipairs(AI_CONTAINERS) do
-            local folder = Workspace:FindFirstChild(folderName)
-            if folder then
-                for _, m in ipairs(folder:GetChildren()) do
-                    if m:IsA("Model") then fn(m) end
-                end
-            end
+    local function destroyRadiusRing()
+        for _, p in ipairs(radiusRingParts) do
+            if p and p.Parent then pcall(function() p:Destroy() end) end
         end
+        radiusRingParts = {}
     end
-
-    local function collectShields()
-        local now = tick()
-        if now - shieldCache.tick < 1 and #shieldCache.list > 0 then return shieldCache.list end
-        shieldCache.tick = now
-        local list = {}
-        forEachModel(function(m)
-            for _, d in ipairs(m:GetDescendants()) do
-                if d:IsA("BasePart") then
-                    local n = string.lower(d.Name)
-                    if n:find("shield", 1, true) or n:find("riot", 1, true) then
-                        table.insert(list, d)
-                    end
-                end
-            end
-        end)
-        shieldCache.list = list
-        return list
+    local function destroyRadiusFace()
+        if radiusFacePart and radiusFacePart.Parent then
+            pcall(function() radiusFacePart:Destroy() end)
+        end
+        radiusFacePart = nil
     end
-    local function collectHelmets()
-        local now = tick()
-        if now - helmetCache.tick < 1 and #helmetCache.list > 0 then return helmetCache.list end
-        helmetCache.tick = now
-        local list = {}
-        forEachModel(function(m)
-            for _, d in ipairs(m:GetDescendants()) do
-                if d:IsA("BasePart") then
-                    local n = string.lower(d.Name)
-                    if n:find("helmet", 1, true) or n:find("helm", 1, true)
-                       or n:find("visor", 1, true) then
-                        table.insert(list, d)
-                    end
-                end
-            end
-        end)
-        helmetCache.list = list
-        return list
+    local function destroyAllRadius()
+        destroyRadiusRing()
+        destroyRadiusFace()
     end
-    local function collectTeammates()
-        local now = tick()
-        if now - teammateCache.tick < 1 and #teammateCache.list > 0 then return teammateCache.list end
-        teammateCache.tick = now
-        local list = {}
-        forEachModel(function(m)
-            if m ~= lp.Character and Players:GetPlayerFromCharacter(m) then
-                for _, d in ipairs(m:GetDescendants()) do
-                    if d:IsA("BasePart") then table.insert(list, d) end
-                end
-            end
-        end)
-        teammateCache.list = list
-        return list
+    local function ensureRadiusRing()
+        if #radiusRingParts == RING_SEGMENTS and radiusRingParts[1] and radiusRingParts[1].Parent then
+            return radiusRingParts
+        end
+        destroyRadiusRing()
+        for i = 1, RING_SEGMENTS do
+            local p = Instance.new("Part")
+            p.Name = "ExamRadiusRing"
+            p.Size = Vector3.new(0.4, 0.05, 1)
+            p.Material = Enum.Material.SmoothPlastic
+            p.Color = Color3.fromRGB(120, 255, 120)
+            p.Transparency = 1
+            p.CanCollide = false
+            p.CanQuery = false
+            p.CanTouch = false
+            p.Anchored = true
+            p.CastShadow = false
+            p.Parent = Workspace
+            local sg = Instance.new("SurfaceGui")
+            sg.Name = "Line"
+            sg.Face = Enum.NormalId.Top
+            sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+            sg.PixelsPerStud = 40
+            sg.AlwaysOnTop = true
+            sg.LightInfluence = 0
+            sg.Adornee = p
+            sg.Parent = p
+            local f = Instance.new("Frame")
+            f.Size = UDim2.new(1, 0, 1, 0)
+            f.BackgroundColor3 = Color3.fromRGB(120, 255, 120)
+            f.BackgroundTransparency = 0.25
+            f.BorderSizePixel = 0
+            f.Parent = sg
+            table.insert(radiusRingParts, p)
+        end
+        return radiusRingParts
     end
-    local function collectCorpses()
-        local now = tick()
-        if now - corpseCache.tick < 1 and #corpseCache.list > 0 then return corpseCache.list end
-        corpseCache.tick = now
-        local list = {}
-        forEachModel(function(m)
-            if m ~= lp.Character then
-                local hum = m:FindFirstChildOfClass("Humanoid")
-                if hum and hum.Health <= 0 then
-                    for _, d in ipairs(m:GetDescendants()) do
-                        if d:IsA("BasePart") then table.insert(list, d) end
-                    end
-                end
-            end
-        end)
-        corpseCache.list = list
-        return list
+    local function ensureRadiusFace()
+        if radiusFacePart and radiusFacePart.Parent then return radiusFacePart end
+        local p = Instance.new("Part")
+        p.Name = "ExamRadiusFace"
+        p.Shape = Enum.PartType.Cylinder
+        p.Size = Vector3.new(0.05, 1, 1)
+        p.Material = Enum.Material.Neon
+        p.Color = Color3.fromRGB(120, 255, 120)
+        p.Transparency = 0.9
+        p.CanCollide = false
+        p.CanQuery = false
+        p.CanTouch = false
+        p.Anchored = true
+        p.CastShadow = false
+        p.Parent = Workspace
+        radiusFacePart = p
+        return p
     end
-    local function applyExtraFilter(behavior)
-        if type(behavior) ~= "table" then return end
-        local params = behavior.RaycastParams
-        if typeof(params) ~= "RaycastParams" then return end
-        if mbOnlyWhenLocked then
-            if not findTarget() then return end
+    local function updateRadiusDisplay()
+        if not magicBulletEnabled then
+            destroyAllRadius()
+            wasTooLarge = false
+            return
         end
-        local fdi = params.FilterDescendantsInstances
-        if type(fdi) ~= "table" then return end
-        local newFdi = {}
-        for _, v in ipairs(fdi) do table.insert(newFdi, v) end
-        if pierceShieldEnabled then
-            for _, s in ipairs(collectShields()) do
-                if s and s.Parent then table.insert(newFdi, s) end
+        if not mbShowRadiusCircle or mbTargetMode ~= 3 then
+            destroyAllRadius()
+            wasTooLarge = false
+            return
+        end
+        if mbWorldDistMax > RADIUS_LIMIT then
+            destroyAllRadius()
+            if not wasTooLarge then
+                wasTooLarge = true
+                task.spawn(function()
+                    showCountdownTip("360° 锁定范围过大，已关闭范围显示（上限 " .. RADIUS_LIMIT .. "）", 10)
+                end)
             end
+            return
+        else
+            wasTooLarge = false
         end
-        if pierceHelmetEnabled then
-            for _, s in ipairs(collectHelmets()) do
-                if s and s.Parent then table.insert(newFdi, s) end
+        local myChar = lp.Character
+        if not myChar then
+            destroyAllRadius()
+            return
+        end
+        local hum = myChar:FindFirstChildOfClass("Humanoid")
+        if not hum or hum.Health <= 0 then
+            destroyAllRadius()
+            return
+        end
+        local myHrp = myChar:FindFirstChild("HumanoidRootPart")
+        if not myHrp then
+            destroyAllRadius()
+            return
+        end
+        local r = mbWorldDistMax
+        local basePos = myHrp.Position - Vector3.new(0, 2.5, 0)
+        if radiusMode == "line" then
+            destroyRadiusFace()
+            local parts = ensureRadiusRing()
+            local segLen = 2 * r * math.sin(math.pi / RING_SEGMENTS) + 0.05
+            for i, p in ipairs(parts) do
+                local angle = (i - 1) / RING_SEGMENTS * math.pi * 2
+                local x = math.cos(angle) * r
+                local z = math.sin(angle) * r
+                p.Size = Vector3.new(0.4, 0.05, segLen)
+                p.CFrame = CFrame.new(basePos + Vector3.new(x, 0, z)) * CFrame.Angles(0, -angle, 0)
             end
+        else
+            destroyRadiusRing()
+            local p = ensureRadiusFace()
+            local d = r * 2
+            p.Size = Vector3.new(0.05, d, d)
+            p.CFrame = CFrame.new(basePos) * CFrame.Angles(0, 0, math.rad(90))
         end
-        if pierceTeammateEnabled then
-            for _, s in ipairs(collectTeammates()) do
-                if s and s.Parent then table.insert(newFdi, s) end
-            end
-        end
-        if pierceCorpseEnabled then
-            for _, s in ipairs(collectCorpses()) do
-                if s and s.Parent then table.insert(newFdi, s) end
-            end
-        end
-        pcall(function() params.FilterDescendantsInstances = newFdi end)
     end
 
     local lockBB = nil
@@ -3151,10 +3219,6 @@ do
     local function destroyLockBB()
         if lockBB and lockBB.Parent then pcall(function() lockBB:Destroy() end) end
         lockBB = nil; lockTarget = nil
-        forEachModel(function(m)
-            local bb = m:FindFirstChild("Exam_MB_LockBB")
-            if bb then pcall(function() bb:Destroy() end) end
-        end)
     end
     local function createLockBB(part)
         local bb = Instance.new("BillboardGui")
@@ -3263,6 +3327,124 @@ do
         end
         return true
     end
+    local shieldCache = { list = {}, tick = 0 }
+    local helmetCache = { list = {}, tick = 0 }
+    local teammateCache = { list = {}, tick = 0 }
+    local corpseCache = { list = {}, tick = 0 }
+    local function forEachModel(fn)
+        for _, folderName in ipairs(AI_CONTAINERS) do
+            local folder = Workspace:FindFirstChild(folderName)
+            if folder then
+                for _, m in ipairs(folder:GetChildren()) do
+                    if m:IsA("Model") then fn(m) end
+                end
+            end
+        end
+    end
+    local function collectShields()
+        local now = tick()
+        if now - shieldCache.tick < 1 and #shieldCache.list > 0 then return shieldCache.list end
+        shieldCache.tick = now
+        local list = {}
+        forEachModel(function(m)
+            for _, d in ipairs(m:GetDescendants()) do
+                if d:IsA("BasePart") then
+                    local n = string.lower(d.Name)
+                    if n:find("shield", 1, true) or n:find("riot", 1, true) then
+                        table.insert(list, d)
+                    end
+                end
+            end
+        end)
+        shieldCache.list = list
+        return list
+    end
+    local function collectHelmets()
+        local now = tick()
+        if now - helmetCache.tick < 1 and #helmetCache.list > 0 then return helmetCache.list end
+        helmetCache.tick = now
+        local list = {}
+        forEachModel(function(m)
+            for _, d in ipairs(m:GetDescendants()) do
+                if d:IsA("BasePart") then
+                    local n = string.lower(d.Name)
+                    if n:find("helmet", 1, true) or n:find("helm", 1, true)
+                       or n:find("visor", 1, true) then
+                        table.insert(list, d)
+                    end
+                end
+            end
+        end)
+        helmetCache.list = list
+        return list
+    end
+    local function collectTeammates()
+        local now = tick()
+        if now - teammateCache.tick < 1 and #teammateCache.list > 0 then return teammateCache.list end
+        teammateCache.tick = now
+        local list = {}
+        forEachModel(function(m)
+            if m ~= lp.Character and Players:GetPlayerFromCharacter(m) then
+                for _, d in ipairs(m:GetDescendants()) do
+                    if d:IsA("BasePart") then table.insert(list, d) end
+                end
+            end
+        end)
+        teammateCache.list = list
+        return list
+    end
+    local function collectCorpses()
+        local now = tick()
+        if now - corpseCache.tick < 1 and #corpseCache.list > 0 then return corpseCache.list end
+        corpseCache.tick = now
+        local list = {}
+        forEachModel(function(m)
+            if m ~= lp.Character then
+                local hum = m:FindFirstChildOfClass("Humanoid")
+                if hum and hum.Health <= 0 then
+                    for _, d in ipairs(m:GetDescendants()) do
+                        if d:IsA("BasePart") then table.insert(list, d) end
+                    end
+                end
+            end
+        end)
+        corpseCache.list = list
+        return list
+    end
+    local function applyExtraFilter(behavior)
+        if type(behavior) ~= "table" then return end
+        local params = behavior.RaycastParams
+        if typeof(params) ~= "RaycastParams" then return end
+        if mbOnlyWhenLocked then
+            if not findTarget() then return end
+        end
+        local fdi = params.FilterDescendantsInstances
+        if type(fdi) ~= "table" then return end
+        local newFdi = {}
+        for _, v in ipairs(fdi) do table.insert(newFdi, v) end
+        if pierceShieldEnabled then
+            for _, s in ipairs(collectShields()) do
+                if s and s.Parent then table.insert(newFdi, s) end
+            end
+        end
+        if pierceHelmetEnabled then
+            for _, s in ipairs(collectHelmets()) do
+                if s and s.Parent then table.insert(newFdi, s) end
+            end
+        end
+        if pierceTeammateEnabled then
+            for _, s in ipairs(collectTeammates()) do
+                if s and s.Parent then table.insert(newFdi, s) end
+            end
+        end
+        if pierceCorpseEnabled then
+            for _, s in ipairs(collectCorpses()) do
+                if s and s.Parent then table.insert(newFdi, s) end
+            end
+        end
+        pcall(function() params.FilterDescendantsInstances = newFdi end)
+    end
+
     local function installHook()
         if mbHookInstalled then return end
         mbHookInstalled = true
@@ -3366,6 +3548,8 @@ do
         else
             uninstallHook()
             updateFov()
+            destroyAllRadius()
+            wasTooLarge = false
         end
     end
 
@@ -3382,11 +3566,11 @@ do
         if mbSetState then pcall(function() mbSetState(false) end) end
     end
 
-    -- ★ v16.5.2：默认开启 true
     toggleMagic("显示 3D 头框", UDim2.new(0, 15, 0, 36), true, function(v)
         mbShowBox = v
         if not v then destroyLockBB() end
     end, UDim2.new(0, 140, 0, 28))
+
     toggleMagic("掩体检测", UDim2.new(0, 165, 0, 36), true, function(v)
         mbRequireVisible = v
         if not v then
@@ -3397,24 +3581,20 @@ do
 
     toggleMagic("穿透盾牌", UDim2.new(0, 15, 0, 68), true, function(v)
         pierceShieldEnabled = v
-        shieldCache.tick = 0
-        shieldCache.list = {}
+        shieldCache.tick = 0; shieldCache.list = {}
     end, UDim2.new(0, 140, 0, 28))
     toggleMagic("穿透SIN头盔", UDim2.new(0, 165, 0, 68), true, function(v)
         pierceHelmetEnabled = v
-        helmetCache.tick = 0
-        helmetCache.list = {}
+        helmetCache.tick = 0; helmetCache.list = {}
     end, UDim2.new(0, 140, 0, 28))
 
     toggleMagic("穿透队友", UDim2.new(0, 15, 0, 100), true, function(v)
         pierceTeammateEnabled = v
-        teammateCache.tick = 0
-        teammateCache.list = {}
+        teammateCache.tick = 0; teammateCache.list = {}
     end, UDim2.new(0, 140, 0, 28))
     toggleMagic("穿透尸体", UDim2.new(0, 165, 0, 100), true, function(v)
         pierceCorpseEnabled = v
-        corpseCache.tick = 0
-        corpseCache.list = {}
+        corpseCache.tick = 0; corpseCache.list = {}
     end, UDim2.new(0, 140, 0, 28))
 
     toggleMagic("显示FOV圈", UDim2.new(0, 15, 0, 132), true, function(v)
@@ -3458,12 +3638,130 @@ do
         destroyLockBB()
         refreshModeBtnText()
         updateFov()
+        wasTooLarge = false
     end)
     refreshModeBtnText()
 
+    -- ★ 半径行上移到 y=196（原自动开火位置）
+    local radiusBtn = Instance.new("TextButton", magicPage)
+    radiusBtn.Size = UDim2.new(0, 140, 0, 28)
+    radiusBtn.Position = UDim2.new(0, 15, 0, 196)
+    radiusBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+    radiusBtn.TextColor3 = Color3.new(1, 1, 1)
+    radiusBtn.Font = Enum.Font.GothamBold
+    radiusBtn.TextSize = 11
+    radiusBtn.Active = true
+    Instance.new("UICorner", radiusBtn).CornerRadius = UDim.new(0, 5)
+    radiusBtn.Text = "半径显示: 关"
+    bindTap(radiusBtn, function()
+        mbShowRadiusCircle = not mbShowRadiusCircle
+        radiusBtn.Text = mbShowRadiusCircle and "半径显示: 开" or "半径显示: 关"
+        radiusBtn.BackgroundColor3 = mbShowRadiusCircle and Color3.fromRGB(0, 130, 0) or Color3.fromRGB(70, 70, 70)
+        if not mbShowRadiusCircle then destroyAllRadius() end
+    end)
+
+    local radiusModeBtn = Instance.new("TextButton", magicPage)
+    radiusModeBtn.Size = UDim2.new(0, 140, 0, 28)
+    radiusModeBtn.Position = UDim2.new(0, 165, 0, 196)
+    radiusModeBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 100)
+    radiusModeBtn.TextColor3 = Color3.new(1, 1, 1)
+    radiusModeBtn.Font = Enum.Font.GothamBold
+    radiusModeBtn.TextSize = 11
+    radiusModeBtn.Active = true
+    Instance.new("UICorner", radiusModeBtn).CornerRadius = UDim.new(0, 5)
+    radiusModeBtn.Text = "半径模式: 线"
+    bindTap(radiusModeBtn, function()
+        radiusMode = (radiusMode == "line") and "face" or "line"
+        if radiusMode == "line" then
+            radiusModeBtn.Text = "半径模式: 线"
+            radiusModeBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 100)
+        else
+            radiusModeBtn.Text = "半径模式: 面"
+            radiusModeBtn.BackgroundColor3 = Color3.fromRGB(100, 60, 60)
+        end
+        destroyAllRadius()
+    end)
+
+    local distLbl = Instance.new("TextLabel", magicPage)
+    distLbl.Size = UDim2.new(0, 75, 0, 22)
+    distLbl.Position = UDim2.new(0, 15, 0, 230)
+    distLbl.BackgroundTransparency = 1
+    distLbl.Text = "最大距离:"
+    distLbl.TextColor3 = Color3.fromRGB(200, 200, 200)
+    distLbl.Font = Enum.Font.Gotham
+    distLbl.TextSize = 11
+    distLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+    local distIn = Instance.new("TextBox", magicPage)
+    distIn.Size = UDim2.new(0, 60, 0, 22)
+    distIn.Position = UDim2.new(0, 88, 0, 230)
+    distIn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    distIn.TextColor3 = Color3.new(1, 1, 1)
+    distIn.Text = tostring(mbWorldDistMax)
+    distIn.Font = Enum.Font.Gotham
+    distIn.TextSize = 11
+    distIn.BorderSizePixel = 0
+    Instance.new("UICorner", distIn).CornerRadius = UDim.new(0, 4)
+    distIn.FocusLost:Connect(function()
+        local v = tonumber(distIn.Text)
+        if v and v >= 10 and v <= 50000 then
+            mbWorldDistMax = v
+            distIn.Text = tostring(v)
+            cachedTarget = nil
+            lastFindTick = 0
+        else
+            distIn.Text = tostring(mbWorldDistMax)
+        end
+    end)
+
+    local quick50 = Instance.new("TextButton", magicPage)
+    quick50.Size = UDim2.new(0, 60, 0, 22)
+    quick50.Position = UDim2.new(0, 152, 0, 230)
+    quick50.BackgroundColor3 = Color3.fromRGB(60, 80, 100)
+    quick50.Text = "50"
+    quick50.TextColor3 = Color3.fromRGB(220, 220, 220)
+    quick50.Font = Enum.Font.GothamBold
+    quick50.TextSize = 11
+    quick50.Active = true
+    Instance.new("UICorner", quick50).CornerRadius = UDim.new(0, 4)
+    bindTap(quick50, function()
+        mbWorldDistMax = 50; distIn.Text = "50"
+        cachedTarget = nil; lastFindTick = 0
+    end)
+
+    local quick200 = Instance.new("TextButton", magicPage)
+    quick200.Size = UDim2.new(0, 60, 0, 22)
+    quick200.Position = UDim2.new(0, 216, 0, 230)
+    quick200.BackgroundColor3 = Color3.fromRGB(60, 80, 100)
+    quick200.Text = "200"
+    quick200.TextColor3 = Color3.fromRGB(220, 220, 220)
+    quick200.Font = Enum.Font.GothamBold
+    quick200.TextSize = 11
+    quick200.Active = true
+    Instance.new("UICorner", quick200).CornerRadius = UDim.new(0, 4)
+    bindTap(quick200, function()
+        mbWorldDistMax = 200; distIn.Text = "200"
+        cachedTarget = nil; lastFindTick = 0
+    end)
+
+    local quick5000 = Instance.new("TextButton", magicPage)
+    quick5000.Size = UDim2.new(0, 60, 0, 22)
+    quick5000.Position = UDim2.new(0, 280, 0, 230)
+    quick5000.BackgroundColor3 = Color3.fromRGB(60, 80, 100)
+    quick5000.Text = "5000"
+    quick5000.TextColor3 = Color3.fromRGB(220, 220, 220)
+    quick5000.Font = Enum.Font.GothamBold
+    quick5000.TextSize = 11
+    quick5000.Active = true
+    Instance.new("UICorner", quick5000).CornerRadius = UDim.new(0, 4)
+    bindTap(quick5000, function()
+        mbWorldDistMax = 5000; distIn.Text = "5000"
+        cachedTarget = nil; lastFindTick = 0
+    end)
+
     local charBox = Instance.new("Frame", magicPage)
-    charBox.Size = UDim2.new(1, -30, 0, 150)
-    charBox.Position = UDim2.new(0, 15, 0, 196)
+    charBox.Size = UDim2.new(1, -30, 0, 130)
+    charBox.Position = UDim2.new(0, 15, 0, 262)
     charBox.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
     charBox.BorderSizePixel = 0
     Instance.new("UICorner", charBox).CornerRadius = UDim.new(0, 6)
@@ -3501,7 +3799,7 @@ do
     rightInfo.BackgroundTransparency = 1
     local infoTitle = Instance.new("TextLabel", rightInfo)
     infoTitle.Size = UDim2.new(1, 0, 0, 18)
-    infoTitle.Position = UDim2.new(0, 0, 0, 16)
+    infoTitle.Position = UDim2.new(0, 0, 0, 12)
     infoTitle.BackgroundTransparency = 1
     infoTitle.Text = "当前锁定"
     infoTitle.TextColor3 = Color3.fromRGB(150, 150, 150)
@@ -3509,13 +3807,13 @@ do
     infoTitle.TextSize = 11
     infoTitle.TextXAlignment = Enum.TextXAlignment.Left
     local infoValue = Instance.new("TextLabel", rightInfo)
-    infoValue.Size = UDim2.new(1, 0, 0, 44)
-    infoValue.Position = UDim2.new(0, 0, 0, 42)
+    infoValue.Size = UDim2.new(1, 0, 0, 40)
+    infoValue.Position = UDim2.new(0, 0, 0, 36)
     infoValue.BackgroundTransparency = 1
     infoValue.Text = "头部"
     infoValue.TextColor3 = Color3.fromRGB(0, 220, 120)
     infoValue.Font = Enum.Font.GothamBold
-    infoValue.TextSize = 24
+    infoValue.TextSize = 22
     infoValue.TextXAlignment = Enum.TextXAlignment.Left
 
     local function refreshAimSelection()
@@ -3540,7 +3838,7 @@ do
 
     local fovLbl = Instance.new("TextLabel", magicPage)
     fovLbl.Size = UDim2.new(0, 36, 0, 22)
-    fovLbl.Position = UDim2.new(0, 15, 0, 354)
+    fovLbl.Position = UDim2.new(0, 15, 0, 400)
     fovLbl.BackgroundTransparency = 1
     fovLbl.Text = "FOV:"
     fovLbl.TextColor3 = Color3.new(0.9, 0.9, 0.9)
@@ -3548,7 +3846,7 @@ do
     fovLbl.TextXAlignment = Enum.TextXAlignment.Left
     local fovInput = Instance.new("TextBox", magicPage)
     fovInput.Size = UDim2.new(0, 42, 0, 22)
-    fovInput.Position = UDim2.new(0, 48, 0, 354)
+    fovInput.Position = UDim2.new(0, 48, 0, 400)
     fovInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
     fovInput.TextColor3 = Color3.new(1, 1, 1)
     fovInput.Text = tostring(mbFovRadius)
@@ -3564,7 +3862,7 @@ do
 
     local bsLbl = Instance.new("TextLabel", magicPage)
     bsLbl.Size = UDim2.new(0, 32, 0, 22)
-    bsLbl.Position = UDim2.new(0, 100, 0, 354)
+    bsLbl.Position = UDim2.new(0, 100, 0, 400)
     bsLbl.BackgroundTransparency = 1
     bsLbl.Text = "框:"
     bsLbl.TextColor3 = Color3.new(0.9, 0.9, 0.9)
@@ -3572,7 +3870,7 @@ do
     bsLbl.TextXAlignment = Enum.TextXAlignment.Left
     local bsInput = Instance.new("TextBox", magicPage)
     bsInput.Size = UDim2.new(0, 42, 0, 22)
-    bsInput.Position = UDim2.new(0, 130, 0, 354)
+    bsInput.Position = UDim2.new(0, 130, 0, 400)
     bsInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
     bsInput.TextColor3 = Color3.new(1, 1, 1)
     bsInput.Text = tostring(mbBBSizeStuds)
@@ -3588,7 +3886,7 @@ do
 
     local wdLbl = Instance.new("TextLabel", magicPage)
     wdLbl.Size = UDim2.new(0, 30, 0, 22)
-    wdLbl.Position = UDim2.new(0, 182, 0, 354)
+    wdLbl.Position = UDim2.new(0, 182, 0, 400)
     wdLbl.BackgroundTransparency = 1
     wdLbl.Text = "距:"
     wdLbl.TextColor3 = Color3.new(0.9, 0.9, 0.9)
@@ -3596,7 +3894,7 @@ do
     wdLbl.TextXAlignment = Enum.TextXAlignment.Left
     local wdInput = Instance.new("TextBox", magicPage)
     wdInput.Size = UDim2.new(0, 60, 0, 22)
-    wdInput.Position = UDim2.new(0, 212, 0, 354)
+    wdInput.Position = UDim2.new(0, 212, 0, 400)
     wdInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
     wdInput.TextColor3 = Color3.new(1, 1, 1)
     wdInput.Text = tostring(mbWorldDistMax)
@@ -3617,12 +3915,26 @@ do
         updateLockBB()
     end)
 
+    local radiusFrame = 0
+    RunService.RenderStepped:Connect(function()
+        if not gui.Parent then return end
+        radiusFrame = radiusFrame + 1
+        if radiusFrame % 3 ~= 0 then return end
+        updateRadiusDisplay()
+    end)
+
+    lp.CharacterAdded:Connect(function()
+        destroyAllRadius()
+        wasTooLarge = false
+    end)
+
     table.insert(cleanupFns, function()
         uninstallHook()
         destroyFov()
         destroyLockBB()
+        destroyAllRadius()
     end)
-end
+end)()
 
 -- ============ 模块 18: 雷达页 ============
 do
@@ -4155,16 +4467,23 @@ bindTap(closeBtn, function()
     for _, fn in ipairs(cleanupFns) do pcall(fn) end
     cleanupFns = {}
     pcall(function() StarterGui:SetCore("ResetButtonCallback", false) end)
+    if tipGui then pcall(function() tipGui:Destroy() end) end
+    _G.ExamRadiusTip = nil
     _G.ExaminationUI = nil
     gui:Destroy()
+    for _, n in ipairs({"ExamRadiusRing", "ExamRadiusFace"}) do
+        for _, d in ipairs(Workspace:GetChildren()) do
+            if d.Name == n then pcall(function() d:Destroy() end) end
+        end
+    end
     if collectgarbage then
         local cg = collectgarbage :: any
         pcall(cg, "collect")
         pcall(cg, "collect")
     end
-    print("[Exam] v16.5.2 已完全卸载")
+    print("[Exam] v16.6.0 已完全卸载")
 end)
 
-print("[Exam] v16.5.2 已加载（布局=" .. currentLayout .. "）")
+print("[Exam] v16.6.0 已加载（布局=" .. currentLayout .. "）")
 
 -- ===END OF SCRIPT===
