@@ -1,6 +1,6 @@
 --!nolint
 -- ============================================
--- Examination v16.4.12 性能优化了一下脚本
+-- Examination v16.5.2 新增魔法子弹360°锁定
 -- 此脚本使用AI生成
 -- 因使用混淆加密会导致手机用户无法正常使用所以没有使用混淆加密
 -- 请不要拿去缝合 此脚本永久免费
@@ -47,6 +47,7 @@ local headSize = 4
 local slideDistanceMult = 2
 local shieldVMAlpha = 0.9
 local slideSteerMode = "camera"
+local mbTargetMode = 1
 
 local AI_CONTAINERS = {"Characters", "Reactor1", "Reactor2", "Reactor3", "Reactor4"}
 
@@ -377,12 +378,12 @@ local LAYOUT = {
 local TAB_HEIGHTS = {
     mobile = {
         base  = 570,
-        magic = 450,
+        magic = 480,
         radar = 320,
     },
     desktop = {
         base  = 910,
-        magic = 450,
+        magic = 480,
         radar = 320,
     },
 }
@@ -425,7 +426,7 @@ local title = Instance.new("TextLabel", titleBar)
 title.Size = UDim2.new(1, -70, 1, 0)
 title.Position = UDim2.new(0, 10, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "Examination v16.4.12"
+title.Text = "Examination v16.5.2"
 title.TextColor3 = Color3.new(1, 1, 1)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 13
@@ -2767,7 +2768,7 @@ local function applyLayout(layout)
     end
     main.Position = UDim2.new(0.5, -L.W/2, 0.5, -h/2)
     layoutSwitchBtn.Text = (layout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-    title.Text = "Examination v16.4.12 - " .. (layout == "mobile" and "手机" or "电脑")
+    title.Text = "Examination v16.5.2 - " .. (layout == "mobile" and "手机" or "电脑")
 end
 
 bindTap(layoutSwitchBtn, function()
@@ -2776,7 +2777,7 @@ bindTap(layoutSwitchBtn, function()
 end)
 
 layoutSwitchBtn.Text = (currentLayout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-title.Text = "Examination v16.4.12 - " .. (currentLayout == "mobile" and "手机" or "电脑")
+title.Text = "Examination v16.5.2 - " .. (currentLayout == "mobile" and "手机" or "电脑")
 
 -- ============ 模块 17: 魔法子弹页 ============
 do
@@ -2785,8 +2786,9 @@ do
     local mbWorldDistMax = 5000
     local mbBBSizeStuds = 2.0
     local mbStudsOffsetY = 0.8
-    local mbShowBox = false
-    local mbRequireVisible = false
+    -- ★ v16.5.2：默认开启
+    local mbShowBox = true
+    local mbRequireVisible = true
     local mbShowFovCircle = true
     local mbOnlyWhenLocked = true
 
@@ -2938,7 +2940,7 @@ do
     end
     local function updateFov()
         if not mbFovCircleImg then return end
-        if magicBulletEnabled and mbShowFovCircle then
+        if magicBulletEnabled and mbShowFovCircle and mbTargetMode ~= 3 then
             mbFovCircleImg.Visible = true
             mbFovCircleImg.Size = UDim2.new(0, mbFovRadius * 2, 0, mbFovRadius * 2)
             mbFovCircleImg.Position = UDim2.new(0.5, 0, 0.5, 0)
@@ -2964,7 +2966,9 @@ do
         local cx, cy = vs.X / 2, vs.Y / 2
         local myPos = myHrp.Position
         local r2 = mbFovRadius * mbFovRadius
-        local best, bestD2 = nil, math.huge
+        local best = nil
+        local bestScreenD2 = math.huge
+        local bestWorldD = math.huge
         local camPos = cam.CFrame.Position
         local excludeVis = { lp.Character, Workspace.Terrain }
         table.insert(excludeVis, cam)
@@ -2985,14 +2989,30 @@ do
                                     visible = isPointVisible(camPos, aimPart.Position, m, excludeVis)
                                 end
                                 if visible then
-                                    local s, onScreen = cam:WorldToViewportPoint(head.Position)
-                                    if onScreen and s.Z > 0 then
-                                        local dx = s.X - cx
-                                        local dy = s.Y - cy
-                                        local d2 = dx*dx + dy*dy
-                                        if d2 <= r2 and d2 < bestD2 then
-                                            bestD2 = d2
+                                    if mbTargetMode == 3 then
+                                        if wd < bestWorldD then
+                                            bestWorldD = wd
                                             best = { model = m, head = head, aimPart = aimPart }
+                                        end
+                                    else
+                                        local s, onScreen = cam:WorldToViewportPoint(head.Position)
+                                        if onScreen and s.Z > 0 then
+                                            local dx = s.X - cx
+                                            local dy = s.Y - cy
+                                            local d2 = dx*dx + dy*dy
+                                            if d2 <= r2 then
+                                                if mbTargetMode == 1 then
+                                                    if d2 < bestScreenD2 then
+                                                        bestScreenD2 = d2
+                                                        best = { model = m, head = head, aimPart = aimPart }
+                                                    end
+                                                else
+                                                    if wd < bestWorldD then
+                                                        bestWorldD = wd
+                                                        best = { model = m, head = head, aimPart = aimPart }
+                                                    end
+                                                end
+                                            end
                                         end
                                     end
                                 end
@@ -3362,11 +3382,12 @@ do
         if mbSetState then pcall(function() mbSetState(false) end) end
     end
 
-    toggleMagic("显示 3D 头框", UDim2.new(0, 15, 0, 36), false, function(v)
+    -- ★ v16.5.2：默认开启 true
+    toggleMagic("显示 3D 头框", UDim2.new(0, 15, 0, 36), true, function(v)
         mbShowBox = v
         if not v then destroyLockBB() end
     end, UDim2.new(0, 140, 0, 28))
-    toggleMagic("掩体检测", UDim2.new(0, 165, 0, 36), false, function(v)
+    toggleMagic("掩体检测", UDim2.new(0, 165, 0, 36), true, function(v)
         mbRequireVisible = v
         if not v then
             cachedTarget = nil
@@ -3402,13 +3423,47 @@ do
         updateLockBB()
     end, UDim2.new(0, 140, 0, 28))
 
-    toggleMagic("若未锁定敌人相关穿透不生效", UDim2.new(0, 165, 0, 132), true, function(v)
+    toggleMagic("未锁定不穿透", UDim2.new(0, 165, 0, 132), true, function(v)
         mbOnlyWhenLocked = v
     end, UDim2.new(0, 140, 0, 28))
 
+    local MODE_NAMES = {
+        [1] = "准星最近（FOV内）",
+        [2] = "距离最近（FOV内）",
+        [3] = "360° 距离最近",
+    }
+    local modeBtn = Instance.new("TextButton", magicPage)
+    modeBtn.Size = UDim2.new(1, -30, 0, 28)
+    modeBtn.Position = UDim2.new(0, 15, 0, 164)
+    modeBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 100)
+    modeBtn.TextColor3 = Color3.new(1, 1, 1)
+    modeBtn.Font = Enum.Font.GothamBold
+    modeBtn.TextSize = 12
+    modeBtn.Active = true
+    Instance.new("UICorner", modeBtn).CornerRadius = UDim.new(0, 5)
+    local function refreshModeBtnText()
+        modeBtn.Text = "锁定模式: " .. (MODE_NAMES[mbTargetMode] or "?")
+        if mbTargetMode == 3 then
+            modeBtn.BackgroundColor3 = Color3.fromRGB(160, 60, 60)
+        elseif mbTargetMode == 2 then
+            modeBtn.BackgroundColor3 = Color3.fromRGB(150, 110, 50)
+        else
+            modeBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 100)
+        end
+    end
+    bindTap(modeBtn, function()
+        mbTargetMode = mbTargetMode % 3 + 1
+        cachedTarget = nil
+        lastFindTick = 0
+        destroyLockBB()
+        refreshModeBtnText()
+        updateFov()
+    end)
+    refreshModeBtnText()
+
     local charBox = Instance.new("Frame", magicPage)
     charBox.Size = UDim2.new(1, -30, 0, 150)
-    charBox.Position = UDim2.new(0, 15, 0, 164)
+    charBox.Position = UDim2.new(0, 15, 0, 196)
     charBox.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
     charBox.BorderSizePixel = 0
     Instance.new("UICorner", charBox).CornerRadius = UDim.new(0, 6)
@@ -3485,7 +3540,7 @@ do
 
     local fovLbl = Instance.new("TextLabel", magicPage)
     fovLbl.Size = UDim2.new(0, 36, 0, 22)
-    fovLbl.Position = UDim2.new(0, 15, 0, 322)
+    fovLbl.Position = UDim2.new(0, 15, 0, 354)
     fovLbl.BackgroundTransparency = 1
     fovLbl.Text = "FOV:"
     fovLbl.TextColor3 = Color3.new(0.9, 0.9, 0.9)
@@ -3493,7 +3548,7 @@ do
     fovLbl.TextXAlignment = Enum.TextXAlignment.Left
     local fovInput = Instance.new("TextBox", magicPage)
     fovInput.Size = UDim2.new(0, 42, 0, 22)
-    fovInput.Position = UDim2.new(0, 48, 0, 322)
+    fovInput.Position = UDim2.new(0, 48, 0, 354)
     fovInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
     fovInput.TextColor3 = Color3.new(1, 1, 1)
     fovInput.Text = tostring(mbFovRadius)
@@ -3509,7 +3564,7 @@ do
 
     local bsLbl = Instance.new("TextLabel", magicPage)
     bsLbl.Size = UDim2.new(0, 32, 0, 22)
-    bsLbl.Position = UDim2.new(0, 100, 0, 322)
+    bsLbl.Position = UDim2.new(0, 100, 0, 354)
     bsLbl.BackgroundTransparency = 1
     bsLbl.Text = "框:"
     bsLbl.TextColor3 = Color3.new(0.9, 0.9, 0.9)
@@ -3517,7 +3572,7 @@ do
     bsLbl.TextXAlignment = Enum.TextXAlignment.Left
     local bsInput = Instance.new("TextBox", magicPage)
     bsInput.Size = UDim2.new(0, 42, 0, 22)
-    bsInput.Position = UDim2.new(0, 130, 0, 322)
+    bsInput.Position = UDim2.new(0, 130, 0, 354)
     bsInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
     bsInput.TextColor3 = Color3.new(1, 1, 1)
     bsInput.Text = tostring(mbBBSizeStuds)
@@ -3533,7 +3588,7 @@ do
 
     local wdLbl = Instance.new("TextLabel", magicPage)
     wdLbl.Size = UDim2.new(0, 30, 0, 22)
-    wdLbl.Position = UDim2.new(0, 182, 0, 322)
+    wdLbl.Position = UDim2.new(0, 182, 0, 354)
     wdLbl.BackgroundTransparency = 1
     wdLbl.Text = "距:"
     wdLbl.TextColor3 = Color3.new(0.9, 0.9, 0.9)
@@ -3541,7 +3596,7 @@ do
     wdLbl.TextXAlignment = Enum.TextXAlignment.Left
     local wdInput = Instance.new("TextBox", magicPage)
     wdInput.Size = UDim2.new(0, 60, 0, 22)
-    wdInput.Position = UDim2.new(0, 212, 0, 322)
+    wdInput.Position = UDim2.new(0, 212, 0, 354)
     wdInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
     wdInput.TextColor3 = Color3.new(1, 1, 1)
     wdInput.Text = tostring(mbWorldDistMax)
@@ -4102,15 +4157,14 @@ bindTap(closeBtn, function()
     pcall(function() StarterGui:SetCore("ResetButtonCallback", false) end)
     _G.ExaminationUI = nil
     gui:Destroy()
-    -- ★ v16.4.12：强制 GC ×2（用 :: any 绕过 Luau 类型检查）
     if collectgarbage then
         local cg = collectgarbage :: any
         pcall(cg, "collect")
         pcall(cg, "collect")
     end
-    print("[Exam] v16.4.12 已完全卸载")
+    print("[Exam] v16.5.2 已完全卸载")
 end)
 
-print("[Exam] v16.4.12 已加载（布局=" .. currentLayout .. "）")
+print("[Exam] v16.5.2 已加载（布局=" .. currentLayout .. "）")
 
 -- ===END OF SCRIPT===
