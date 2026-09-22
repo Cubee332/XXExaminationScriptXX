@@ -1,10 +1,11 @@
 --!nolint
 -- ============================================
--- Examination v16.4.10 优化魔法子弹逻辑，魔法子弹新增：若未锁定敌人关闭穿透生效功能
+-- Examination v16.4.12 性能优化了一下脚本
 -- 此脚本使用AI生成
 -- 因使用混淆加密会导致手机用户无法正常使用所以没有使用混淆加密
 -- 请不要拿去缝合 此脚本永久免费
 -- 若随意缝合和偷源码自称是自制的该脚本会进行删库处理并停止对外更新( AI写的史山代码你也要？？？？)
+-- 倒卖脚本私冯！！！
 -- ============================================
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -58,6 +59,22 @@ local SHOTGUN_PUMP_IDS = {
     ["116710355675938"] = true,
 }
 local SHOTGUN_SPEED_MULT = 1000
+
+local function batchScan(list, callback, batchSize)
+    batchSize = batchSize or 200
+    spawn(function()
+        local batch = {}
+        for _, d in ipairs(list) do
+            table.insert(batch, d)
+            if #batch >= batchSize then
+                for _, item in ipairs(batch) do pcall(callback, item) end
+                batch = {}
+                RunService.Heartbeat:Wait()
+            end
+        end
+        for _, item in ipairs(batch) do pcall(callback, item) end
+    end)
+end
 
 local cleanupFns = {}
 local _playerChars = {}
@@ -408,7 +425,7 @@ local title = Instance.new("TextLabel", titleBar)
 title.Size = UDim2.new(1, -70, 1, 0)
 title.Position = UDim2.new(0, 10, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "Examination v16.4.10"
+title.Text = "Examination v16.4.12"
 title.TextColor3 = Color3.new(1, 1, 1)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 13
@@ -1131,7 +1148,7 @@ do
         for _, conn in ipairs(hitboxConnections) do pcall(function() conn:Disconnect() end) end
         hitboxConnections = {}
         if not headHitboxEnabled then restoreHeadHitbox(); return end
-        for _, desc in ipairs(Workspace:GetDescendants()) do applyHead(desc) end
+        batchScan(Workspace:GetDescendants(), applyHead, 200)
         table.insert(hitboxConnections, Workspace.DescendantAdded:Connect(applyHead))
         spawn(function()
             while headHitboxEnabled and gui.Parent do
@@ -1661,12 +1678,12 @@ do
     end
     local function killPartFullScan()
         killParts = {}
-        for _, d in ipairs(Workspace:GetDescendants()) do
+        batchScan(Workspace:GetDescendants(), function(d)
             if d:IsA("BasePart") and d.Name == "KillPart" then
                 table.insert(killParts, d)
                 neutralizeOne(d)
             end
-        end
+        end, 200)
         _G._KillPartBackup = killPartBackup
     end
     local killPartScanLoop = nil
@@ -1693,11 +1710,15 @@ do
         end)
     end
     local elephantLoop = nil
+    local lastElephantScan = 0
     local function startElephantLoop()
         if elephantLoop then pcall(function() elephantLoop:Disconnect() end); elephantLoop = nil end
         if not elephantImmuneEnabled then return end
         elephantLoop = RunService.Heartbeat:Connect(function()
             if not elephantImmuneEnabled then return end
+            local now = tick()
+            if now - lastElephantScan < 0.5 then return end
+            lastElephantScan = now
             disableScripts()
         end)
     end
@@ -1732,7 +1753,6 @@ do
         restoreScripts()
     end)
 end
-
 -- ============ 模块 11: 去除枪口遮挡 ============
 do
     local muzzleHbConn = nil
@@ -2509,15 +2529,18 @@ do
     end
     local function startScanLoop()
         if scanLoop then scanLoop:Disconnect(); scanLoop = nil end
+        local frameCount = 0
         scanLoop = RunService.Heartbeat:Connect(function()
             if not shieldVMEnabled then return end
             local vm = getViewmodel()
             if vm ~= lastVM then
                 lastVM = vm
                 if vm then applyToVM(vm) end
-            elseif vm then
-                applyToVM(vm)
+                return
             end
+            frameCount = frameCount + 1
+            if frameCount % 3 ~= 0 then return end
+            if vm then applyToVM(vm) end
         end)
     end
     spawn(function()
@@ -2589,7 +2612,7 @@ do
     end)
 end
 
--- ============ 模块 16.7: 无滑铲冷却（有bug慎用）v16.4.10 ============
+-- ============ 模块 16.7: 无滑铲冷却（有bug慎用） ============
 do
     local humConn = nil
     local keyConn = nil
@@ -2744,7 +2767,7 @@ local function applyLayout(layout)
     end
     main.Position = UDim2.new(0.5, -L.W/2, 0.5, -h/2)
     layoutSwitchBtn.Text = (layout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-    title.Text = "Examination v16.4.10 - " .. (layout == "mobile" and "手机" or "电脑")
+    title.Text = "Examination v16.4.12 - " .. (layout == "mobile" and "手机" or "电脑")
 end
 
 bindTap(layoutSwitchBtn, function()
@@ -2753,7 +2776,8 @@ bindTap(layoutSwitchBtn, function()
 end)
 
 layoutSwitchBtn.Text = (currentLayout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-title.Text = "Examination v16.4.10 - " .. (currentLayout == "mobile" and "手机" or "电脑")
+title.Text = "Examination v16.4.12 - " .. (currentLayout == "mobile" and "手机" or "电脑")
+
 -- ============ 模块 17: 魔法子弹页 ============
 do
     local mbAimPartIndex = 1
@@ -3530,8 +3554,11 @@ do
         else wdInput.Text = tostring(mbWorldDistMax) end
     end)
 
+    local lockBBFrame = 0
     RunService.RenderStepped:Connect(function()
         if not gui.Parent then return end
+        lockBBFrame = lockBBFrame + 1
+        if lockBBFrame % 3 ~= 0 then return end
         updateLockBB()
     end)
 
@@ -4075,9 +4102,15 @@ bindTap(closeBtn, function()
     pcall(function() StarterGui:SetCore("ResetButtonCallback", false) end)
     _G.ExaminationUI = nil
     gui:Destroy()
-    print("[Exam] v16.4.10 已完全卸载")
+    -- ★ v16.4.12：强制 GC ×2（用 :: any 绕过 Luau 类型检查）
+    if collectgarbage then
+        local cg = collectgarbage :: any
+        pcall(cg, "collect")
+        pcall(cg, "collect")
+    end
+    print("[Exam] v16.4.12 已完全卸载")
 end)
 
-print("[Exam] v16.4.10 已加载（布局=" .. currentLayout .. "）")
+print("[Exam] v16.4.12 已加载（布局=" .. currentLayout .. "）")
 
 -- ===END OF SCRIPT===
