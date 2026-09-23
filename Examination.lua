@@ -1,6 +1,6 @@
 --!nolint
 -- ============================================
--- Examination v16.7.1 新增自动开火优化自动开火逻辑
+-- Examination v16.7.5 优化了魔法子弹的逻辑
 -- 此脚本使用AI生成
 -- 因使用混淆加密会导致手机用户无法正常使用所以没有使用混淆加密
 -- 请不要拿去缝合 此脚本永久免费
@@ -427,7 +427,7 @@ local title = Instance.new("TextLabel", titleBar)
 title.Size = UDim2.new(1, -70, 1, 0)
 title.Position = UDim2.new(0, 10, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "Examination v16.7.1"
+title.Text = "Examination v16.7.5"
 title.TextColor3 = Color3.new(1, 1, 1)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 13
@@ -2769,7 +2769,7 @@ local function applyLayout(layout)
     end
     main.Position = UDim2.new(0.5, -L.W/2, 0.5, -h/2)
     layoutSwitchBtn.Text = (layout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-    title.Text = "Examination v16.7.4 - " .. (layout == "mobile" and "手机" or "电脑")
+    title.Text = "Examination v16.7.5 - " .. (layout == "mobile" and "手机" or "电脑")
 end
 
 bindTap(layoutSwitchBtn, function()
@@ -2778,7 +2778,7 @@ bindTap(layoutSwitchBtn, function()
 end)
 
 layoutSwitchBtn.Text = (currentLayout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-title.Text = "Examination v16.7.4 - " .. (currentLayout == "mobile" and "手机" or "电脑")
+title.Text = "Examination v16.7.5 - " .. (currentLayout == "mobile" and "手机" or "电脑")
 
 -- ============ 右下角提示系统 ============
 local tipGui = Instance.new("ScreenGui")
@@ -2835,8 +2835,10 @@ end
     local reloadPauseUntil = 0
     local reloadWindowActive = false
     local reloadWindowEnd = 0
-    -- ★ v16.7.2: 紧急开火冷却（防 u67 卡死无法换弹）
+    -- ★ v16.7.2: 紧急开火冷却
     local emergencyCooldownUntil = 0
+    -- ★★★ v16.7.5: QTE 锁（收到 QTEInput → 3 秒内不锁不 fire）
+    local qteLockUntil = 0
 
     local mbShowRadiusCircle = false
     local radiusMode = "line"
@@ -2878,7 +2880,21 @@ end
         return ok and v == true
     end
 
-    -- ★★★ v16.7.4: 只有 Boss 名才走"倒地无敌"完整检测（普通 AI 只查血，防受击 ForceField 误判）
+    -- ★★★ v16.7.5: isBusy（QTE / 处决 / 被处决 / 反处决）
+    local function isBusy(m)
+        -- 处决中（攻击方）
+        local ex = m:FindFirstChild("isExecuting")
+        if ex and ex:IsA("ValueBase") and ex.Value == true then return true end
+        -- 被处决（割喉）
+        local ts = m:FindFirstChild("ThroatSlit")
+        if ts and ts:IsA("ValueBase") and ts.Value == true then return true end
+        -- 被处决的另一信号
+        local bv = m:FindFirstChild("IsBusyVoicelining")
+        if bv and bv:IsA("ValueBase") and bv.Value == true then return true end
+        return false
+    end
+
+    -- ★ v16.7.4: 只有 Boss 名才走"倒地无敌"完整检测（普通 AI 只查血）
     local BOSS_DOWNED_NAMES = {
         SIN = true, Chimera = true, Gilbert = true,
         Riser = true, Riser1 = true, Riser2 = true, Riser3 = true, Riser4 = true, Riser5 = true,
@@ -2889,9 +2905,7 @@ end
         local hum = m:FindFirstChildOfClass("Humanoid")
         if not hum then return true end
         if hum.Health <= 0 then return true end
-        -- 普通 AI 只查血，直接放行
         if not BOSS_DOWNED_NAMES[m.Name] then return false end
-        -- Boss 完整检测
         if m:FindFirstChildOfClass("ForceField") then return true end
         if hum:FindFirstChildOfClass("ForceField") then return true end
         if m:FindFirstChild("SIN_FORCEFIELD") then return true end
@@ -3165,7 +3179,8 @@ end
             if folder then
                 for _, m in ipairs(folder:GetChildren()) do
                     if m ~= myChar and m:IsA("Model") and isAlive(m) and isHostile(m) then
-                        if isDowned(m) then
+                        -- ★★★ v16.7.5: isDowned 或 isBusy → 跳过
+                        if isDowned(m) or isBusy(m) then
                             downedSkip = downedSkip + 1
                         else
                             candidates = candidates + 1
@@ -4103,6 +4118,23 @@ end
         end
     end)
 
+    -- ★★★ v16.7.5: QTE 监听（收到 QTEInput / QTEFeedback → 上锁）
+    do
+        local ev = ReplicatedStorage:FindFirstChild("Events")
+        local qteIn = ev and ev:FindFirstChild("QTEInput")
+        local qteFb = ev and ev:FindFirstChild("QTEFeedback")
+        if qteIn then
+            qteIn.OnClientEvent:Connect(function()
+                qteLockUntil = tick() + 3
+            end)
+        end
+        if qteFb then
+            qteFb.OnClientEvent:Connect(function()
+                qteLockUntil = math.max(qteLockUntil, tick() + 0.3)
+            end)
+        end
+    end
+
     local lastFire = 0
     RunService.Heartbeat:Connect(function()
         if not gui.Parent then return end
@@ -4115,10 +4147,14 @@ end
             autoFireStatus = "需开启掩体检测"
             return
         end
+        -- ★★★ v16.7.5: QTE 锁
+        if tick() < qteLockUntil then
+            autoFireStatus = "QTE中"
+            return
+        end
         local target = findTarget()
         local inReloadState = isReloading() or reloadWindowActive or tick() < reloadPauseUntil
         local isEmergency = false
-        -- 紧急开火冷却（防 u67 卡死无法换弹）
         if inReloadState then
             if tick() < emergencyCooldownUntil then
                 autoFireStatus = "紧急冷却"
@@ -4761,9 +4797,9 @@ bindTap(closeBtn, function()
         pcall(cg, "collect")
         pcall(cg, "collect")
     end
-    print("[Exam] v16.7.4 已完全卸载")
+    print("[Exam] v16.7.5 已完全卸载")
 end)
 
-print("[Exam] v16.7.4 已加载（布局=" .. currentLayout .. "）")
+print("[Exam] v16.7.5 已加载（布局=" .. currentLayout .. "）")
 
 -- ===END OF SCRIPT===
