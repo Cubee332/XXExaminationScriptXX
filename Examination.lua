@@ -1,6 +1,6 @@
 --!nolint
 -- ============================================
--- Examination v16.7.5
+-- Examination v16.7.9
 -- 此脚本使用AI生成
 -- 因使用混淆加密会导致手机用户无法正常使用所以没有使用混淆加密
 -- 请不要拿去缝合 此脚本永久免费
@@ -427,7 +427,7 @@ local title = Instance.new("TextLabel", titleBar)
 title.Size = UDim2.new(1, -70, 1, 0)
 title.Position = UDim2.new(0, 10, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "Examination v16.7.5"
+title.Text = "Examination v16.7.9"
 title.TextColor3 = Color3.new(1, 1, 1)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 13
@@ -551,19 +551,33 @@ end
 
 do
     local dragging, ds, sp = false, nil, nil
+    local controlCache = nil
     local function pointInFrame(pos, f)
         local ap = f.AbsolutePosition
         local asz = f.AbsoluteSize
         return pos.X >= ap.X and pos.X <= ap.X + asz.X and pos.Y >= ap.Y and pos.Y <= ap.Y + asz.Y
     end
-    local function pointInAnyControl(pos)
+    local function buildControlCache()
+        local list = {}
         for _, d in ipairs(main:GetDescendants()) do
-            if (d:IsA("GuiButton") or d:IsA("TextBox")) and d.Visible then
+            if d:IsA("GuiButton") or d:IsA("TextBox") then
+                table.insert(list, d)
+            end
+        end
+        controlCache = list
+    end
+    local function invalidateControlCache() controlCache = nil end
+    local function pointInAnyControl(pos)
+        if not controlCache then buildControlCache() end
+        for i = 1, #controlCache do
+            local d = controlCache[i]
+            if d.Parent and d.Visible then
                 if pointInFrame(pos, d) then return true end
             end
         end
         return false
     end
+    _G._ExamInvalidateDragCache = invalidateControlCache
     UserInputService.InputBegan:Connect(function(input, gpe)
         if gpe then return end
         local ut = input.UserInputType
@@ -1755,6 +1769,7 @@ do
         restoreScripts()
     end)
 end
+
 -- ============ 模块 11: 去除枪口遮挡 ============
 do
     local muzzleHbConn = nil
@@ -1786,6 +1801,7 @@ do
         return nil
     end
     local function restoreAll()
+        if next(muzzleDisabledParts) == nil then return end
         for p, orig in pairs(muzzleDisabledParts) do
             if p and p.Parent then pcall(function() p.CanCollide = orig end) end
         end
@@ -1960,15 +1976,19 @@ do
     local function startZeroLoop()
         if recoilZeroLoop then return end
         recoilZeroLoop = spawn(function()
+            local frame = 0
             while recoilEnabled and gui.Parent do
-                for inst in pairs(recoilPatchedInsts) do
-                    pcall(function()
-                        rawset(inst, "_position0", ZERO_V3)
-                        rawset(inst, "_velocity0", ZERO_V3)
-                        rawset(inst, "_target", ZERO_V3)
-                        rawset(inst, "_position", ZERO_V3)
-                        rawset(inst, "_velocity", ZERO_V3)
-                    end)
+                frame = frame + 1
+                if frame % 3 == 0 then
+                    for inst in pairs(recoilPatchedInsts) do
+                        pcall(function()
+                            rawset(inst, "_position0", ZERO_V3)
+                            rawset(inst, "_velocity0", ZERO_V3)
+                            rawset(inst, "_target", ZERO_V3)
+                            rawset(inst, "_position", ZERO_V3)
+                            rawset(inst, "_velocity", ZERO_V3)
+                        end)
+                    end
                 end
                 RunService.Heartbeat:Wait()
             end
@@ -2769,7 +2789,8 @@ local function applyLayout(layout)
     end
     main.Position = UDim2.new(0.5, -L.W/2, 0.5, -h/2)
     layoutSwitchBtn.Text = (layout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-    title.Text = "Examination v16.7.5 - " .. (layout == "mobile" and "手机" or "电脑")
+    title.Text = "Examination v16.7.9 - " .. (layout == "mobile" and "手机" or "电脑")
+    if _G._ExamInvalidateDragCache then _G._ExamInvalidateDragCache() end
 end
 
 bindTap(layoutSwitchBtn, function()
@@ -2778,7 +2799,7 @@ bindTap(layoutSwitchBtn, function()
 end)
 
 layoutSwitchBtn.Text = (currentLayout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-title.Text = "Examination v16.7.5 - " .. (currentLayout == "mobile" and "手机" or "电脑")
+title.Text = "Examination v16.7.9 - " .. (currentLayout == "mobile" and "手机" or "电脑")
 
 -- ============ 右下角提示系统 ============
 local tipGui = Instance.new("ScreenGui")
@@ -2817,6 +2838,8 @@ local function showCountdownTip(msg, duration)
 end
 
 -- ============ 模块 17: 魔法子弹 + 自动开火（IIFE 合并版） ============
+-- ★ v16.7.8: 紧急开火跳过"换弹快完成"
+-- ★ v16.7.9: 自动开火时好时坏修复
 (function()
     local mbAimPartIndex = 1
     local mbFovRadius = 200
@@ -2835,9 +2858,7 @@ end
     local reloadPauseUntil = 0
     local reloadWindowActive = false
     local reloadWindowEnd = 0
-    -- ★ v16.7.2: 紧急开火冷却
     local emergencyCooldownUntil = 0
-    -- ★★★ v16.7.5: QTE 锁（收到 QTEInput → 3 秒内不锁不 fire）
     local qteLockUntil = 0
 
     local mbShowRadiusCircle = false
@@ -2849,6 +2870,12 @@ end
     local wasTooLarge = false
 
     local autoFireBtn = nil
+    -- ★★★ v16.7.8: 换弹快完成时跳过紧急开火
+    -- ★★★ v16.7.9: 加时间戳防 stale
+    local clipMaxByTool = {}
+    local clipMaxTickByTool = {}
+    local EMERGENCY_SKIP_RATIO = 0.7
+    local CLIP_MAX_TTL = 30
 
     local function getTool()
         local char = lp.Character
@@ -2870,31 +2897,42 @@ end
         local ok, txt = pcall(function() return clip.Text end)
         if not ok then return nil end
         if txt == "--" then return -1 end
-        return tonumber(txt)
+        local n = tonumber(txt)
+        -- ★ 记录本枪历史最大弹夹（带时间戳防 stale）
+        if n and n > 0 then
+            local now = tick()
+            local lastT = clipMaxTickByTool[tool.Name]
+            if lastT and (now - lastT) > CLIP_MAX_TTL then
+                clipMaxByTool[tool.Name] = nil
+                clipMaxTickByTool[tool.Name] = nil
+            end
+            local cur = clipMaxByTool[tool.Name] or 0
+            if n > cur then
+                clipMaxByTool[tool.Name] = n
+                clipMaxTickByTool[tool.Name] = now
+            end
+        end
+        return n
     end
 
     local function isReloading()
         local tool = getTool()
-        if not tool then return false end
+        if not tool then return nil end
         local ok, v = pcall(function() return tool:GetAttribute("Reloading") end)
-        return ok and v == true
+        if not ok then return nil end
+        return v
     end
 
-    -- ★★★ v16.7.5: isBusy（QTE / 处决 / 被处决 / 反处决）
     local function isBusy(m)
-        -- 处决中（攻击方）
         local ex = m:FindFirstChild("isExecuting")
         if ex and ex:IsA("ValueBase") and ex.Value == true then return true end
-        -- 被处决（割喉）
         local ts = m:FindFirstChild("ThroatSlit")
         if ts and ts:IsA("ValueBase") and ts.Value == true then return true end
-        -- 被处决的另一信号
         local bv = m:FindFirstChild("IsBusyVoicelining")
         if bv and bv:IsA("ValueBase") and bv.Value == true then return true end
         return false
     end
 
-    -- ★ v16.7.4: 只有 Boss 名才走"倒地无敌"完整检测（普通 AI 只查血）
     local BOSS_DOWNED_NAMES = {
         SIN = true, Chimera = true, Gilbert = true,
         Riser = true, Riser1 = true, Riser2 = true, Riser3 = true, Riser4 = true, Riser5 = true,
@@ -3179,7 +3217,6 @@ end
             if folder then
                 for _, m in ipairs(folder:GetChildren()) do
                     if m ~= myChar and m:IsA("Model") and isAlive(m) and isHostile(m) then
-                        -- ★★★ v16.7.5: isDowned 或 isBusy → 跳过
                         if isDowned(m) or isBusy(m) then
                             downedSkip = downedSkip + 1
                         else
@@ -4109,16 +4146,20 @@ end
     magicStatusLbl.TextSize = 10
     magicStatusLbl.TextXAlignment = Enum.TextXAlignment.Left
 
+    local lastMagicStatusText = ""
     spawn(function()
         while gui.Parent do
             local isLocked = cachedTarget ~= nil
-            magicStatusLbl.Text = string.format("状态: %s  |  锁定: %s  |  自动开火: %s",
+            local txt = string.format("状态: %s  |  锁定: %s  |  自动开火: %s",
                 findLastReason, isLocked and "有" or "无", autoFireStatus)
-            wait(0.3)
+            if txt ~= lastMagicStatusText then
+                lastMagicStatusText = txt
+                magicStatusLbl.Text = txt
+            end
+            wait(0.5)
         end
     end)
 
-    -- ★★★ v16.7.5: QTE 监听（收到 QTEInput / QTEFeedback → 上锁）
     do
         local ev = ReplicatedStorage:FindFirstChild("Events")
         local qteIn = ev and ev:FindFirstChild("QTEInput")
@@ -4147,13 +4188,13 @@ end
             autoFireStatus = "需开启掩体检测"
             return
         end
-        -- ★★★ v16.7.5: QTE 锁
         if tick() < qteLockUntil then
             autoFireStatus = "QTE中"
             return
         end
         local target = findTarget()
-        local inReloadState = isReloading() or reloadWindowActive or tick() < reloadPauseUntil
+        local reloadFlag = isReloading()
+        local inReloadState = (reloadFlag == true) or reloadWindowActive or tick() < reloadPauseUntil
         local isEmergency = false
         if inReloadState then
             if tick() < emergencyCooldownUntil then
@@ -4161,6 +4202,36 @@ end
                 return
             end
             if target then
+                -- ★★★ v16.7.9: 三层判定（不再只靠 clip 值）
+                --   1. Reloading==true + clip 接近满 → 跳过
+                --   2. Reloading==false → 不跳过（换弹结束了）
+                --   3. 无法判定 → 保守用 clip 值判
+                local _tool = getTool()
+                local _curClip = getClip()
+                local _maxClip = _tool and clipMaxByTool[_tool.Name] or nil
+                local _nearDone = false
+                local function _clipClose()
+                    if _curClip and _curClip > 0 and _maxClip and _maxClip > 0 then
+                        if _curClip >= _maxClip - 1
+                           or _curClip >= _maxClip * EMERGENCY_SKIP_RATIO then
+                            return true
+                        end
+                    end
+                    return false
+                end
+                if reloadFlag == true then
+                    _nearDone = _clipClose()
+                elseif reloadFlag == false then
+                    _nearDone = false  -- 换弹已经结束，正常 fire
+                else
+                    _nearDone = _clipClose()
+                end
+                if _nearDone then
+                    autoFireStatus = "换弹快完成(跳过紧急)"
+                    -- ★ 清掉紧急冷却，避免装完后还在冷却
+                    emergencyCooldownUntil = 0
+                    return
+                end
                 isEmergency = true
                 emergencyCooldownUntil = tick() + 0.5
                 reloadWindowActive = false
@@ -4257,7 +4328,7 @@ do
     local rpEnabled = false
     local rpUseHeartbeat = true
     local rpShowArrow = true
-    local RP_SAMPLE_INTERVAL = 0.02
+    local RP_SAMPLE_INTERVAL = 0.03
     local RP_RADIUS_IN = 150
     local RP_RADIUS_OUT = 200
     local RP_LAYER_THRESHOLD = 4
@@ -4797,9 +4868,9 @@ bindTap(closeBtn, function()
         pcall(cg, "collect")
         pcall(cg, "collect")
     end
-    print("[Exam] v16.7.5 已完全卸载")
+    print("[Exam] v16.7.9 已完全卸载")
 end)
 
-print("[Exam] v16.7.5 已加载（布局=" .. currentLayout .. "）")
+print("[Exam] v16.7.9 已加载（布局=" .. currentLayout .. "）")
 
 -- ===END OF SCRIPT===
