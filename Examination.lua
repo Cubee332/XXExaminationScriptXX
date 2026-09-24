@@ -1,6 +1,6 @@
 --!nolint
 -- ============================================
--- Examination v16.7.12 性能优化+小修复
+-- Examination v16.7.16 优化魔法子弹逻辑
 -- 此脚本使用AI生成
 -- 因使用混淆加密会导致手机用户无法正常使用所以没有使用混淆加密
 -- 请不要拿去缝合 此脚本永久免费
@@ -427,7 +427,7 @@ local title = Instance.new("TextLabel", titleBar)
 title.Size = UDim2.new(1, -70, 1, 0)
 title.Position = UDim2.new(0, 10, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "Examination v16.7.12"
+title.Text = "Examination v16.7.16"
 title.TextColor3 = Color3.new(1, 1, 1)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 13
@@ -1769,7 +1769,6 @@ do
         restoreScripts()
     end)
 end
-
 -- ============ 模块 11: 去除枪口遮挡 ============
 do
     local muzzleHbConn = nil
@@ -2789,7 +2788,7 @@ local function applyLayout(layout)
     end
     main.Position = UDim2.new(0.5, -L.W/2, 0.5, -h/2)
     layoutSwitchBtn.Text = (layout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-    title.Text = "Examination v16.7.12 - " .. (layout == "mobile" and "手机" or "电脑")
+    title.Text = "Examination v16.7.16 - " .. (layout == "mobile" and "手机" or "电脑")
     if _G._ExamInvalidateDragCache then _G._ExamInvalidateDragCache() end
 end
 
@@ -2799,7 +2798,7 @@ bindTap(layoutSwitchBtn, function()
 end)
 
 layoutSwitchBtn.Text = (currentLayout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-title.Text = "Examination v16.7.12 - " .. (currentLayout == "mobile" and "手机" or "电脑")
+title.Text = "Examination v16.7.16 - " .. (currentLayout == "mobile" and "手机" or "电脑")
 
 -- ============ 右下角提示系统 ============
 local tipGui = Instance.new("ScreenGui")
@@ -2838,15 +2837,19 @@ local function showCountdownTip(msg, duration)
 end
 
 -- ============ 模块 17: 魔法子弹 + 自动开火（IIFE 合并版） ============
--- ★ v16.7.8: 紧急开火跳过"换弹快完成"
--- ★ v16.7.9: 自动开火时好时坏修复（clipMax TTL + Reloading 三层判定）
--- ★ v16.7.10: isBusy 全字段覆盖
--- ★ v16.7.11: isBusy 最简版（只查 BeingExecuted + 0.15s 缓存）
--- ★ v16.7.12: findTarget FOV 前置 + isPointVisible maxIter 8
+-- v16.7.8: 紧急开火跳过"换弹快完成"
+-- v16.7.9: 自动开火时好时坏修复（clipMax TTL + Reloading 三层判定）
+-- v16.7.10: isBusy 全字段覆盖
+-- v16.7.11: isBusy 最简版（只查 BeingExecuted + 0.15s 缓存）
+-- v16.7.12: findTarget FOV 前置 + isPointVisible maxIter 8
+-- v16.7.13: GrabbyMutant 低优先级 + Leaper 封印检测
+-- v16.7.14: 自动开火停火修复（inFiring 状态跟踪）
+-- v16.7.15: SIN 无敌期 CanAttack=false 检测
+-- v16.7.16: 最大距离默认 200 + 移除 5000 快捷按钮
 (function()
     local mbAimPartIndex = 1
     local mbFovRadius = 200
-    local mbWorldDistMax = 5000
+    local mbWorldDistMax = 200
     local mbBBSizeStuds = 2.0
     local mbStudsOffsetY = 0.8
     local mbShowBox = true
@@ -2923,7 +2926,7 @@ end
         return v
     end
 
-    -- ★ v16.7.11: isBusy 最简版（只查 BeingExecuted，存在即处决中）
+    -- isBusy：只查 BeingExecuted（存在即处决中）
     local _busyCache = {}
     local BUSY_CACHE_TTL = 0.15
     local function isBusy(m)
@@ -2934,6 +2937,29 @@ end
         local v = m:FindFirstChild("BeingExecuted") ~= nil
         _busyCache[m] = { v = v, t = now }
         return v
+    end
+
+    -- ★ v16.7.13: 低优先级（能锁，但输给其他目标；且不触发自动开火）
+    local LOW_PRIORITY_NAMES = {
+        GrabbyMutant = true,
+    }
+    local function isLowPriority(m)
+        return m and LOW_PRIORITY_NAMES[m.Name] == true
+    end
+
+    -- ★ v16.7.13: 封印中不锁（Leaper，CanAttack 不为 true）
+    -- ★ v16.7.15: SIN 无敌期也是 CanAttack = false（探测确认）
+    local DORMANT_NAMES = {
+        Leaper = true,
+        SIN = true,
+    }
+    local function isDormant(m)
+        if not m or not DORMANT_NAMES[m.Name] then return false end
+        local ca = m:FindFirstChild("CanAttack")
+        if not ca or not ca:IsA("ValueBase") then return true end
+        local ok, v = pcall(function() return ca.Value end)
+        if not ok then return true end
+        return v ~= true
     end
 
     local BOSS_DOWNED_NAMES = {
@@ -3210,6 +3236,7 @@ end
         local best = nil
         local bestScreenD2 = math.huge
         local bestWorldD = math.huge
+        local bestPrio = 99
         local camPos = cam.CFrame.Position
         local excludeVis = { lp.Character, Workspace.Terrain, cam }
         local vms = Workspace:FindFirstChild("Viewmodels")
@@ -3220,7 +3247,7 @@ end
             if folder then
                 for _, m in ipairs(folder:GetChildren()) do
                     if m ~= myChar and m:IsA("Model") and isAlive(m) and isHostile(m) then
-                        if isDowned(m) or isBusy(m) then
+                        if isDormant(m) or isDowned(m) or isBusy(m) then
                             downedSkip = downedSkip + 1
                         else
                             candidates = candidates + 1
@@ -3229,7 +3256,6 @@ end
                             if aimPart and head then
                                 local wd = (aimPart.Position - myPos).Magnitude
                                 if wd <= mbWorldDistMax then
-                                    -- ★ v16.7.12: 先 FOV 粗判 → 屏幕外不跑 raycast
                                     local screenD2 = nil
                                     local skipThis = false
                                     if mbTargetMode ~= 3 then
@@ -3255,21 +3281,27 @@ end
                                         if not visible then
                                             visBlocked = visBlocked + 1
                                         else
-                                            if mbTargetMode == 3 then
-                                                if wd < bestWorldD then
-                                                    bestWorldD = wd
-                                                    best = { model = m, head = head, aimPart = aimPart }
+                                            local prio = isLowPriority(m) and 1 or 0
+                                            local accept = false
+                                            if prio < bestPrio then
+                                                accept = true
+                                            elseif prio == bestPrio then
+                                                if mbTargetMode == 3 then
+                                                    accept = wd < bestWorldD
+                                                elseif mbTargetMode == 1 then
+                                                    accept = screenD2 ~= nil and screenD2 < bestScreenD2
+                                                else
+                                                    accept = wd < bestWorldD
                                                 end
-                                            elseif mbTargetMode == 1 then
-                                                if screenD2 and screenD2 < bestScreenD2 then
+                                            end
+                                            if accept then
+                                                bestPrio = prio
+                                                if mbTargetMode == 1 and screenD2 then
                                                     bestScreenD2 = screenD2
-                                                    best = { model = m, head = head, aimPart = aimPart }
-                                                end
-                                            else
-                                                if wd < bestWorldD then
+                                                else
                                                     bestWorldD = wd
-                                                    best = { model = m, head = head, aimPart = aimPart }
                                                 end
+                                                best = { model = m, head = head, aimPart = aimPart }
                                             end
                                         end
                                     end
@@ -3885,6 +3917,7 @@ end
             autoFireStatus = "启动中"
         else
             releaseFire()
+            releaseFire()
             autoFireStatus = "关"
         end
     end)
@@ -3984,20 +4017,6 @@ end
     Instance.new("UICorner", quick200).CornerRadius = UDim.new(0, 4)
     bindTap(quick200, function()
         mbWorldDistMax = 200; distIn.Text = "200"
-        cachedTarget = nil; lastFindTick = 0
-    end)
-    local quick5000 = Instance.new("TextButton", magicPage)
-    quick5000.Size = UDim2.new(0, 60, 0, 22)
-    quick5000.Position = UDim2.new(0, 280, 0, 262)
-    quick5000.BackgroundColor3 = Color3.fromRGB(60, 80, 100)
-    quick5000.Text = "5000"
-    quick5000.TextColor3 = Color3.fromRGB(220, 220, 220)
-    quick5000.Font = Enum.Font.GothamBold
-    quick5000.TextSize = 11
-    quick5000.Active = true
-    Instance.new("UICorner", quick5000).CornerRadius = UDim.new(0, 4)
-    bindTap(quick5000, function()
-        mbWorldDistMax = 5000; distIn.Text = "5000"
         cachedTarget = nil; lastFindTick = 0
     end)
 
@@ -4187,19 +4206,27 @@ end
         end
     end
 
+    -- ★★★ v16.7.14: 自动开火主循环（inFiring 状态跟踪，所有退出路径都释放）
     local lastFire = 0
+    local inFiring = false
     RunService.Heartbeat:Connect(function()
         if not gui.Parent then return end
-        if not autoFireEnabled then return end
+        if not autoFireEnabled then
+            if inFiring then releaseFire(); inFiring = false end
+            return
+        end
         if not magicBulletEnabled then
+            if inFiring then releaseFire(); inFiring = false end
             autoFireStatus = "需先开魔法子弹"
             return
         end
         if not mbRequireVisible then
+            if inFiring then releaseFire(); inFiring = false end
             autoFireStatus = "需开启掩体检测"
             return
         end
         if tick() < qteLockUntil then
+            if inFiring then releaseFire(); inFiring = false end
             autoFireStatus = "QTE中"
             return
         end
@@ -4209,6 +4236,7 @@ end
         local isEmergency = false
         if inReloadState then
             if tick() < emergencyCooldownUntil then
+                if inFiring then releaseFire(); inFiring = false end
                 autoFireStatus = "紧急冷却"
                 return
             end
@@ -4234,6 +4262,7 @@ end
                     _nearDone = _clipClose()
                 end
                 if _nearDone then
+                    if inFiring then releaseFire(); inFiring = false end
                     autoFireStatus = "换弹快完成(跳过紧急)"
                     emergencyCooldownUntil = 0
                     return
@@ -4244,17 +4273,25 @@ end
                 reloadWindowEnd = 0
                 reloadPauseUntil = 0
             else
+                if inFiring then releaseFire(); inFiring = false end
                 autoFireStatus = "装填中"
                 return
             end
         end
         if not target then
+            if inFiring then releaseFire(); inFiring = false end
             autoFireStatus = "无锁定目标"
+            return
+        end
+        if isLowPriority(target.model) then
+            if inFiring then releaseFire(); inFiring = false end
+            autoFireStatus = "低优先目标(不自动)"
             return
         end
         local now = tick()
         if now - lastFire < 0.1 then return end
         lastFire = now
+        inFiring = true
         local ok, reason = doFireOnce(isEmergency)
         autoFireStatus = reason
         if ok then fireCount = fireCount + 1 end
@@ -4874,9 +4911,9 @@ bindTap(closeBtn, function()
         pcall(cg, "collect")
         pcall(cg, "collect")
     end
-    print("[Exam] v16.7.12 已完全卸载")
+    print("[Exam] v16.7.16 已完全卸载")
 end)
 
-print("[Exam] v16.7.12 已加载（布局=" .. currentLayout .. "）")
+print("[Exam] v16.7.16 已加载（布局=" .. currentLayout .. "）")
 
 -- ===END OF SCRIPT===
