@@ -1,6 +1,6 @@
 --!nolint
 -- ============================================
--- Examination v16.7.9
+-- Examination v16.7.12 性能优化+小修复
 -- 此脚本使用AI生成
 -- 因使用混淆加密会导致手机用户无法正常使用所以没有使用混淆加密
 -- 请不要拿去缝合 此脚本永久免费
@@ -427,7 +427,7 @@ local title = Instance.new("TextLabel", titleBar)
 title.Size = UDim2.new(1, -70, 1, 0)
 title.Position = UDim2.new(0, 10, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "Examination v16.7.9"
+title.Text = "Examination v16.7.12"
 title.TextColor3 = Color3.new(1, 1, 1)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 13
@@ -2789,7 +2789,7 @@ local function applyLayout(layout)
     end
     main.Position = UDim2.new(0.5, -L.W/2, 0.5, -h/2)
     layoutSwitchBtn.Text = (layout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-    title.Text = "Examination v16.7.9 - " .. (layout == "mobile" and "手机" or "电脑")
+    title.Text = "Examination v16.7.12 - " .. (layout == "mobile" and "手机" or "电脑")
     if _G._ExamInvalidateDragCache then _G._ExamInvalidateDragCache() end
 end
 
@@ -2799,7 +2799,7 @@ bindTap(layoutSwitchBtn, function()
 end)
 
 layoutSwitchBtn.Text = (currentLayout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-title.Text = "Examination v16.7.9 - " .. (currentLayout == "mobile" and "手机" or "电脑")
+title.Text = "Examination v16.7.12 - " .. (currentLayout == "mobile" and "手机" or "电脑")
 
 -- ============ 右下角提示系统 ============
 local tipGui = Instance.new("ScreenGui")
@@ -2839,7 +2839,10 @@ end
 
 -- ============ 模块 17: 魔法子弹 + 自动开火（IIFE 合并版） ============
 -- ★ v16.7.8: 紧急开火跳过"换弹快完成"
--- ★ v16.7.9: 自动开火时好时坏修复
+-- ★ v16.7.9: 自动开火时好时坏修复（clipMax TTL + Reloading 三层判定）
+-- ★ v16.7.10: isBusy 全字段覆盖
+-- ★ v16.7.11: isBusy 最简版（只查 BeingExecuted + 0.15s 缓存）
+-- ★ v16.7.12: findTarget FOV 前置 + isPointVisible maxIter 8
 (function()
     local mbAimPartIndex = 1
     local mbFovRadius = 200
@@ -2870,8 +2873,6 @@ end
     local wasTooLarge = false
 
     local autoFireBtn = nil
-    -- ★★★ v16.7.8: 换弹快完成时跳过紧急开火
-    -- ★★★ v16.7.9: 加时间戳防 stale
     local clipMaxByTool = {}
     local clipMaxTickByTool = {}
     local EMERGENCY_SKIP_RATIO = 0.7
@@ -2898,7 +2899,6 @@ end
         if not ok then return nil end
         if txt == "--" then return -1 end
         local n = tonumber(txt)
-        -- ★ 记录本枪历史最大弹夹（带时间戳防 stale）
         if n and n > 0 then
             local now = tick()
             local lastT = clipMaxTickByTool[tool.Name]
@@ -2923,14 +2923,17 @@ end
         return v
     end
 
+    -- ★ v16.7.11: isBusy 最简版（只查 BeingExecuted，存在即处决中）
+    local _busyCache = {}
+    local BUSY_CACHE_TTL = 0.15
     local function isBusy(m)
-        local ex = m:FindFirstChild("isExecuting")
-        if ex and ex:IsA("ValueBase") and ex.Value == true then return true end
-        local ts = m:FindFirstChild("ThroatSlit")
-        if ts and ts:IsA("ValueBase") and ts.Value == true then return true end
-        local bv = m:FindFirstChild("IsBusyVoicelining")
-        if bv and bv:IsA("ValueBase") and bv.Value == true then return true end
-        return false
+        if not m then return false end
+        local now = tick()
+        local c = _busyCache[m]
+        if c and (now - c.t) < BUSY_CACHE_TTL then return c.v end
+        local v = m:FindFirstChild("BeingExecuted") ~= nil
+        _busyCache[m] = { v = v, t = now }
+        return v
     end
 
     local BOSS_DOWNED_NAMES = {
@@ -3100,7 +3103,7 @@ end
         for _, v in ipairs(excludeBase) do table.insert(exclude, v) end
         local curOrigin = origin
         local remaining = dist
-        local maxIter = 12
+        local maxIter = 8
         for _ = 1, maxIter do
             local rp = RaycastParams.new()
             rp.FilterType = Enum.RaycastFilterType.Exclude
@@ -3226,39 +3229,47 @@ end
                             if aimPart and head then
                                 local wd = (aimPart.Position - myPos).Magnitude
                                 if wd <= mbWorldDistMax then
-                                    local visible = true
-                                    if mbRequireVisible then
-                                        visible = isPointVisible(camPos, aimPart.Position, m, excludeVis)
-                                    end
-                                    if not visible then
-                                        visBlocked = visBlocked + 1
-                                    else
-                                        if mbTargetMode == 3 then
-                                            if wd < bestWorldD then
-                                                bestWorldD = wd
-                                                best = { model = m, head = head, aimPart = aimPart }
+                                    -- ★ v16.7.12: 先 FOV 粗判 → 屏幕外不跑 raycast
+                                    local screenD2 = nil
+                                    local skipThis = false
+                                    if mbTargetMode ~= 3 then
+                                        local s, onScreen = cam:WorldToViewportPoint(head.Position)
+                                        if onScreen and s.Z > 0 then
+                                            local dx = s.X - cx
+                                            local dy = s.Y - cy
+                                            screenD2 = dx*dx + dy*dy
+                                            if screenD2 > r2 then
+                                                outFov = outFov + 1
+                                                skipThis = true
                                             end
                                         else
-                                            local s, onScreen = cam:WorldToViewportPoint(head.Position)
-                                            if onScreen and s.Z > 0 then
-                                                local dx = s.X - cx
-                                                local dy = s.Y - cy
-                                                local d2 = dx*dx + dy*dy
-                                                if d2 <= r2 then
-                                                    if mbTargetMode == 1 then
-                                                        if d2 < bestScreenD2 then
-                                                            bestScreenD2 = d2
-                                                            best = { model = m, head = head, aimPart = aimPart }
-                                                        end
-                                                    else
-                                                        if wd < bestWorldD then
-                                                            bestWorldD = wd
-                                                            best = { model = m, head = head, aimPart = aimPart }
-                                                        end
-                                                    end
+                                            outFov = outFov + 1
+                                            skipThis = true
+                                        end
+                                    end
+                                    if not skipThis then
+                                        local visible = true
+                                        if mbRequireVisible then
+                                            visible = isPointVisible(camPos, aimPart.Position, m, excludeVis)
+                                        end
+                                        if not visible then
+                                            visBlocked = visBlocked + 1
+                                        else
+                                            if mbTargetMode == 3 then
+                                                if wd < bestWorldD then
+                                                    bestWorldD = wd
+                                                    best = { model = m, head = head, aimPart = aimPart }
+                                                end
+                                            elseif mbTargetMode == 1 then
+                                                if screenD2 and screenD2 < bestScreenD2 then
+                                                    bestScreenD2 = screenD2
+                                                    best = { model = m, head = head, aimPart = aimPart }
                                                 end
                                             else
-                                                outFov = outFov + 1
+                                                if wd < bestWorldD then
+                                                    bestWorldD = wd
+                                                    best = { model = m, head = head, aimPart = aimPart }
+                                                end
                                             end
                                         end
                                     end
@@ -4202,10 +4213,6 @@ end
                 return
             end
             if target then
-                -- ★★★ v16.7.9: 三层判定（不再只靠 clip 值）
-                --   1. Reloading==true + clip 接近满 → 跳过
-                --   2. Reloading==false → 不跳过（换弹结束了）
-                --   3. 无法判定 → 保守用 clip 值判
                 local _tool = getTool()
                 local _curClip = getClip()
                 local _maxClip = _tool and clipMaxByTool[_tool.Name] or nil
@@ -4222,13 +4229,12 @@ end
                 if reloadFlag == true then
                     _nearDone = _clipClose()
                 elseif reloadFlag == false then
-                    _nearDone = false  -- 换弹已经结束，正常 fire
+                    _nearDone = false
                 else
                     _nearDone = _clipClose()
                 end
                 if _nearDone then
                     autoFireStatus = "换弹快完成(跳过紧急)"
-                    -- ★ 清掉紧急冷却，避免装完后还在冷却
                     emergencyCooldownUntil = 0
                     return
                 end
@@ -4868,9 +4874,9 @@ bindTap(closeBtn, function()
         pcall(cg, "collect")
         pcall(cg, "collect")
     end
-    print("[Exam] v16.7.9 已完全卸载")
+    print("[Exam] v16.7.12 已完全卸载")
 end)
 
-print("[Exam] v16.7.9 已加载（布局=" .. currentLayout .. "）")
+print("[Exam] v16.7.12 已加载（布局=" .. currentLayout .. "）")
 
 -- ===END OF SCRIPT===
