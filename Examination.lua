@@ -1,6 +1,6 @@
 --!nolint
 -- ============================================
--- Examination v16.7.16 优化魔法子弹逻辑
+-- Examination v16.7.17 新增快速换弹
 -- 此脚本使用AI生成
 -- 因使用混淆加密会导致手机用户无法正常使用所以没有使用混淆加密
 -- 请不要拿去缝合 此脚本永久免费
@@ -327,6 +327,7 @@ local LAYOUT = {
             shieldSlide      = { p = UDim2.new(0, 15, 0, 266), s = UDim2.new(0, 140, 0, 28) },
             shieldVM         = { p = UDim2.new(0, 15, 0, 300), s = UDim2.new(0, 140, 0, 28) },
             noCD             = { p = UDim2.new(0, 15, 0, 334), s = UDim2.new(0, 140, 0, 28) },
+            fastReload       = { p = UDim2.new(0, 15, 0, 368), s = UDim2.new(0, 140, 0, 28) },
             esp              = { p = UDim2.new(0, 165, 0, 28), s = UDim2.new(0, 140, 0, 28) },
             hpBtn            = { p = UDim2.new(0, 165, 0, 62), s = UDim2.new(0, 140, 0, 28) },
             autoInteract     = { p = UDim2.new(0, 165, 0, 96), s = UDim2.new(0, 140, 0, 28) },
@@ -348,7 +349,7 @@ local LAYOUT = {
         },
     },
     desktop = {
-        W = 320, H = 910,
+        W = 320, H = 946,
         TitleH = 30, TabY = 33, PageTop = 63,
         items = {
             cdLabel          = { p = UDim2.new(0, 15, 0, 5),   s = UDim2.new(1, -30, 0, 22) },
@@ -373,20 +374,21 @@ local LAYOUT = {
             shieldSlide      = { p = UDim2.new(0, 15, 0, 646), s = UDim2.new(1, -30, 0, 30) },
             shieldVM         = { p = UDim2.new(0, 15, 0, 682), s = UDim2.new(1, -30, 0, 30) },
             noCD             = { p = UDim2.new(0, 15, 0, 718), s = UDim2.new(1, -30, 0, 30) },
-            layoutSwitch     = { p = UDim2.new(0, 15, 0, 754), s = UDim2.new(1, -30, 0, 28) },
-            headSizeLabel    = { p = UDim2.new(0, 15, 0, 788), s = UDim2.new(0, 50, 0, 22) },
-            headSizeInput    = { p = UDim2.new(0, 65, 0, 788), s = UDim2.new(0, 55, 0, 22) },
-            slideDistLabel   = { p = UDim2.new(0, 130, 0, 788),s = UDim2.new(0, 90, 0, 22) },
-            slideDistInput   = { p = UDim2.new(0, 225, 0, 788),s = UDim2.new(0, 75, 0, 22) },
-            shieldAlphaLabel = { p = UDim2.new(0, 15, 0, 816), s = UDim2.new(0, 90, 0, 22) },
-            shieldAlphaInput = { p = UDim2.new(0, 110, 0, 816),s = UDim2.new(0, 60, 0, 22) },
+            fastReload       = { p = UDim2.new(0, 15, 0, 754), s = UDim2.new(1, -30, 0, 30) },
+            layoutSwitch     = { p = UDim2.new(0, 15, 0, 790), s = UDim2.new(1, -30, 0, 28) },
+            headSizeLabel    = { p = UDim2.new(0, 15, 0, 824), s = UDim2.new(0, 50, 0, 22) },
+            headSizeInput    = { p = UDim2.new(0, 65, 0, 824), s = UDim2.new(0, 55, 0, 22) },
+            slideDistLabel   = { p = UDim2.new(0, 130, 0, 824),s = UDim2.new(0, 90, 0, 22) },
+            slideDistInput   = { p = UDim2.new(0, 225, 0, 824),s = UDim2.new(0, 75, 0, 22) },
+            shieldAlphaLabel = { p = UDim2.new(0, 15, 0, 852), s = UDim2.new(0, 90, 0, 22) },
+            shieldAlphaInput = { p = UDim2.new(0, 110, 0, 852),s = UDim2.new(0, 60, 0, 22) },
         },
     },
 }
 
 local TAB_HEIGHTS = {
     mobile = { base = 570, magic = 620, radar = 320 },
-    desktop = { base = 910, magic = 620, radar = 320 },
+    desktop = { base = 946, magic = 620, radar = 320 },
 }
 
 local uiParent = CoreGui
@@ -427,7 +429,7 @@ local title = Instance.new("TextLabel", titleBar)
 title.Size = UDim2.new(1, -70, 1, 0)
 title.Position = UDim2.new(0, 10, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "Examination v16.7.16"
+title.Text = "Examination v16.7.17"
 title.TextColor3 = Color3.new(1, 1, 1)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 13
@@ -1769,6 +1771,85 @@ do
         restoreScripts()
     end)
 end
+
+-- ============ 模块 9: 快速换弹（无条件 2x） ============
+do
+    local FR_TARGET_MULT = 2.0
+    local frEnabled = false
+    local frLoopToken = 0
+    local frBackup = nil
+
+    local function frCaptureBackup(char)
+        if frBackup then return end
+        frBackup = {
+            Active = char:GetAttribute("SquadBuffActive"),
+            Reload = char:GetAttribute("SquadReloadSpeedMultiplier"),
+        }
+    end
+
+    local function frPush()
+        local char = lp.Character
+        if not char then return end
+        pcall(function() char:SetAttribute("SquadBuffActive", true) end)
+        pcall(function() char:SetAttribute("SquadReloadSpeedMultiplier", FR_TARGET_MULT) end)
+    end
+
+    local function frRestore()
+        local char = lp.Character
+        if not char or not frBackup then return end
+        if frBackup.Active ~= nil then
+            pcall(function() char:SetAttribute("SquadBuffActive", frBackup.Active) end)
+        else
+            pcall(function() char:SetAttribute("SquadBuffActive", nil) end)
+        end
+        if frBackup.Reload ~= nil then
+            pcall(function() char:SetAttribute("SquadReloadSpeedMultiplier", frBackup.Reload) end)
+        else
+            pcall(function() char:SetAttribute("SquadReloadSpeedMultiplier", nil) end)
+        end
+        frBackup = nil
+    end
+
+    local function frStartLoop()
+        frLoopToken = frLoopToken + 1
+        local my = frLoopToken
+        spawn(function()
+            while frEnabled and gui.Parent and frLoopToken == my do
+                frPush()
+                wait(0.15)
+            end
+        end)
+    end
+
+    toggleBase("快速换弹", "fastReload", false, function(v)
+        frEnabled = v
+        if v then
+            local char = lp.Character
+            if char then frCaptureBackup(char) end
+            frStartLoop()
+        else
+            frLoopToken = frLoopToken + 1
+            frRestore()
+        end
+    end)
+
+    lp.CharacterAdded:Connect(function()
+        wait(1.5)
+        if frEnabled then
+            frBackup = nil
+            local char = lp.Character
+            if char then frCaptureBackup(char) end
+            frStartLoop()
+        end
+    end)
+
+    table.insert(cleanupFns, function()
+        frEnabled = false
+        frLoopToken = frLoopToken + 1
+        frRestore()
+    end)
+end
+
 -- ============ 模块 11: 去除枪口遮挡 ============
 do
     local muzzleHbConn = nil
@@ -2748,7 +2829,6 @@ do
         end
     end)
 end
-
 -- ============ 布局切换按钮 ============
 local layoutSwitchBtn = Instance.new("TextButton", basePage)
 layoutSwitchBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 100)
@@ -2788,7 +2868,7 @@ local function applyLayout(layout)
     end
     main.Position = UDim2.new(0.5, -L.W/2, 0.5, -h/2)
     layoutSwitchBtn.Text = (layout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-    title.Text = "Examination v16.7.16 - " .. (layout == "mobile" and "手机" or "电脑")
+    title.Text = "Examination v16.7.17 - " .. (layout == "mobile" and "手机" or "电脑")
     if _G._ExamInvalidateDragCache then _G._ExamInvalidateDragCache() end
 end
 
@@ -2798,7 +2878,7 @@ bindTap(layoutSwitchBtn, function()
 end)
 
 layoutSwitchBtn.Text = (currentLayout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-title.Text = "Examination v16.7.16 - " .. (currentLayout == "mobile" and "手机" or "电脑")
+title.Text = "Examination v16.7.17 - " .. (currentLayout == "mobile" and "手机" or "电脑")
 
 -- ============ 右下角提示系统 ============
 local tipGui = Instance.new("ScreenGui")
@@ -2837,15 +2917,6 @@ local function showCountdownTip(msg, duration)
 end
 
 -- ============ 模块 17: 魔法子弹 + 自动开火（IIFE 合并版） ============
--- v16.7.8: 紧急开火跳过"换弹快完成"
--- v16.7.9: 自动开火时好时坏修复（clipMax TTL + Reloading 三层判定）
--- v16.7.10: isBusy 全字段覆盖
--- v16.7.11: isBusy 最简版（只查 BeingExecuted + 0.15s 缓存）
--- v16.7.12: findTarget FOV 前置 + isPointVisible maxIter 8
--- v16.7.13: GrabbyMutant 低优先级 + Leaper 封印检测
--- v16.7.14: 自动开火停火修复（inFiring 状态跟踪）
--- v16.7.15: SIN 无敌期 CanAttack=false 检测
--- v16.7.16: 最大距离默认 200 + 移除 5000 快捷按钮
 (function()
     local mbAimPartIndex = 1
     local mbFovRadius = 200
@@ -2926,7 +2997,6 @@ end
         return v
     end
 
-    -- isBusy：只查 BeingExecuted（存在即处决中）
     local _busyCache = {}
     local BUSY_CACHE_TTL = 0.15
     local function isBusy(m)
@@ -2939,7 +3009,6 @@ end
         return v
     end
 
-    -- ★ v16.7.13: 低优先级（能锁，但输给其他目标；且不触发自动开火）
     local LOW_PRIORITY_NAMES = {
         GrabbyMutant = true,
     }
@@ -2947,8 +3016,6 @@ end
         return m and LOW_PRIORITY_NAMES[m.Name] == true
     end
 
-    -- ★ v16.7.13: 封印中不锁（Leaper，CanAttack 不为 true）
-    -- ★ v16.7.15: SIN 无敌期也是 CanAttack = false（探测确认）
     local DORMANT_NAMES = {
         Leaper = true,
         SIN = true,
@@ -4206,7 +4273,6 @@ end
         end
     end
 
-    -- ★★★ v16.7.14: 自动开火主循环（inFiring 状态跟踪，所有退出路径都释放）
     local lastFire = 0
     local inFiring = false
     RunService.Heartbeat:Connect(function()
@@ -4911,9 +4977,9 @@ bindTap(closeBtn, function()
         pcall(cg, "collect")
         pcall(cg, "collect")
     end
-    print("[Exam] v16.7.16 已完全卸载")
+    print("[Exam] v16.7.17 已完全卸载")
 end)
 
-print("[Exam] v16.7.16 已加载（布局=" .. currentLayout .. "）")
+print("[Exam] v16.7.17 已加载（布局=" .. currentLayout .. "）")
 
 -- ===END OF SCRIPT===
