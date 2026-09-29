@@ -1,12 +1,10 @@
 --!nolint
--- ============================================
--- Examination v16.7.17 新增快速换弹
+-- Examination v16.7.17 完全重做了UI
 -- 此脚本使用AI生成
 -- 因使用混淆加密会导致手机用户无法正常使用所以没有使用混淆加密
 -- 请不要拿去缝合 此脚本永久免费
 -- 若随意缝合和偷源码自称是自制的该脚本会进行删库处理并停止对外更新( AI写的史山代码你也要？？？？)
 -- 倒卖脚本私冯！！！
--- ============================================
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -16,7 +14,14 @@ local BadgeService = game:GetService("BadgeService")
 local CoreGui = game:GetService("CoreGui")
 local UserInputService = game:GetService("UserInputService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local SoundService = game:GetService("SoundService")
+local Debris = game:GetService("Debris")
+local TweenService = game:GetService("TweenService")
 local lp = Players.LocalPlayer
+
+if _G._ExamLastCleanup then pcall(_G._ExamLastCleanup); _G._ExamLastCleanup = nil end
+_G._ExamSetters = {}
+_G._ExamStates = {}
 
 local infStaminaEnabled = false
 local espEnabled = false
@@ -50,14 +55,9 @@ local slideSteerMode = "camera"
 local mbTargetMode = 1
 
 local AI_CONTAINERS = {"Characters", "Reactor1", "Reactor2", "Reactor3", "Reactor4"}
-
 local SHOTGUN_PUMP_IDS = {
-    ["115903749552317"] = true,
-    ["80315455447277"]  = true,
-    ["89272072134105"]  = true,
-    ["96917301511774"]  = true,
-    ["135326741887023"] = true,
-    ["116710355675938"] = true,
+    ["115903749552317"]=true,["80315455447277"]=true,["89272072134105"]=true,
+    ["96917301511774"]=true,["135326741887023"]=true,["116710355675938"]=true,
 }
 local SHOTGUN_SPEED_MULT = 1000
 
@@ -89,6 +89,9 @@ end
 for _, p in ipairs(Players:GetPlayers()) do _bindPlayerChar(p) end
 Players.PlayerAdded:Connect(_bindPlayerChar)
 
+-- ============================================================
+-- 清理
+-- ============================================================
 local function safeCleanup()
     if _G._ExamStaminaBackup then
         local char0 = lp.Character
@@ -118,26 +121,6 @@ local function safeCleanup()
         if _G[k] and _G[k].Parent then pcall(function() _G[k]:Destroy() end) end
         _G[k] = nil
     end
-    for _, k in ipairs({"_NR6ScanLoop","_NR6ObsLoop","_MB2FovGui","_MZ8HBC","_MZ9HBC","_MZ10HBC","_MZ11HBC","_MZ11WatchConn"}) do
-        if _G[k] then
-            pcall(function()
-                if _G[k].Disconnect then _G[k]:Disconnect()
-                elseif _G[k].Destroy then _G[k]:Destroy() end
-            end)
-            _G[k] = nil
-        end
-    end
-    if _G.__ExamChatForceCleanup then pcall(_G.__ExamChatForceCleanup); _G.__ExamChatForceCleanup = nil end
-    if _G.__ExamChatForceGui and _G.__ExamChatForceGui.Parent then
-        pcall(function() _G.__ExamChatForceGui:Destroy() end)
-        _G.__ExamChatForceGui = nil
-    end
-    if _G._MZ11Disabled then
-        for p, orig in pairs(_G._MZ11Disabled) do
-            if p and p.Parent then pcall(function() p.CanCollide = orig end) end
-        end
-        _G._MZ11Disabled = nil
-    end
     if _G._NR6SpringModule and _G._NR6OrigNew then
         local mod = _G._NR6SpringModule
         local ok, spring = pcall(function() return mod.spring end)
@@ -148,12 +131,6 @@ local function safeCleanup()
             if mt then pcall(function() setmetatable(spring, mt) end) end
         end
         _G._NR6SpringModule = nil; _G._NR6OrigNew = nil
-    end
-    if _G._NR6Patched then
-        for obj, orig in pairs(_G._NR6Patched) do
-            pcall(function() rawset(obj, "Accelerate", orig) end)
-        end
-        _G._NR6Patched = nil
     end
     if _G._MB2Net and _G._MB2OrigInvoke then pcall(function() _G._MB2Net.InvokeServer = _G._MB2OrigInvoke end) end
     if _G._MB2Net and _G._MB2OrigFire then pcall(function() _G._MB2Net.FireServer = _G._MB2OrigFire end) end
@@ -168,14 +145,7 @@ local function safeCleanup()
     end
     if _G._shieldFixTargetTrySlide and _G._shieldFixOrigTrySlide and hookfunction then
         pcall(function() hookfunction(_G._shieldFixTargetTrySlide, _G._shieldFixOrigTrySlide) end)
-        _G._shieldFixTargetTrySlide = nil
-        _G._shieldFixOrigTrySlide = nil
-    end
-    for _, name in ipairs({"ShieldTransTestUI", "ShieldVMTestUI", "NumberKeyBlockerTest", "SlideSteerModeTest", "SlideCDProbeUI", "SlideNoCDTestUI", "SlideChainTraceUI", "SlideCDv3UI", "SlideCDv31UI", "v63DumpUI", "SlideNoCDv2UI", "SlideNoCDv21UI", "SlideNoCDv3UI", "SlideNoCDv31UI", "SlideAllUI", "SlideResetTestUI"}) do
-        if _G[name] and _G[name].Parent then
-            pcall(function() _G[name]:Destroy() end)
-            _G[name] = nil
-        end
+        _G._shieldFixTargetTrySlide = nil; _G._shieldFixOrigTrySlide = nil
     end
     local function destroyFov()
         local parents = {}
@@ -193,11 +163,6 @@ local function safeCleanup()
         end
     end
     destroyFov()
-    for _, name in ipairs({"C4Test","C4Test2","C4Test3","C4Test4","C4Test5","C4Test6","BTRC4Test","BTRC4Test2","BTRFinder","FireUltra","FireSimple","FireMod","AmmoDetect2","ConfigDump","FullFire","FullFire2","AmmoV2","AmmoV3","AmmoHook","AmmoMini","AmmoMod","DoorOpener","DoorOpener2","DoorOpener3","PromptScanner","StoryDoor","StoryDoor2","StoryV3","StoryV4","StoryV5","NoSignalImmune","NoSignalV2","NoSignalV3","RadarImmune","ExamTestMenu","RD5","RD4","RD3","RD2","RL","ForceHeadshotUI","BulletAimHackUI"}) do
-        if _G[name] and _G[name].Parent then pcall(function() _G[name]:Destroy() end) end
-        _G[name] = nil
-    end
-    destroyFov()
     local function cleanESP(obj)
         if not obj then return end
         local kill = {}
@@ -211,16 +176,11 @@ local function safeCleanup()
         for _, c in ipairs(kill) do pcall(function() c:Destroy() end) end
     end
     local map = Workspace:FindFirstChild("Map")
-    if map then
-        local btr = map:FindFirstChild("BTR-82 (BOSS)")
-        if btr then cleanESP(btr) end
-    end
+    if map then local btr = map:FindFirstChild("BTR-82 (BOSS)"); if btr then cleanESP(btr) end end
     cleanESP(Workspace:FindFirstChild("BTRDrone"))
-    for _, folderName in ipairs(AI_CONTAINERS) do
-        local folder = Workspace:FindFirstChild(folderName)
-        if folder then
-            for _, c in ipairs(folder:GetChildren()) do cleanESP(c) end
-        end
+    for _, fn in ipairs(AI_CONTAINERS) do
+        local f = Workspace:FindFirstChild(fn)
+        if f then for _, c in ipairs(f:GetChildren()) do cleanESP(c) end end
     end
     do
         local pg = lp:FindFirstChild("PlayerGui")
@@ -230,27 +190,19 @@ local function safeCleanup()
         local hl = core and core:FindFirstChild("Highlights")
         if hl then
             for _, c in ipairs(hl:GetChildren()) do
-                if c.Name == "SPRadar_Enemy" then
-                    pcall(function() c:Destroy() end)
-                end
+                if c.Name == "SPRadar_Enemy" then pcall(function() c:Destroy() end) end
             end
         end
     end
     local char = lp.Character
     if char and _G._InfNVG_AddedCloaker then
-        local c = char:FindFirstChild("IsCloaker")
-        if c then c:Destroy() end
+        local c = char:FindFirstChild("IsCloaker"); if c then c:Destroy() end
     end
     for _, k in ipairs({"_InfNVG_TextSignalConn","_InfNVG_BarSignalConn","_InfNVG_Loop"}) do
         if _G[k] then pcall(function() _G[k]:Disconnect() end); _G[k] = nil end
     end
-    _G._InfNVG_AddedCloaker = nil
-    _G._InfNVG_OrigPercentText = nil
-    _G._InfNVG_OrigBarSize = nil
-    if _G._ElephantImmune_Loop then
-        pcall(function() _G._ElephantImmune_Loop:Disconnect() end)
-        _G._ElephantImmune_Loop = nil
-    end
+    _G._InfNVG_AddedCloaker = nil; _G._InfNVG_OrigPercentText = nil; _G._InfNVG_OrigBarSize = nil
+    if _G._ElephantImmune_Loop then pcall(function() _G._ElephantImmune_Loop:Disconnect() end); _G._ElephantImmune_Loop = nil end
     if _G._ElephantImmune_DisabledScripts then
         for s, orig in pairs(_G._ElephantImmune_DisabledScripts) do
             if s and s.Parent then pcall(function() s.Disabled = orig end) end
@@ -261,21 +213,13 @@ local function safeCleanup()
         for p, orig in pairs(_G._KillPartBackup) do
             if p and p.Parent then
                 pcall(function()
-                    p.Size = orig.Size
-                    p.CFrame = orig.CFrame
-                    p.CanTouch = orig.CanTouch
-                    p.CanCollide = orig.CanCollide
+                    p.Size = orig.Size; p.CFrame = orig.CFrame
+                    p.CanTouch = orig.CanTouch; p.CanCollide = orig.CanCollide
                 end)
             end
         end
         _G._KillPartBackup = nil
     end
-    if _G._RadarBoost_Conns then
-        for _, c in ipairs(_G._RadarBoost_Conns) do pcall(function() c:Disconnect() end) end
-    end
-    _G._RadarBoost_Conns = {}
-    _G._RadarBoost_ZoneBackup = {}
-    _G._RadarBoost_ScriptBackup = {}
     local pg0 = lp:FindFirstChild("PlayerGui")
     local mm0 = pg0 and pg0:FindFirstChild("Minimap")
     local mc0 = mm0 and mm0:FindFirstChild("MinimapContainer")
@@ -295,17 +239,70 @@ local function safeCleanup()
             if d.Name == n then pcall(function() d:Destroy() end) end
         end
     end
+    if _G.ExamRadiusTip and _G.ExamRadiusTip.Parent then pcall(function() _G.ExamRadiusTip:Destroy() end) end
+    _G.ExamRadiusTip = nil
+    if _G.ControlPanelUI and _G.ControlPanelUI.Parent then
+        pcall(function() _G.ControlPanelUI:Destroy() end)
+    end
+    _G.ControlPanelUI = nil
+    local _pg = lp:FindFirstChild("PlayerGui")
+    if _pg then
+        local _tb = _pg:FindFirstChild("TopbarStandard")
+        if _tb then
+            local _h = _tb:FindFirstChild("Holders")
+            local _l = _h and _h:FindFirstChild("Left")
+            if _l then
+                for _, _n in ipairs({"ControlPanelBtn", "TrialBtn"}) do
+                    local _old = _l:FindFirstChild(_n)
+                    if _old then pcall(function() _old:Destroy() end) end
+                end
+            end
+        end
+    end
+    _G._ExamSetters = {}
+    _G._ExamStates = {}
+    _G._CP_RefreshFns = {}
+end
+pcall(safeCleanup)
+
+_G._ExamLastCleanup = function()
+    for _, fn in ipairs(cleanupFns) do pcall(fn) end
+    if _G._ExamMB and _G._ExamMB.magicOffFn then pcall(_G._ExamMB.magicOffFn) end
+    if _G._ExamFH and _G._ExamFH.forceOffFn then pcall(_G._ExamFH.forceOffFn) end
+    if _G.ControlPanelUI and _G.ControlPanelUI.Parent then
+        pcall(function() _G.ControlPanelUI:Destroy() end)
+    end
+    _G.ControlPanelUI = nil
+    local _pg = lp:FindFirstChild("PlayerGui")
+    if _pg then
+        local _tb = _pg:FindFirstChild("TopbarStandard")
+        if _tb then
+            local _h = _tb:FindFirstChild("Holders")
+            local _l = _h and _h:FindFirstChild("Left")
+            if _l then
+                for _, _n in ipairs({"ControlPanelBtn", "TrialBtn"}) do
+                    local _old = _l:FindFirstChild(_n)
+                    if _old then pcall(function() _old:Destroy() end) end
+                end
+            end
+        end
+    end
+    if _G.ExaminationUI and _G.ExaminationUI.Parent then
+        pcall(function() _G.ExaminationUI:Destroy() end)
+    end
+    _G.ExaminationUI = nil
     if _G.ExamRadiusTip and _G.ExamRadiusTip.Parent then
         pcall(function() _G.ExamRadiusTip:Destroy() end)
     end
     _G.ExamRadiusTip = nil
+    _G._ExamSetters = {}
+    _G._ExamStates = {}
+    _G._CP_RefreshFns = {}
+    cleanupFns = {}
 end
-pcall(safeCleanup)
 
 local function detectLayout()
-    if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
-        return "mobile"
-    end
+    if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then return "mobile" end
     return "desktop"
 end
 local currentLayout = detectLayout()
@@ -313,8 +310,7 @@ local currentTab = "base"
 
 local LAYOUT = {
     mobile = {
-        W = 320, H = 570,
-        TitleH = 34, TabY = 36, PageTop = 66,
+        W = 320, H = 570, TitleH = 34, TabY = 36, PageTop = 66,
         items = {
             cdLabel          = { p = UDim2.new(0, 15, 0, 4),   s = UDim2.new(1, -30, 0, 20) },
             stamina          = { p = UDim2.new(0, 15, 0, 28),  s = UDim2.new(0, 140, 0, 28) },
@@ -349,8 +345,7 @@ local LAYOUT = {
         },
     },
     desktop = {
-        W = 320, H = 946,
-        TitleH = 30, TabY = 33, PageTop = 63,
+        W = 320, H = 946, TitleH = 30, TabY = 33, PageTop = 63,
         items = {
             cdLabel          = { p = UDim2.new(0, 15, 0, 5),   s = UDim2.new(1, -30, 0, 22) },
             stamina          = { p = UDim2.new(0, 15, 0, 34),  s = UDim2.new(1, -30, 0, 30) },
@@ -385,17 +380,13 @@ local LAYOUT = {
         },
     },
 }
-
 local TAB_HEIGHTS = {
     mobile = { base = 570, magic = 620, radar = 320 },
     desktop = { base = 946, magic = 620, radar = 320 },
 }
 
 local uiParent = CoreGui
-if gethui then
-    local ok, h = pcall(gethui)
-    if ok and h then uiParent = h end
-end
+if gethui then local ok, h = pcall(gethui); if ok and h then uiParent = h end end
 
 local function getTabHeight()
     local th = TAB_HEIGHTS[currentLayout]
@@ -403,11 +394,13 @@ local function getTabHeight()
     return 570
 end
 
+-- 旧 UI 隐藏，只作功能载体
 local gui = Instance.new("ScreenGui")
 gui.Name = "ExaminationUI"
 gui.ResetOnSpawn = false
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Global
 gui.DisplayOrder = 101
+gui.Enabled = false
 gui.Parent = uiParent
 _G.ExaminationUI = gui
 
@@ -415,8 +408,7 @@ local main = Instance.new("Frame", gui)
 main.Size = UDim2.new(0, LAYOUT[currentLayout].W, 0, getTabHeight())
 main.Position = UDim2.new(0.5, -LAYOUT[currentLayout].W/2, 0.5, -getTabHeight()/2)
 main.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-main.Active = false
-main.Draggable = false
+main.Active = false; main.Draggable = false
 Instance.new("UICorner", main).CornerRadius = UDim.new(0, 8)
 
 local titleBar = Instance.new("Frame", main)
@@ -461,8 +453,7 @@ collapseBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 80)
 collapseBtn.Text = "▲"
 collapseBtn.TextColor3 = Color3.new(1, 1, 1)
 collapseBtn.Font = Enum.Font.GothamBold
-collapseBtn.TextSize = 13
-collapseBtn.Active = true
+collapseBtn.TextSize = 13; collapseBtn.Active = true
 Instance.new("UICorner", collapseBtn).CornerRadius = UDim.new(0, 5)
 
 local closeBtn = Instance.new("TextButton", titleBar)
@@ -472,8 +463,7 @@ closeBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
 closeBtn.Text = "X"
 closeBtn.TextColor3 = Color3.new(1, 1, 1)
 closeBtn.Font = Enum.Font.GothamBold
-closeBtn.TextSize = 14
-closeBtn.Active = true
+closeBtn.TextSize = 14; closeBtn.Active = true
 Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 5)
 
 local tabBar = Instance.new("Frame", main)
@@ -491,8 +481,7 @@ local function mkTabBtn(name, text, xScale)
     b.Text = text
     b.TextColor3 = Color3.new(1, 1, 1)
     b.Font = Enum.Font.GothamBold
-    b.TextSize = 12
-    b.Active = true
+    b.TextSize = 12; b.Active = true
     Instance.new("UICorner", b).CornerRadius = UDim.new(0, 4)
     return b
 end
@@ -544,66 +533,8 @@ local regControls = {}
 local function reg(g, key)
     regControls[g] = key
     local info = LAYOUT[currentLayout].items[key]
-    if info then
-        g.Position = info.p
-        g.Size = info.s
-    end
+    if info then g.Position = info.p; g.Size = info.s end
     return g
-end
-
-do
-    local dragging, ds, sp = false, nil, nil
-    local controlCache = nil
-    local function pointInFrame(pos, f)
-        local ap = f.AbsolutePosition
-        local asz = f.AbsoluteSize
-        return pos.X >= ap.X and pos.X <= ap.X + asz.X and pos.Y >= ap.Y and pos.Y <= ap.Y + asz.Y
-    end
-    local function buildControlCache()
-        local list = {}
-        for _, d in ipairs(main:GetDescendants()) do
-            if d:IsA("GuiButton") or d:IsA("TextBox") then
-                table.insert(list, d)
-            end
-        end
-        controlCache = list
-    end
-    local function invalidateControlCache() controlCache = nil end
-    local function pointInAnyControl(pos)
-        if not controlCache then buildControlCache() end
-        for i = 1, #controlCache do
-            local d = controlCache[i]
-            if d.Parent and d.Visible then
-                if pointInFrame(pos, d) then return true end
-            end
-        end
-        return false
-    end
-    _G._ExamInvalidateDragCache = invalidateControlCache
-    UserInputService.InputBegan:Connect(function(input, gpe)
-        if gpe then return end
-        local ut = input.UserInputType
-        if ut ~= Enum.UserInputType.MouseButton1 and ut ~= Enum.UserInputType.Touch then return end
-        if not gui.Parent then return end
-        if not pointInFrame(input.Position, main) then return end
-        if pointInAnyControl(input.Position) then return end
-        dragging = true
-        ds = input.Position
-        sp = main.Position
-    end)
-    UserInputService.InputChanged:Connect(function(input)
-        if not dragging then return end
-        local ut = input.UserInputType
-        if ut ~= Enum.UserInputType.MouseMovement and ut ~= Enum.UserInputType.Touch then return end
-        local d = input.Position - ds
-        main.Position = UDim2.new(sp.X.Scale, sp.X.Offset + d.X, sp.Y.Scale, sp.Y.Offset + d.Y)
-    end)
-    UserInputService.InputEnded:Connect(function(input)
-        local ut = input.UserInputType
-        if ut == Enum.UserInputType.MouseButton1 or ut == Enum.UserInputType.Touch then
-            dragging = false
-        end
-    end)
 end
 
 _G._ExamFH = _G._ExamFH or {}
@@ -634,8 +565,8 @@ local function mkCreateToggle(parent)
         btn.Text = text
         btn.TextColor3 = Color3.new(1, 1, 1)
         btn.Font = Enum.Font.GothamBold
-        btn.TextSize = 11
-        btn.Active = true
+        btn.TextSize = 11; btn.Active = true
+        btn.Visible = false
         Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
         local state = default
         local lastFire = 0
@@ -652,6 +583,10 @@ local function mkCreateToggle(parent)
             setState(not state)
         end
         bindTap(btn, fire)
+        if type(posSpec) == "string" then
+            _G._ExamSetters[posSpec] = setState
+            _G._ExamStates[posSpec] = default
+        end
         return btn, setState
     end
 end
@@ -711,9 +646,7 @@ do
         local backup = originalStamina
         if next(backup) == nil and _G._ExamStaminaBackup then backup = _G._ExamStaminaBackup end
         if not s or next(backup) == nil then
-            originalStamina = {}
-            _G._ExamStaminaBackup = nil
-            return
+            originalStamina = {}; _G._ExamStaminaBackup = nil; return
         end
         if backup.current ~= nil then s.stamina.current = backup.current end
         if backup.fullRegen ~= nil then s.stamina.fullRegen = backup.fullRegen end
@@ -721,8 +654,7 @@ do
         if backup.max ~= nil then s.stamina.max = backup.max end
         if backup.maxStamina ~= nil then s.stamina.maxStamina = backup.maxStamina end
         if backup.maximum ~= nil then s.stamina.maximum = backup.maximum end
-        originalStamina = {}
-        _G._ExamStaminaBackup = nil
+        originalStamina = {}; _G._ExamStaminaBackup = nil
     end
     local function setupLoop()
         if staminaLoop then pcall(function() staminaLoop:Disconnect() end); staminaLoop = nil end
@@ -739,21 +671,15 @@ do
     toggleBase("无限体力", "stamina", false, function(v)
         infStaminaEnabled = v
         if v then
-            originalStamina = {}
-            cachedState = nil
-            setupLoop()
+            originalStamina = {}; cachedState = nil; setupLoop()
         else
             if staminaLoop then pcall(function() staminaLoop:Disconnect() end); staminaLoop = nil end
             restoreOrig()
         end
     end)
     lp.CharacterAdded:Connect(function()
-        wait(1)
-        cachedState = nil
-        if infStaminaEnabled then
-            originalStamina = {}
-            setupLoop()
-        end
+        wait(1); cachedState = nil
+        if infStaminaEnabled then originalStamina = {}; setupLoop() end
     end)
     table.insert(cleanupFns, function()
         infStaminaEnabled = false
@@ -767,11 +693,8 @@ do
     local espConnections = {}
     local ESP_HL_NEW = "_ExamESP_HL"
     local ESP_HB_NEW = "_ExamESP_HB"
-    local BIG = {
-        ["SIN"]=true, ["Chimera"]=true, ["Gilbert"]=true, ["Mikhail"]=true,
-        ["Leaper"]=true,
-    }
-    local MINI = { ["RIF Miniboss"]=true, ["Dave"]=true, ["CombatEngineer"]=true, ["Vorax"]=true }
+    local BIG = {["SIN"]=true,["Chimera"]=true,["Gilbert"]=true,["Mikhail"]=true,["Leaper"]=true}
+    local MINI = {["RIF Miniboss"]=true,["Dave"]=true,["CombatEngineer"]=true,["Vorax"]=true}
     local C_NORMAL = Color3.fromRGB(255, 0, 0)
     local C_MINI = Color3.fromRGB(255, 140, 0)
     local C_BIG = Color3.fromRGB(170, 0, 255)
@@ -779,20 +702,16 @@ do
     local C_DRONE = Color3.fromRGB(255, 80, 200)
     local showESPName = true
     local showESPHealth = true
-
     local function isAICharacter(m)
         if not m or not m:IsA("Model") then return false end
         if Players:GetPlayerFromCharacter(m) then return false end
         if m.Name == "Leaper" then return true end
-        if m:FindFirstChild("AI")
-           or m:FindFirstChild("GrabField")
-           or m:FindFirstChild("AmbushScenery")
-           or m:FindFirstChild("CharacterTeam") then
+        if m:FindFirstChild("AI") or m:FindFirstChild("GrabField")
+           or m:FindFirstChild("AmbushScenery") or m:FindFirstChild("CharacterTeam") then
             return true
         end
         return false
     end
-
     local function isOurESPNode(c)
         if not c then return false end
         local n = c.Name
@@ -830,9 +749,9 @@ do
             local hum = obj:FindFirstChildOfClass("Humanoid")
             tl.Text = genText(obj, hum, tagToPre(tag))
         end
-        for _, folderName in ipairs(AI_CONTAINERS) do
-            local folder = Workspace:FindFirstChild(folderName)
-            if folder then for _, c in ipairs(folder:GetChildren()) do refreshIn(c) end end
+        for _, fn in ipairs(AI_CONTAINERS) do
+            local f = Workspace:FindFirstChild(fn)
+            if f then for _, c in ipairs(f:GetChildren()) do refreshIn(c) end end
         end
         local map = Workspace:FindFirstChild("Map")
         local btr = map and map:FindFirstChild("BTR-82 (BOSS)")
@@ -850,20 +769,16 @@ do
             for _, c in ipairs(kill) do pcall(function() c:Destroy() end) end
         end
         local map = Workspace:FindFirstChild("Map")
-        if map then
-            local btr = map:FindFirstChild("BTR-82 (BOSS)")
-            if btr then cleanIn(btr) end
-        end
+        if map then local btr = map:FindFirstChild("BTR-82 (BOSS)"); if btr then cleanIn(btr) end end
         cleanIn(Workspace:FindFirstChild("BTRDrone"))
-        for _, folderName in ipairs(AI_CONTAINERS) do
-            local folder = Workspace:FindFirstChild(folderName)
-            if folder then for _, c in ipairs(folder:GetChildren()) do cleanIn(c) end end
+        for _, fn in ipairs(AI_CONTAINERS) do
+            local f = Workspace:FindFirstChild(fn)
+            if f then for _, c in ipairs(f:GetChildren()) do cleanIn(c) end end
         end
     end
     local function clearESP()
         for _, conn in ipairs(espConnections) do pcall(function() conn:Disconnect() end) end
-        espConnections = {}
-        cleanAllESP()
+        espConnections = {}; cleanAllESP()
     end
     local function tryHealth(m)
         local hum = m:FindFirstChildOfClass("Humanoid")
@@ -879,8 +794,7 @@ do
         hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop; hl.Parent = model
         local bb = Instance.new("BillboardGui")
         bb.Name = ESP_HB_NEW; bb.Adornee = model
-        bb.Size = UDim2.new(0, 220, 0, 25)
-        bb.StudsOffset = Vector3.new(0, 4, 0)
+        bb.Size = UDim2.new(0, 220, 0, 25); bb.StudsOffset = Vector3.new(0, 4, 0)
         bb.AlwaysOnTop = true; bb.MaxDistance = 300; bb.Parent = model
         local tl = Instance.new("TextLabel")
         tl.Parent = bb; tl.Size = UDim2.new(1, 0, 1, 0)
@@ -935,8 +849,7 @@ do
         hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop; hl.Parent = btrModel
         local bb = Instance.new("BillboardGui")
         bb.Name = ESP_HB_NEW; bb.Adornee = btrModel
-        bb.Size = UDim2.new(0, 300, 0, 30)
-        bb.StudsOffset = Vector3.new(0, 12, 0)
+        bb.Size = UDim2.new(0, 300, 0, 30); bb.StudsOffset = Vector3.new(0, 12, 0)
         bb.AlwaysOnTop = true; bb.MaxDistance = 600; bb.Parent = btrModel
         local tl = Instance.new("TextLabel")
         tl.Parent = bb; tl.Size = UDim2.new(1, 0, 1, 0)
@@ -976,8 +889,7 @@ do
         hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop; hl.Parent = drone
         local bb = Instance.new("BillboardGui")
         bb.Name = ESP_HB_NEW; bb.Adornee = drone
-        bb.Size = UDim2.new(0, 200, 0, 25)
-        bb.StudsOffset = Vector3.new(0, 4, 0)
+        bb.Size = UDim2.new(0, 200, 0, 25); bb.StudsOffset = Vector3.new(0, 4, 0)
         bb.AlwaysOnTop = true; bb.MaxDistance = 400; bb.Parent = drone
         local tl = Instance.new("TextLabel")
         tl.Parent = bb; tl.Size = UDim2.new(1, 0, 1, 0)
@@ -1007,8 +919,8 @@ do
     local function setupESP()
         clearESP()
         if not espEnabled then return end
-        for _, folderName in ipairs(AI_CONTAINERS) do
-            local folder = Workspace:FindFirstChild(folderName)
+        for _, fn in ipairs(AI_CONTAINERS) do
+            local folder = Workspace:FindFirstChild(fn)
             if folder then
                 for _, v in ipairs(folder:GetChildren()) do
                     if isAICharacter(v) then
@@ -1030,9 +942,7 @@ do
         local map = Workspace:FindFirstChild("Map")
         if map then
             table.insert(espConnections, map.ChildAdded:Connect(function(c)
-                if espEnabled and c.Name == "BTR-82 (BOSS)" then
-                    wait(0.5); highlightBTR(c)
-                end
+                if espEnabled and c.Name == "BTR-82 (BOSS)" then wait(0.5); highlightBTR(c) end
             end))
             table.insert(espConnections, map.ChildRemoved:Connect(function(c)
                 if espEnabled and c.Name == "BTR-82 (BOSS)" then
@@ -1049,9 +959,7 @@ do
         local drone = Workspace:FindFirstChild("BTRDrone")
         if drone then highlightDrone(drone) end
         table.insert(espConnections, Workspace.ChildAdded:Connect(function(c)
-            if espEnabled and c.Name == "BTRDrone" then
-                wait(0.3); highlightDrone(c)
-            end
+            if espEnabled and c.Name == "BTRDrone" then wait(0.3); highlightDrone(c) end
         end))
         spawn(function()
             local lastHP = nil
@@ -1063,8 +971,7 @@ do
                 if b then
                     local hp = getBTRHealth(b)
                     local need = false
-                    if hp and hp <= 0 then
-                        removeBTR(b); lastHP = hp
+                    if hp and hp <= 0 then removeBTR(b); lastHP = hp
                     else
                         if hp and lastHP and (lastHP - hp) > 30 then need = true end
                         if not b:FindFirstChild(ESP_HL_NEW) then need = true end
@@ -1078,14 +985,14 @@ do
         end)
     end
     toggleBase("AI ESP（高亮常开）", "esp", false, function(v)
-        espEnabled = v
-        setupESP()
+        espEnabled = v; setupESP()
     end)
     local nameBtn = Instance.new("TextButton", basePage)
     nameBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
     nameBtn.Text = "显示名称: 开"
     nameBtn.TextColor3 = Color3.new(1, 1, 1)
     nameBtn.Font = Enum.Font.Gotham; nameBtn.TextSize = 11; nameBtn.Active = true
+    nameBtn.Visible = false
     Instance.new("UICorner", nameBtn).CornerRadius = UDim.new(0, 5)
     reg(nameBtn, "nameBtn")
     local hpBtn = Instance.new("TextButton", basePage)
@@ -1093,6 +1000,7 @@ do
     hpBtn.Text = "显示血量: 开"
     hpBtn.TextColor3 = Color3.new(1, 1, 1)
     hpBtn.Font = Enum.Font.Gotham; hpBtn.TextSize = 11; hpBtn.Active = true
+    hpBtn.Visible = false
     Instance.new("UICorner", hpBtn).CornerRadius = UDim.new(0, 5)
     reg(hpBtn, "hpBtn")
     bindTap(nameBtn, function()
@@ -1107,6 +1015,20 @@ do
         hpBtn.BackgroundColor3 = showESPHealth and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(70, 70, 70)
         if espEnabled then refreshAllLabels() end
     end)
+    _G._ExamSetters.espName = function(v)
+        showESPName = v
+        nameBtn.Text = v and "显示名称: 开" or "显示名称: 关"
+        nameBtn.BackgroundColor3 = v and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(70, 70, 70)
+        if espEnabled then refreshAllLabels() end
+    end
+    _G._ExamStates.espName = true
+    _G._ExamSetters.espHP = function(v)
+        showESPHealth = v
+        hpBtn.Text = v and "显示血量: 开" or "显示血量: 关"
+        hpBtn.BackgroundColor3 = v and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(70, 70, 70)
+        if espEnabled then refreshAllLabels() end
+    end
+    _G._ExamStates.espHP = true
     spawn(function()
         while gui.Parent do
             wait(8)
@@ -1138,9 +1060,7 @@ do
     local function restoreOne(p)
         local orig = hitboxModified[p]
         if not orig then return end
-        pcall(function()
-            p.Size = orig.Size; p.CanCollide = orig.CanCollide; p.Transparency = orig.Transparency
-        end)
+        pcall(function() p.Size = orig.Size; p.CanCollide = orig.CanCollide; p.Transparency = orig.Transparency end)
         hitboxModified[p] = nil
     end
     local function applyHead(part)
@@ -1172,15 +1092,14 @@ do
             while headHitboxEnabled and gui.Parent do
                 for p in pairs(hitboxModified) do
                     if not p or not p.Parent then hitboxModified[p] = nil
-                    else if isDead(p.Parent) then restoreOne(p) end end
+                    elseif isDead(p.Parent) then restoreOne(p) end
                 end
                 wait(0.5)
             end
         end)
     end
     toggleBase("头部Hitbox扩大", "headHitbox", false, function(v)
-        headHitboxEnabled = v
-        setup()
+        headHitboxEnabled = v; setup()
     end)
     local sizeLabel = Instance.new("TextLabel", basePage)
     sizeLabel.BackgroundTransparency = 1
@@ -1188,12 +1107,14 @@ do
     sizeLabel.TextColor3 = Color3.new(0.9, 0.9, 0.9)
     sizeLabel.Font = Enum.Font.Gotham; sizeLabel.TextSize = 11
     sizeLabel.TextXAlignment = Enum.TextXAlignment.Left
+    sizeLabel.Visible = false
     reg(sizeLabel, "headSizeLabel")
     local sizeInput = Instance.new("TextBox", basePage)
     sizeInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
     sizeInput.TextColor3 = Color3.new(1, 1, 1)
     sizeInput.Text = tostring(headSize)
     sizeInput.Font = Enum.Font.Gotham; sizeInput.TextSize = 11; sizeInput.BorderSizePixel = 0
+    sizeInput.Visible = false
     Instance.new("UICorner", sizeInput).CornerRadius = UDim.new(0, 4)
     reg(sizeInput, "headSizeInput")
     sizeInput.FocusLost:Connect(function()
@@ -1203,6 +1124,13 @@ do
             if headHitboxEnabled then setup() end
         else sizeInput.Text = tostring(headSize) end
     end)
+    _G._ExamSetters.headSizeVal = function(v)
+        if type(v) == "number" and v >= 1 and v <= 20 then
+            headSize = v; sizeInput.Text = tostring(v)
+            if headHitboxEnabled then setup() end
+        end
+    end
+    _G._ExamStates.headSizeVal = headSize
     table.insert(cleanupFns, function()
         for _, conn in ipairs(hitboxConnections) do pcall(function() conn:Disconnect() end) end
         restoreHeadHitbox()
@@ -1220,12 +1148,9 @@ do
         end)
     end
     toggleBase("及时交互", "autoInteract", false, function(v)
-        autoInteractEnabled = v
-        setup()
+        autoInteractEnabled = v; setup()
     end)
-    table.insert(cleanupFns, function()
-        if promptConn then promptConn:Disconnect() end
-    end)
+    table.insert(cleanupFns, function() if promptConn then promptConn:Disconnect() end end)
 end
 
 -- ============ 模块 5: 无条件重置 ============
@@ -1234,16 +1159,14 @@ do
     local function setup()
         if resetLoop then resetLoop:Disconnect(); resetLoop = nil end
         if not forceResetEnabled then
-            pcall(function() StarterGui:SetCore("ResetButtonCallback", false) end)
-            return
+            pcall(function() StarterGui:SetCore("ResetButtonCallback", false) end); return
         end
         resetLoop = RunService.Heartbeat:Connect(function()
             pcall(function() StarterGui:SetCore("ResetButtonCallback", true) end)
         end)
     end
     toggleBase("无条件重置", "forceReset", false, function(v)
-        forceResetEnabled = v
-        setup()
+        forceResetEnabled = v; setup()
     end)
     table.insert(cleanupFns, function()
         if resetLoop then resetLoop:Disconnect() end
@@ -1270,8 +1193,7 @@ do
                 return oldUserHasBadgeAsync(self, uid, bid)
             end)
         end)
-        badgeHooked = ok
-        return ok
+        badgeHooked = ok; return ok
     end
     local function hookIsBlocked()
         if blockedHooked then return true end
@@ -1289,8 +1211,7 @@ do
                 end)
             end
         end
-        blockedHooked = count > 0
-        return blockedHooked
+        blockedHooked = count > 0; return blockedHooked
     end
     local function boostSlide(hum)
         spawn(function()
@@ -1342,13 +1263,9 @@ do
         end
     end
     toggleBase("滑铲距离修改", "slide", false, function(v)
-        slideEnabled = v
-        setup()
+        slideEnabled = v; setup()
     end)
-    lp.CharacterAdded:Connect(function()
-        wait(2)
-        if slideEnabled then setup() end
-    end)
+    lp.CharacterAdded:Connect(function() wait(2); if slideEnabled then setup() end end)
     spawn(function()
         while gui.Parent do
             wait(0.2)
@@ -1378,12 +1295,14 @@ do
     slideDistLabel.TextColor3 = Color3.new(0.9, 0.9, 0.9)
     slideDistLabel.Font = Enum.Font.Gotham; slideDistLabel.TextSize = 11
     slideDistLabel.TextXAlignment = Enum.TextXAlignment.Left
+    slideDistLabel.Visible = false
     reg(slideDistLabel, "slideDistLabel")
     local slideDistInput = Instance.new("TextBox", basePage)
     slideDistInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
     slideDistInput.TextColor3 = Color3.new(1, 1, 1)
     slideDistInput.Text = tostring(slideDistanceMult)
     slideDistInput.Font = Enum.Font.Gotham; slideDistInput.TextSize = 11; slideDistInput.BorderSizePixel = 0
+    slideDistInput.Visible = false
     Instance.new("UICorner", slideDistInput).CornerRadius = UDim.new(0, 4)
     reg(slideDistInput, "slideDistInput")
     slideDistInput.FocusLost:Connect(function()
@@ -1392,6 +1311,12 @@ do
             slideDistanceMult = val; slideDistInput.Text = tostring(slideDistanceMult)
         else slideDistInput.Text = tostring(slideDistanceMult) end
     end)
+    _G._ExamSetters.slideDistanceMult = function(v)
+        if type(v) == "number" and v >= 1 and v <= 10 then
+            slideDistanceMult = v; slideDistInput.Text = tostring(v)
+        end
+    end
+    _G._ExamStates.slideDistanceMult = slideDistanceMult
     table.insert(cleanupFns, function()
         if slideSpeedLoop then slideSpeedLoop:Disconnect() end
         if slideSlidingConn then slideSlidingConn:Disconnect() end
@@ -1445,43 +1370,39 @@ do
             local dir = computeDir(hum, workspace.CurrentCamera)
             if not dir then return end
             local newVel = dir * mag
-            if isLinear then
-                pcall(function() av.VectorVelocity = newVel end)
-            else
-                pcall(function() av.Force = newVel end)
-            end
+            if isLinear then pcall(function() av.VectorVelocity = newVel end)
+            else pcall(function() av.Force = newVel end) end
         end)
     end
     toggleBase("滑铲变向（视角朝哪滑哪）", "slideSteer", false, function(v)
-        slideSteerEnabled = v
-        setup()
+        slideSteerEnabled = v; setup()
     end)
     local modeBtn = Instance.new("TextButton", basePage)
     modeBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 100)
     modeBtn.TextColor3 = Color3.new(1, 1, 1)
     modeBtn.Font = Enum.Font.GothamBold
-    modeBtn.TextSize = 11
-    modeBtn.Active = true
+    modeBtn.TextSize = 11; modeBtn.Active = true
+    modeBtn.Visible = false
     Instance.new("UICorner", modeBtn).CornerRadius = UDim.new(0, 5)
     reg(modeBtn, "slideSteerMode")
     local function refreshModeText()
         modeBtn.Text = (slideSteerMode == "camera") and "变向模式: 视角控制" or "变向模式: 移动控制"
         modeBtn.BackgroundColor3 = (slideSteerMode == "camera")
-            and Color3.fromRGB(60, 60, 100)
-            or Color3.fromRGB(150, 80, 60)
+            and Color3.fromRGB(60, 60, 100) or Color3.fromRGB(150, 80, 60)
     end
     bindTap(modeBtn, function()
         slideSteerMode = (slideSteerMode == "camera") and "move" or "camera"
         refreshModeText()
     end)
     refreshModeText()
-    lp.CharacterAdded:Connect(function()
-        wait(2)
-        if slideSteerEnabled then setup() end
-    end)
-    table.insert(cleanupFns, function()
-        if steerLoop then pcall(function() steerLoop:Disconnect() end) end
-    end)
+    _G._ExamSetters.slideSteerMode = function(v)
+        if v == 1 then slideSteerMode = "camera"
+        elseif v == 2 then slideSteerMode = "move" end
+        refreshModeText()
+    end
+    _G._ExamStates.slideSteerMode = 1
+    lp.CharacterAdded:Connect(function() wait(2); if slideSteerEnabled then setup() end end)
+    table.insert(cleanupFns, function() if steerLoop then pcall(function() steerLoop:Disconnect() end) end end)
 end
 
 -- ============ 模块 7: 无限电量夜视仪 ============
@@ -1566,8 +1487,7 @@ do
         unbindBattery()
         local char = lp.Character
         if char and _G._InfNVG_AddedCloaker then
-            local c = char:FindFirstChild("IsCloaker")
-            if c then c:Destroy() end
+            local c = char:FindFirstChild("IsCloaker"); if c then c:Destroy() end
         end
         local pg = lp:FindFirstChild("PlayerGui")
         if pg then
@@ -1592,25 +1512,19 @@ do
                 end
             end
         end
-        _G._InfNVG_AddedCloaker = nil
-        _G._InfNVG_OrigPercentText = nil
-        _G._InfNVG_OrigBarSize = nil
+        _G._InfNVG_AddedCloaker = nil; _G._InfNVG_OrigPercentText = nil; _G._InfNVG_OrigBarSize = nil
     end
     local function setup()
         if not nvgEnabled then stopRestore(); return end
         hookBadges(); bindBattery(); makeCloaker(); startLoop()
     end
     toggleBase("无限电量夜视仪", "nvg", false, function(v)
-        nvgEnabled = v
-        setup()
+        nvgEnabled = v; setup()
     end)
     lp.CharacterAdded:Connect(function()
         wait(1)
         if nvgEnabled then
-            unbindBattery()
-            _G._InfNVG_OrigPercentText = nil
-            _G._InfNVG_OrigBarSize = nil
-            setup()
+            unbindBattery(); _G._InfNVG_OrigPercentText = nil; _G._InfNVG_OrigBarSize = nil; setup()
         end
     end)
     table.insert(cleanupFns, function()
@@ -1626,9 +1540,7 @@ do
     local keywords = {"elephant","lookatme","playerdiedbylooking","diedbylooking"}
     local function match(name)
         local lower = name:lower()
-        for _, kw in ipairs(keywords) do
-            if lower:find(kw, 1, true) then return true end
-        end
+        for _, kw in ipairs(keywords) do if lower:find(kw, 1, true) then return true end end
         return false
     end
     local disabledScripts = {}
@@ -1639,9 +1551,7 @@ do
         for _, d in ipairs(char:GetDescendants()) do
             if d:IsA("BaseScript") or d:IsA("LocalScript") or d:IsA("Script") then
                 if match(d.Name) and not d.Disabled then
-                    if disabledScripts[d] == nil then
-                        disabledScripts[d] = false
-                    end
+                    if disabledScripts[d] == nil then disabledScripts[d] = false end
                     local ok = pcall(function() d.Disabled = true end)
                     if ok then count = count + 1 end
                 end
@@ -1653,13 +1563,9 @@ do
     local function restoreScripts()
         local n = 0
         for s, orig in pairs(disabledScripts) do
-            if s and s.Parent then
-                pcall(function() s.Disabled = orig end)
-                n = n + 1
-            end
+            if s and s.Parent then pcall(function() s.Disabled = orig end); n = n + 1 end
         end
-        disabledScripts = {}
-        _G._ElephantImmune_DisabledScripts = nil
+        disabledScripts = {}; _G._ElephantImmune_DisabledScripts = nil
         return n
     end
     local killParts = {}
@@ -1668,38 +1574,29 @@ do
         for kp, orig in pairs(killPartBackup) do
             if kp and kp.Parent then
                 pcall(function()
-                    kp.Size = orig.Size
-                    kp.CFrame = orig.CFrame
-                    kp.CanTouch = orig.CanTouch
-                    kp.CanCollide = orig.CanCollide
+                    kp.Size = orig.Size; kp.CFrame = orig.CFrame
+                    kp.CanTouch = orig.CanTouch; kp.CanCollide = orig.CanCollide
                 end)
             end
         end
-        killPartBackup = {}
-        killParts = {}
-        _G._KillPartBackup = nil
+        killPartBackup = {}; killParts = {}; _G._KillPartBackup = nil
     end
     local function neutralizeOne(kp)
         if not kp or not kp.Parent then return end
         if not killPartBackup[kp] then
-            killPartBackup[kp] = {
-                Size = kp.Size, CFrame = kp.CFrame,
-                CanTouch = kp.CanTouch, CanCollide = kp.CanCollide,
-            }
+            killPartBackup[kp] = { Size = kp.Size, CFrame = kp.CFrame, CanTouch = kp.CanTouch, CanCollide = kp.CanCollide }
         end
         pcall(function()
             kp.Size = Vector3.new(0.001, 0.001, 0.001)
             kp.CFrame = CFrame.new(99999, 99999, 99999)
-            kp.CanTouch = false
-            kp.CanCollide = false
+            kp.CanTouch = false; kp.CanCollide = false
         end)
     end
     local function killPartFullScan()
         killParts = {}
         batchScan(Workspace:GetDescendants(), function(d)
             if d:IsA("BasePart") and d.Name == "KillPart" then
-                table.insert(killParts, d)
-                neutralizeOne(d)
+                table.insert(killParts, d); neutralizeOne(d)
             end
         end, 200)
         _G._KillPartBackup = killPartBackup
@@ -1714,8 +1611,7 @@ do
                 local function scanOne(inst)
                     if inst:IsA("BasePart") and inst.Name == "KillPart" then
                         if not killPartBackup[inst] then
-                            table.insert(killParts, inst)
-                            neutralizeOne(inst)
+                            table.insert(killParts, inst); neutralizeOne(inst)
                         end
                     end
                 end
@@ -1736,103 +1632,75 @@ do
             if not elephantImmuneEnabled then return end
             local now = tick()
             if now - lastElephantScan < 0.5 then return end
-            lastElephantScan = now
-            disableScripts()
+            lastElephantScan = now; disableScripts()
         end)
     end
     local function setup()
         if elephantLoop then pcall(function() elephantLoop:Disconnect() end); elephantLoop = nil end
         if killPartScanLoop then killPartScanLoop = nil end
-        if not elephantImmuneEnabled then
-            killPartRestore()
-            restoreScripts()
-            return
-        end
-        disableScripts()
-        killPartFullScan()
-        startKillPartScan()
-        startElephantLoop()
+        if not elephantImmuneEnabled then killPartRestore(); restoreScripts(); return end
+        disableScripts(); killPartFullScan(); startKillPartScan(); startElephantLoop()
     end
     toggleBase("免疫象脚 + 致死区", "elephantImmune", false, function(v)
-        elephantImmuneEnabled = v
-        setup()
+        elephantImmuneEnabled = v; setup()
     end)
     lp.CharacterAdded:Connect(function()
         wait(1)
-        disabledScripts = {}
-        _G._ElephantImmune_DisabledScripts = nil
+        disabledScripts = {}; _G._ElephantImmune_DisabledScripts = nil
         if elephantImmuneEnabled then setup() end
     end)
     table.insert(cleanupFns, function()
         elephantImmuneEnabled = false
         if elephantLoop then elephantLoop:Disconnect() end
         if killPartScanLoop then killPartScanLoop = nil end
-        killPartRestore()
-        restoreScripts()
+        killPartRestore(); restoreScripts()
     end)
 end
 
--- ============ 模块 9: 快速换弹（无条件 2x） ============
+-- ============ 模块 9: 快速换弹 ============
 do
     local FR_TARGET_MULT = 2.0
     local frEnabled = false
     local frLoopToken = 0
     local frBackup = nil
-
     local function frCaptureBackup(char)
         if frBackup then return end
-        frBackup = {
-            Active = char:GetAttribute("SquadBuffActive"),
-            Reload = char:GetAttribute("SquadReloadSpeedMultiplier"),
-        }
+        frBackup = { Active = char:GetAttribute("SquadBuffActive"), Reload = char:GetAttribute("SquadReloadSpeedMultiplier") }
     end
-
     local function frPush()
         local char = lp.Character
         if not char then return end
         pcall(function() char:SetAttribute("SquadBuffActive", true) end)
         pcall(function() char:SetAttribute("SquadReloadSpeedMultiplier", FR_TARGET_MULT) end)
     end
-
     local function frRestore()
         local char = lp.Character
         if not char or not frBackup then return end
         if frBackup.Active ~= nil then
             pcall(function() char:SetAttribute("SquadBuffActive", frBackup.Active) end)
-        else
-            pcall(function() char:SetAttribute("SquadBuffActive", nil) end)
-        end
+        else pcall(function() char:SetAttribute("SquadBuffActive", nil) end) end
         if frBackup.Reload ~= nil then
             pcall(function() char:SetAttribute("SquadReloadSpeedMultiplier", frBackup.Reload) end)
-        else
-            pcall(function() char:SetAttribute("SquadReloadSpeedMultiplier", nil) end)
-        end
+        else pcall(function() char:SetAttribute("SquadReloadSpeedMultiplier", nil) end) end
         frBackup = nil
     end
-
     local function frStartLoop()
         frLoopToken = frLoopToken + 1
         local my = frLoopToken
         spawn(function()
             while frEnabled and gui.Parent and frLoopToken == my do
-                frPush()
-                wait(0.15)
+                frPush(); wait(0.15)
             end
         end)
     end
-
     toggleBase("快速换弹", "fastReload", false, function(v)
         frEnabled = v
         if v then
             local char = lp.Character
             if char then frCaptureBackup(char) end
             frStartLoop()
-        else
-            frLoopToken = frLoopToken + 1
-            frRestore()
-        end
+        else frLoopToken = frLoopToken + 1; frRestore() end
     end)
-
     lp.CharacterAdded:Connect(function()
         wait(1.5)
         if frEnabled then
@@ -1842,11 +1710,8 @@ do
             frStartLoop()
         end
     end)
-
     table.insert(cleanupFns, function()
-        frEnabled = false
-        frLoopToken = frLoopToken + 1
-        frRestore()
+        frEnabled = false; frLoopToken = frLoopToken + 1; frRestore()
     end)
 end
 
@@ -1905,9 +1770,7 @@ do
         local ok1, near = pcall(function() return Workspace:GetPartBoundsInRadius(fpPos, 0.05, overlapParams) end)
         if ok1 and near then
             for _, p in ipairs(near) do
-                if p:IsA("BasePart") and p ~= supportPart and isPointInPart(fpPos, p) then
-                    walls[p] = true
-                end
+                if p:IsA("BasePart") and p ~= supportPart and isPointInPart(fpPos, p) then walls[p] = true end
             end
         end
         if not fpBelow then
@@ -1950,8 +1813,7 @@ do
         end)
     end
     toggleBase("去除枪口遮挡", "muzzle", false, function(v)
-        muzzleEnabled = v
-        setup()
+        muzzleEnabled = v; setup()
     end)
     lp.CharacterAdded:Connect(function()
         wait(1)
@@ -1975,9 +1837,7 @@ do
         if type(v) ~= "table" then return false end
         if rawget(v, "_position0") or rawget(v, "_velocity0")
            or rawget(v, "_damper") or rawget(v, "_speed")
-           or rawget(v, "Accelerate") then
-            return true
-        end
+           or rawget(v, "Accelerate") then return true end
         return false
     end
     local function patchMetatable(mt)
@@ -1987,13 +1847,11 @@ do
         local hit = false
         local acc = rawget(mt, "Accelerate")
         if type(acc) == "function" and acc ~= NOOP then
-            pcall(function() rawset(mt, "Accelerate", NOOP) end)
-            hit = true
+            pcall(function() rawset(mt, "Accelerate", NOOP) end); hit = true
         end
         local pv = rawget(mt, "_positionVelocity")
         if type(pv) == "function" then
-            pcall(function() rawset(mt, "_positionVelocity", function() return ZERO_V3, ZERO_V3 end) end)
-            hit = true
+            pcall(function() rawset(mt, "_positionVelocity", function() return ZERO_V3, ZERO_V3 end) end); hit = true
         end
         local oi = rawget(mt, "__index")
         if type(oi) == "function" then
@@ -2006,18 +1864,15 @@ do
                 end
                 return oi(self, key)
             end
-            pcall(function() rawset(mt, "__index", newIndex) end)
-            hit = true
+            pcall(function() rawset(mt, "__index", newIndex) end); hit = true
         elseif type(oi) == "table" and oi ~= mt then
             local a2 = rawget(oi, "Accelerate")
             if type(a2) == "function" and a2 ~= NOOP then
-                pcall(function() rawset(oi, "Accelerate", NOOP) end)
-                hit = true
+                pcall(function() rawset(oi, "Accelerate", NOOP) end); hit = true
             end
             local pv2 = rawget(oi, "_positionVelocity")
             if type(pv2) == "function" then
-                pcall(function() rawset(oi, "_positionVelocity", function() return ZERO_V3, ZERO_V3 end) end)
-                hit = true
+                pcall(function() rawset(oi, "_positionVelocity", function() return ZERO_V3, ZERO_V3 end) end); hit = true
             end
             local oi2 = rawget(oi, "__index")
             if type(oi2) == "function" then
@@ -2030,8 +1885,7 @@ do
                     end
                     return oi2(self, key)
                 end
-                pcall(function() rawset(oi, "__index", newIndex2) end)
-                hit = true
+                pcall(function() rawset(oi, "__index", newIndex2) end); hit = true
             end
         end
         return hit
@@ -2042,9 +1896,7 @@ do
         if not isSpringLike(inst) then return false end
         recoilPatchedInsts[inst] = true
         local acc = rawget(inst, "Accelerate")
-        if type(acc) == "function" and acc ~= NOOP then
-            pcall(function() rawset(inst, "Accelerate", NOOP) end)
-        end
+        if type(acc) == "function" and acc ~= NOOP then pcall(function() rawset(inst, "Accelerate", NOOP) end) end
         local pv = rawget(inst, "_positionVelocity")
         if type(pv) == "function" then
             pcall(function() rawset(inst, "_positionVelocity", function() return ZERO_V3, ZERO_V3 end) end)
@@ -2076,10 +1928,7 @@ do
         end)
     end
     local function stopZeroLoop()
-        if recoilZeroLoop then
-            pcall(function() recoilZeroLoop:Disconnect() end)
-            recoilZeroLoop = nil
-        end
+        if recoilZeroLoop then pcall(function() recoilZeroLoop:Disconnect() end); recoilZeroLoop = nil end
     end
     local recoilSpringModule = nil
     local recoilSpring2Module = nil
@@ -2093,10 +1942,7 @@ do
         local newFn = rawget(m, "new")
         if type(newFn) ~= "function" then
             local sp = rawget(m, "spring")
-            if type(sp) == "table" then
-                container = sp
-                newFn = rawget(sp, "new")
-            end
+            if type(sp) == "table" then container = sp; newFn = rawget(sp, "new") end
         end
         if type(newFn) ~= "function" then return end
         if label == "Spring" then
@@ -2136,20 +1982,14 @@ do
         end
         hookModule({"Assets","Modules","Spring"}, "Spring")
         hookModule({"Assets","Modules","Spring2"}, "Spring2")
-        rescan()
-        startZeroLoop()
+        rescan(); startZeroLoop()
     end
     toggleBase("无后坐力", "recoil", false, function(v)
-        recoilEnabled = v
-        setup()
+        recoilEnabled = v; setup()
     end)
-    lp.CharacterAdded:Connect(function()
-        wait(1)
-        if recoilEnabled then rescan() end
-    end)
+    lp.CharacterAdded:Connect(function() wait(1); if recoilEnabled then rescan() end end)
     table.insert(cleanupFns, function()
-        recoilEnabled = false
-        stopZeroLoop()
+        recoilEnabled = false; stopZeroLoop()
     end)
 end
 
@@ -2179,8 +2019,7 @@ do
         end)
     end
     local function stopGuard()
-        chatForceEnabled = false
-        chatForceThread = nil
+        chatForceEnabled = false; chatForceThread = nil
         if chatForceConn then pcall(function() chatForceConn:Disconnect() end); chatForceConn = nil end
         local cfg = getCfg()
         if cfg and chatForceOrig ~= nil then cfg.Enabled = chatForceOrig end
@@ -2197,16 +2036,14 @@ do
     table.insert(cleanupFns, function() stopGuard() end)
 end
 
--- ============ 模块 14: 强制爆头 ============
+-- ============ 模块 14: 强制爆头（与魔法子弹互斥） ============
 do
     local fhHookInstalled = false
     local fhOrigInvoke = nil
     local fhNetwork = nil
     do
         local m = ReplicatedStorage
-        for _, seg in ipairs({"Assets","Modules","Network"}) do
-            m = m and m:FindFirstChild(seg)
-        end
+        for _, seg in ipairs({"Assets","Modules","Network"}) do m = m and m:FindFirstChild(seg) end
         if m then
             local ok, r = pcall(require, m)
             if ok and type(r) == "table" then fhNetwork = r end
@@ -2233,8 +2070,7 @@ do
             if typeof(fp) == "Vector3" then normal = (head.Position - fp).Unit
             else normal = Vector3.new(0, 1, 0) end
         end
-        hitData[2] = head
-        hitData[3] = head.Position
+        hitData[2] = head; hitData[3] = head.Position
         if camPos then hitData[5] = camPos end
         local root = hum.RootPart or char:FindFirstChild("HumanoidRootPart")
         if root then
@@ -2262,24 +2098,22 @@ do
     local function uninstallFH()
         if not fhHookInstalled then return end
         fhHookInstalled = false
-        if fhNetwork and fhOrigInvoke then
-            pcall(function() fhNetwork.InvokeServer = fhOrigInvoke end)
-        end
+        if fhNetwork and fhOrigInvoke then pcall(function() fhNetwork.InvokeServer = fhOrigInvoke end) end
         fhOrigInvoke = nil
     end
     local fhBtn, fhSetState = toggleBase("强制爆头", "forceHeadshot", false, function(v)
         forceHeadshotEnabled = v
         if v then
             installFH()
-            if _G._ExamMB and _G._ExamMB.magicOffFn then
-                pcall(_G._ExamMB.magicOffFn)
-            end
-        else
-            uninstallFH()
-        end
+            if _G._ExamMB and _G._ExamMB.magicOffFn then pcall(_G._ExamMB.magicOffFn) end
+        else uninstallFH() end
     end)
     _G._ExamFH.forceOffFn = function()
         if fhSetState then pcall(function() fhSetState(false) end) end
+        _G._ExamStates.forceHeadshot = false
+        if _G._CP_RefreshFns and _G._CP_RefreshFns.forceHeadshot then
+            pcall(_G._CP_RefreshFns.forceHeadshot)
+        end
     end
     table.insert(cleanupFns, function() uninstallFH() end)
 end
@@ -2290,9 +2124,7 @@ do
     local qteInputRemote = nil
     do
         local m = ReplicatedStorage
-        for _, seg in ipairs({"Assets","Modules","QTEManager"}) do
-            m = m and m:FindFirstChild(seg)
-        end
+        for _, seg in ipairs({"Assets","Modules","QTEManager"}) do m = m and m:FindFirstChild(seg) end
         if m then
             local ok, r = pcall(require, m)
             if ok and type(r) == "table" then qteModule = r end
@@ -2332,8 +2164,7 @@ do
         qteConn = qteInputRemote.OnClientEvent:Connect(onQTEInput)
     end
     toggleBase("自动 QTE", "autoQTE", false, function(v)
-        autoQTEEnabled = v
-        setup()
+        autoQTEEnabled = v; setup()
     end)
     table.insert(cleanupFns, function()
         if qteConn then pcall(function() qteConn:Disconnect() end) end
@@ -2361,9 +2192,7 @@ do
             local an = t.Animation
             if an then
                 local id = tostring(an.AnimationId or ""):match("%d+")
-                if id and SHOTGUN_PUMP_IDS[id] then
-                    pcall(function() t:AdjustSpeed(1) end)
-                end
+                if id and SHOTGUN_PUMP_IDS[id] then pcall(function() t:AdjustSpeed(1) end) end
             end
         end
     end
@@ -2377,24 +2206,18 @@ do
         if not animator then return end
         animatorConn = animator.AnimationPlayed:Connect(function(track)
             if not shotgunNoPumpEnabled then return end
-            if isTargetAnim(track) then
-                pcall(function() track:AdjustSpeed(SHOTGUN_SPEED_MULT) end)
-            end
+            if isTargetAnim(track) then pcall(function() track:AdjustSpeed(SHOTGUN_SPEED_MULT) end) end
         end)
     end
     toggleBase("霰弹枪连发", "shotgunNoPump", false, function(v)
         shotgunNoPumpEnabled = v
-        if v then
-            setupAnimator()
+        if v then setupAnimator()
         else
             if animatorConn then pcall(function() animatorConn:Disconnect() end); animatorConn = nil end
             pcall(restoreTracks)
         end
     end)
-    lp.CharacterAdded:Connect(function()
-        wait(1)
-        if shotgunNoPumpEnabled then setupAnimator() end
-    end)
+    lp.CharacterAdded:Connect(function() wait(1); if shotgunNoPumpEnabled then setupAnimator() end end)
     table.insert(cleanupFns, function()
         shotgunNoPumpEnabled = false
         if animatorConn then pcall(function() animatorConn:Disconnect() end) end
@@ -2413,7 +2236,6 @@ do
     local trySlideHooked = false
     local pushLoop = nil
     local hudLoop = nil
-
     local function findPostureFrame()
         local pg = lp:FindFirstChild("PlayerGui")
         if not pg then return nil end
@@ -2423,7 +2245,6 @@ do
         if posture and posture:IsA("GuiObject") then return posture end
         return nil
     end
-
     local function pushAttrs()
         local char = lp.Character
         if not char then return end
@@ -2432,32 +2253,23 @@ do
         for _, t in ipairs(char:GetChildren()) do
             if t:IsA("Tool") then
                 local ok, v = pcall(function() return t:GetAttribute("RiotShieldTool") end)
-                if ok and v == true then
-                    pcall(function() t:SetAttribute("RiotShieldTool", false) end)
-                end
+                if ok and v == true then pcall(function() t:SetAttribute("RiotShieldTool", false) end) end
             end
         end
     end
-
     local function startPush()
         if pushLoop then return end
         pushLoop = spawn(function()
             while shieldFixEnabled and gui.Parent do
-                pcall(pushAttrs)
-                wait(0.05)
+                pcall(pushAttrs); wait(0.05)
             end
             pushLoop = nil
         end)
     end
-
     local function stopPush() pushLoop = nil end
-
     local function hookBadge()
         if badgeHooked or not hookfunction then return end
-        if _G._shieldFixOrigBadge then
-            badgeHooked = true
-            return
-        end
+        if _G._shieldFixOrigBadge then badgeHooked = true; return end
         origBadgeAsync = BadgeService.UserHasBadgeAsync
         local ok = pcall(function()
             hookfunction(BadgeService.UserHasBadgeAsync, function(self, uid, bid)
@@ -2465,15 +2277,10 @@ do
                 return origBadgeAsync(self, uid, bid)
             end)
         end)
-        if ok then
-            badgeHooked = true
-            _G._shieldFixOrigBadge = origBadgeAsync
-        end
+        if ok then badgeHooked = true; _G._shieldFixOrigBadge = origBadgeAsync end
     end
-
     local function findSlideFns()
-        trySlideFn = nil
-        startSlideFn = nil
+        trySlideFn = nil; startSlideFn = nil
         if not getgc or not getinfo then return false end
         local ok, gc = pcall(function() return getgc(true) end)
         if not ok or type(gc) ~= "table" then return false end
@@ -2484,18 +2291,14 @@ do
                     local s = (info.source or ""):lower()
                     if s:find("movementcontroller", 1, true) then
                         local n = info.name or ""
-                        if n == "TrySlide" and not trySlideFn then
-                            trySlideFn = v
-                        elseif n == "StartSlide" and not startSlideFn then
-                            startSlideFn = v
-                        end
+                        if n == "TrySlide" and not trySlideFn then trySlideFn = v
+                        elseif n == "StartSlide" and not startSlideFn then startSlideFn = v end
                     end
                 end
             end
         end
         return trySlideFn ~= nil and startSlideFn ~= nil
     end
-
     local function hookTrySlide()
         if trySlideHooked then return end
         if not trySlideFn or not startSlideFn then
@@ -2505,9 +2308,7 @@ do
         origTrySlideFn = trySlideFn
         local ok = pcall(function()
             hookfunction(trySlideFn, function(...)
-                if not shieldFixEnabled then
-                    return origTrySlideFn(...)
-                end
+                if not shieldFixEnabled then return origTrySlideFn(...) end
                 local char = lp.Character
                 if not char then return false end
                 local hum = char:FindFirstChildOfClass("Humanoid")
@@ -2524,7 +2325,6 @@ do
             _G._shieldFixStartSlide = startSlideFn
         end
     end
-
     local function restoreTrySlide()
         if trySlideHooked and origTrySlideFn and hookfunction then
             pcall(function() hookfunction(origTrySlideFn, origTrySlideFn) end)
@@ -2534,7 +2334,6 @@ do
         _G._shieldFixOrigTrySlide = nil
         _G._shieldFixStartSlide = nil
     end
-
     local function startHudFix()
         if hudLoop then return end
         hudLoop = spawn(function()
@@ -2555,41 +2354,21 @@ do
             hudLoop = nil
         end)
     end
-
     local function stopHudFix() hudLoop = nil end
-
     local function setup()
         if shieldFixEnabled then
-            hookBadge()
-            findSlideFns()
-            hookTrySlide()
-            startPush()
-            startHudFix()
-        else
-            stopPush()
-            stopHudFix()
-            restoreTrySlide()
-        end
+            hookBadge(); findSlideFns(); hookTrySlide(); startPush(); startHudFix()
+        else stopPush(); stopHudFix(); restoreTrySlide() end
     end
-
     toggleBase("修复盾牌滑铲/疾跑", "shieldSlide", false, function(v)
-        shieldFixEnabled = v
-        setup()
+        shieldFixEnabled = v; setup()
     end)
-
     lp.CharacterAdded:Connect(function()
         wait(1)
-        if shieldFixEnabled then
-            findSlideFns()
-            hookTrySlide()
-        end
+        if shieldFixEnabled then findSlideFns(); hookTrySlide() end
     end)
-
     table.insert(cleanupFns, function()
-        shieldFixEnabled = false
-        stopPush()
-        stopHudFix()
-        restoreTrySlide()
+        shieldFixEnabled = false; stopPush(); stopHudFix(); restoreTrySlide()
     end)
 end
 
@@ -2608,9 +2387,7 @@ do
         local count = 0
         for _, d in ipairs(vm:GetDescendants()) do
             if d:IsA("BasePart") then
-                if tracked[d] == nil then
-                    tracked[d] = d.Transparency
-                end
+                if tracked[d] == nil then tracked[d] = d.Transparency end
                 if tracked[d] < 0.95 then
                     if math.abs(d.Transparency - shieldVMAlpha) > 0.01 then
                         pcall(function() d.Transparency = shieldVMAlpha end)
@@ -2623,9 +2400,7 @@ do
     end
     local function restoreAll()
         for p, orig in pairs(tracked) do
-            if p and p.Parent then
-                pcall(function() p.Transparency = orig end)
-            end
+            if p and p.Parent then pcall(function() p.Transparency = orig end) end
         end
         tracked = {}
     end
@@ -2657,15 +2432,11 @@ do
         shieldVMEnabled = v
         if v then
             local vm = getViewmodel()
-            if vm then
-                lastVM = vm
-                applyToVM(vm)
-            end
+            if vm then lastVM = vm; applyToVM(vm) end
             startScanLoop()
         else
             if scanLoop then scanLoop:Disconnect(); scanLoop = nil end
-            restoreAll()
-            lastVM = nil
+            restoreAll(); lastVM = nil
         end
     end)
     local alphaLabel = Instance.new("TextLabel", basePage)
@@ -2674,12 +2445,14 @@ do
     alphaLabel.TextColor3 = Color3.new(0.9, 0.9, 0.9)
     alphaLabel.Font = Enum.Font.Gotham; alphaLabel.TextSize = 11
     alphaLabel.TextXAlignment = Enum.TextXAlignment.Left
+    alphaLabel.Visible = false
     reg(alphaLabel, "shieldAlphaLabel")
     local alphaInput = Instance.new("TextBox", basePage)
     alphaInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
     alphaInput.TextColor3 = Color3.new(1, 1, 1)
     alphaInput.Text = string.format("%.2f", shieldVMAlpha)
     alphaInput.Font = Enum.Font.Gotham; alphaInput.TextSize = 11; alphaInput.BorderSizePixel = 0
+    alphaInput.Visible = false
     Instance.new("UICorner", alphaInput).CornerRadius = UDim.new(0, 4)
     reg(alphaInput, "shieldAlphaInput")
     alphaInput.FocusLost:Connect(function()
@@ -2691,20 +2464,23 @@ do
                 local vm = getViewmodel()
                 if vm then applyToVM(vm) end
             end
-        else
-            alphaInput.Text = string.format("%.2f", shieldVMAlpha)
-        end
+        else alphaInput.Text = string.format("%.2f", shieldVMAlpha) end
     end)
+    _G._ExamSetters.shieldVMAlpha = function(v)
+        if type(v) == "number" and v >= 0 and v <= 0.99 then
+            shieldVMAlpha = v; alphaInput.Text = string.format("%.2f", v)
+            if shieldVMEnabled then
+                local vm = getViewmodel()
+                if vm then applyToVM(vm) end
+            end
+        end
+    end
+    _G._ExamStates.shieldVMAlpha = shieldVMAlpha
     lp.CharacterAdded:Connect(function()
-        wait(1)
-        tracked = {}
-        lastVM = nil
+        wait(1); tracked = {}; lastVM = nil
         if shieldVMEnabled then
             local vm = getViewmodel()
-            if vm then
-                lastVM = vm
-                applyToVM(vm)
-            end
+            if vm then lastVM = vm; applyToVM(vm) end
         end
     end)
     table.insert(cleanupFns, function()
@@ -2714,20 +2490,18 @@ do
     end)
 end
 
--- ============ 模块 16.7: 无滑铲冷却（有bug慎用） ============
+-- ============ 模块 16.7: 无滑铲冷却 ============
 do
     local humConn = nil
     local keyConn = nil
     local slideGen = 0
     local lastKeyTick = 0
-
     local function refreshCDNow()
         local char = lp.Character
         if not char then return end
         noCDActiveUntil = tick() + 0.15
         pcall(function() char:SetAttribute("RiotShieldEquipped", true) end)
     end
-
     local function bindHum()
         if humConn then pcall(function() humConn:Disconnect() end); humConn = nil end
         local char = lp.Character
@@ -2753,7 +2527,6 @@ do
             end
         end)
     end
-
     local function bindKeyboard()
         if keyConn then pcall(function() keyConn:Disconnect() end); keyConn = nil end
         keyConn = UserInputService.InputBegan:Connect(function(input, gpe)
@@ -2778,107 +2551,50 @@ do
             end)
         end)
     end
-
     spawn(function()
         while gui.Parent do
             wait(0.05)
             if noCDEnabled and noCDActiveUntil > 0 and noCDActiveUntil <= tick() then
                 local char = lp.Character
-                if char then
-                    pcall(function() char:SetAttribute("RiotShieldEquipped", false) end)
-                end
+                if char then pcall(function() char:SetAttribute("RiotShieldEquipped", false) end) end
                 noCDActiveUntil = 0
             end
         end
     end)
-
     toggleBase("实验型无滑铲冷却（会导致盾牌无法防御和其他bug）", "noCD", false, function(v)
         noCDEnabled = v
         if v then
-            bindHum()
-            bindKeyboard()
-            refreshCDNow()
+            bindHum(); bindKeyboard(); refreshCDNow()
         else
             noCDActiveUntil = 0
             if humConn then pcall(function() humConn:Disconnect() end); humConn = nil end
             if keyConn then pcall(function() keyConn:Disconnect() end); keyConn = nil end
             local char = lp.Character
-            if char then
-                pcall(function() char:SetAttribute("RiotShieldEquipped", false) end)
-            end
+            if char then pcall(function() char:SetAttribute("RiotShieldEquipped", false) end) end
         end
     end)
-
     lp.CharacterAdded:Connect(function()
         wait(1)
-        if noCDEnabled then
-            bindHum()
-            bindKeyboard()
-            refreshCDNow()
-        end
+        if noCDEnabled then bindHum(); bindKeyboard(); refreshCDNow() end
     end)
-
     table.insert(cleanupFns, function()
-        noCDEnabled = false
-        noCDActiveUntil = 0
+        noCDEnabled = false; noCDActiveUntil = 0
         if humConn then pcall(function() humConn:Disconnect() end) end
         if keyConn then pcall(function() keyConn:Disconnect() end) end
         local char = lp.Character
-        if char then
-            pcall(function() char:SetAttribute("RiotShieldEquipped", false) end)
-        end
+        if char then pcall(function() char:SetAttribute("RiotShieldEquipped", false) end) end
     end)
 end
--- ============ 布局切换按钮 ============
+
+-- ============ 布局切换按钮（隐藏） ============
 local layoutSwitchBtn = Instance.new("TextButton", basePage)
 layoutSwitchBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 100)
 layoutSwitchBtn.TextColor3 = Color3.new(1, 1, 1)
 layoutSwitchBtn.Font = Enum.Font.GothamBold
-layoutSwitchBtn.TextSize = 12
-layoutSwitchBtn.Active = true
+layoutSwitchBtn.TextSize = 12; layoutSwitchBtn.Active = true
+layoutSwitchBtn.Visible = false
 Instance.new("UICorner", layoutSwitchBtn).CornerRadius = UDim.new(0, 5)
 reg(layoutSwitchBtn, "layoutSwitch")
-
-local isCollapsed = false
-local function applyLayout(layout)
-    currentLayout = layout
-    local L = LAYOUT[layout]
-    titleBar.Size = UDim2.new(1, 0, 0, L.TitleH)
-    tabBar.Position = UDim2.new(0, 15, 0, L.TabY)
-    basePage.Size = UDim2.new(1, 0, 1, -L.PageTop)
-    basePage.Position = UDim2.new(0, 0, 0, L.PageTop)
-    magicPage.Size = UDim2.new(1, 0, 1, -L.PageTop)
-    magicPage.Position = UDim2.new(0, 0, 0, L.PageTop)
-    radarPage.Size = UDim2.new(1, 0, 1, -L.PageTop)
-    radarPage.Position = UDim2.new(0, 0, 0, L.PageTop)
-    for g, key in pairs(regControls) do
-        if g.Parent then
-            local info = L.items[key]
-            if info then
-                g.Position = info.p
-                g.Size = info.s
-            end
-        end
-    end
-    local h = getTabHeight()
-    if isCollapsed then
-        main.Size = UDim2.new(0, L.W, 0, L.TitleH)
-    else
-        main.Size = UDim2.new(0, L.W, 0, h)
-    end
-    main.Position = UDim2.new(0.5, -L.W/2, 0.5, -h/2)
-    layoutSwitchBtn.Text = (layout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-    title.Text = "Examination v16.7.17 - " .. (layout == "mobile" and "手机" or "电脑")
-    if _G._ExamInvalidateDragCache then _G._ExamInvalidateDragCache() end
-end
-
-bindTap(layoutSwitchBtn, function()
-    local nextLayout = (currentLayout == "mobile") and "desktop" or "mobile"
-    applyLayout(nextLayout)
-end)
-
-layoutSwitchBtn.Text = (currentLayout == "mobile") and "切换为电脑UI" or "切换为手机UI"
-title.Text = "Examination v16.7.17 - " .. (currentLayout == "mobile" and "手机" or "电脑")
 
 -- ============ 右下角提示系统 ============
 local tipGui = Instance.new("ScreenGui")
@@ -2916,7 +2632,7 @@ local function showCountdownTip(msg, duration)
     if tipToken == myToken then tipLbl.Visible = false end
 end
 
--- ============ 模块 17: 魔法子弹 + 自动开火（IIFE 合并版） ============
+-- ============ 模块 17: 魔法子弹 + 自动开火（与强制爆头互斥） ============
 (function()
     local mbAimPartIndex = 1
     local mbFovRadius = 200
@@ -2927,7 +2643,6 @@ end
     local mbRequireVisible = true
     local mbShowFovCircle = true
     local mbOnlyWhenLocked = true
-
     local autoFireEnabled = false
     local conns = {}
     local fireCount = 0
@@ -2937,7 +2652,6 @@ end
     local reloadWindowEnd = 0
     local emergencyCooldownUntil = 0
     local qteLockUntil = 0
-
     local mbShowRadiusCircle = false
     local radiusMode = "line"
     local RADIUS_LIMIT = 500
@@ -2945,19 +2659,16 @@ end
     local radiusRingParts = {}
     local radiusFacePart = nil
     local wasTooLarge = false
-
     local autoFireBtn = nil
     local clipMaxByTool = {}
     local clipMaxTickByTool = {}
     local EMERGENCY_SKIP_RATIO = 0.7
     local CLIP_MAX_TTL = 30
-
     local function getTool()
         local char = lp.Character
         if not char then return nil end
         return char:FindFirstChildWhichIsA("Tool")
     end
-
     local function getClip()
         local tool = getTool()
         if not tool then return nil end
@@ -2988,7 +2699,6 @@ end
         end
         return n
     end
-
     local function isReloading()
         local tool = getTool()
         if not tool then return nil end
@@ -2996,7 +2706,6 @@ end
         if not ok then return nil end
         return v
     end
-
     local _busyCache = {}
     local BUSY_CACHE_TTL = 0.15
     local function isBusy(m)
@@ -3008,18 +2717,9 @@ end
         _busyCache[m] = { v = v, t = now }
         return v
     end
-
-    local LOW_PRIORITY_NAMES = {
-        GrabbyMutant = true,
-    }
-    local function isLowPriority(m)
-        return m and LOW_PRIORITY_NAMES[m.Name] == true
-    end
-
-    local DORMANT_NAMES = {
-        Leaper = true,
-        SIN = true,
-    }
+    local LOW_PRIORITY_NAMES = { GrabbyMutant = true }
+    local function isLowPriority(m) return m and LOW_PRIORITY_NAMES[m.Name] == true end
+    local DORMANT_NAMES = { Leaper = true, SIN = true }
     local function isDormant(m)
         if not m or not DORMANT_NAMES[m.Name] then return false end
         local ca = m:FindFirstChild("CanAttack")
@@ -3028,7 +2728,6 @@ end
         if not ok then return true end
         return v ~= true
     end
-
     local BOSS_DOWNED_NAMES = {
         SIN = true, Chimera = true, Gilbert = true,
         Riser = true, Riser1 = true, Riser2 = true, Riser3 = true, Riser4 = true, Riser5 = true,
@@ -3053,7 +2752,6 @@ end
         if hum.PlatformStand == true then return true end
         return false
     end
-
     local function scanConnsFresh()
         local Mouse = lp:GetMouse()
         if not Mouse or not getconnections then return end
@@ -3063,9 +2761,7 @@ end
         for _, c in ipairs(list) do
             local fn = nil
             pcall(function() fn = c.Function end)
-            if type(fn) ~= "function" then
-                pcall(function() fn = c["function"] end)
-            end
+            if type(fn) ~= "function" then pcall(function() fn = c["function"] end) end
             if type(fn) == "function" and getinfo then
                 local ok2, info = pcall(getinfo, fn)
                 if ok2 and type(info) == "table" then
@@ -3078,7 +2774,6 @@ end
         end
         if #newConns > 0 then conns = newConns end
     end
-
     local function releaseFire()
         local tool = getTool()
         if not tool then return end
@@ -3090,15 +2785,12 @@ end
                 for _, c in ipairs(list) do
                     local fn = nil
                     pcall(function() fn = c.Function end)
-                    if type(fn) ~= "function" then
-                        pcall(function() fn = c["function"] end)
-                    end
+                    if type(fn) ~= "function" then pcall(function() fn = c["function"] end) end
                     if type(fn) == "function" then pcall(fn) end
                 end
             end
         end
     end
-
     local function doFireOnce(isEmergency)
         local tool = getTool()
         if not tool then return false, "无工具" end
@@ -3115,16 +2807,12 @@ end
         for _, e in ipairs(conns) do
             local fn = nil
             pcall(function() fn = e.conn.Function end)
-            if type(fn) == "function" then
-                pcall(fn)
-                fired = fired + 1
-            end
+            if type(fn) == "function" then pcall(fn); fired = fired + 1 end
         end
         releaseFire()
         if isEmergency then return true, "紧急开火!" end
         return true, "开火"
     end
-
     local AIM_PARTS = {
         { name = "Head",      label = "头部" },
         { name = "Torso",     label = "躯干" },
@@ -3139,9 +2827,7 @@ end
         if not info then return model:FindFirstChild("Head") end
         local name = info.name
         if name == "Head" then return model:FindFirstChild("Head") end
-        if name == "Torso" then
-            return model:FindFirstChild("UpperTorso") or model:FindFirstChild("Torso")
-        end
+        if name == "Torso" then return model:FindFirstChild("UpperTorso") or model:FindFirstChild("Torso") end
         local aliases = {
             ["Left Arm"]  = { "LeftUpperArm", "Left Arm" },
             ["Right Arm"] = { "RightUpperArm", "Right Arm" },
@@ -3157,13 +2843,10 @@ end
         end
         return model:FindFirstChild(name)
     end
-
     local mbNetwork = nil
     do
         local m = ReplicatedStorage
-        for _, seg in ipairs({"Assets","Modules","Network"}) do
-            m = m and m:FindFirstChild(seg)
-        end
+        for _, seg in ipairs({"Assets","Modules","Network"}) do m = m and m:FindFirstChild(seg) end
         if m then
             local ok, r = pcall(require, m)
             if ok and type(r) == "table" then mbNetwork = r end
@@ -3173,7 +2856,6 @@ end
     for _, seg in ipairs({"Assets","Modules","Raycast"}) do
         mbRaycastPath = mbRaycastPath and mbRaycastPath:FindFirstChild(seg)
     end
-
     local function isAlive(m)
         if not m or not m.Parent then return false end
         local hum = m:FindFirstChildOfClass("Humanoid")
@@ -3186,7 +2868,6 @@ end
         if m:GetAttribute("FriendlyToFlare") == true then return false end
         return true
     end
-
     local function isPointVisible(origin, targetPos, targetModel, excludeBase)
         local dir = targetPos - origin
         local dist = dir.Magnitude
@@ -3230,24 +2911,18 @@ end
                     curOrigin = r.Position + dirUnit * 0.05
                     remaining = remaining - adv
                     if remaining <= 0 then return true end
-                elseif inst.CanCollide then
-                    return false
+                elseif inst.CanCollide then return false
                 elseif inst.Transparency >= 0.95 then
                     table.insert(exclude, inst)
                     local adv = (r.Position - curOrigin).Magnitude + 0.05
                     curOrigin = r.Position + dirUnit * 0.05
                     remaining = remaining - adv
                     if remaining <= 0 then return true end
-                else
-                    return false
-                end
-            else
-                return false
-            end
+                else return false end
+            else return false end
         end
         return true
     end
-
     local mbFovCircleGui = nil
     local mbFovCircleImg = nil
     local function ensureFov()
@@ -3267,9 +2942,7 @@ end
         mbFovCircleImg.Parent = mbFovCircleGui
         Instance.new("UICorner", mbFovCircleImg).CornerRadius = UDim.new(1, 0)
         local s = Instance.new("UIStroke", mbFovCircleImg)
-        s.Thickness = 1
-        s.Color = Color3.fromRGB(120, 255, 120)
-        s.Transparency = 0.35
+        s.Thickness = 1; s.Color = Color3.fromRGB(120, 255, 120); s.Transparency = 0.35
     end
     local function updateFov()
         if not mbFovCircleImg then return end
@@ -3283,7 +2956,6 @@ end
         if mbFovCircleGui then pcall(function() mbFovCircleGui:Destroy() end) end
         mbFovCircleGui = nil; mbFovCircleImg = nil
     end
-
     local lastFindTick = 0
     local cachedTarget = nil
     local findLastReason = "init"
@@ -3331,14 +3003,8 @@ end
                                             local dx = s.X - cx
                                             local dy = s.Y - cy
                                             screenD2 = dx*dx + dy*dy
-                                            if screenD2 > r2 then
-                                                outFov = outFov + 1
-                                                skipThis = true
-                                            end
-                                        else
-                                            outFov = outFov + 1
-                                            skipThis = true
-                                        end
+                                            if screenD2 > r2 then outFov = outFov + 1; skipThis = true end
+                                        else outFov = outFov + 1; skipThis = true end
                                     end
                                     if not skipThis then
                                         local visible = true
@@ -3350,24 +3016,16 @@ end
                                         else
                                             local prio = isLowPriority(m) and 1 or 0
                                             local accept = false
-                                            if prio < bestPrio then
-                                                accept = true
+                                            if prio < bestPrio then accept = true
                                             elseif prio == bestPrio then
-                                                if mbTargetMode == 3 then
-                                                    accept = wd < bestWorldD
-                                                elseif mbTargetMode == 1 then
-                                                    accept = screenD2 ~= nil and screenD2 < bestScreenD2
-                                                else
-                                                    accept = wd < bestWorldD
-                                                end
+                                                if mbTargetMode == 3 then accept = wd < bestWorldD
+                                                elseif mbTargetMode == 1 then accept = screenD2 ~= nil and screenD2 < bestScreenD2
+                                                else accept = wd < bestWorldD end
                                             end
                                             if accept then
                                                 bestPrio = prio
-                                                if mbTargetMode == 1 and screenD2 then
-                                                    bestScreenD2 = screenD2
-                                                else
-                                                    bestWorldD = wd
-                                                end
+                                                if mbTargetMode == 1 and screenD2 then bestScreenD2 = screenD2
+                                                else bestWorldD = wd end
                                                 best = { model = m, head = head, aimPart = aimPart }
                                             end
                                         end
@@ -3388,7 +3046,6 @@ end
         cachedTarget = best
         return best
     end
-
     local function destroyRadiusRing()
         for _, p in ipairs(radiusRingParts) do
             if p and p.Parent then pcall(function() p:Destroy() end) end
@@ -3396,15 +3053,10 @@ end
         radiusRingParts = {}
     end
     local function destroyRadiusFace()
-        if radiusFacePart and radiusFacePart.Parent then
-            pcall(function() radiusFacePart:Destroy() end)
-        end
+        if radiusFacePart and radiusFacePart.Parent then pcall(function() radiusFacePart:Destroy() end) end
         radiusFacePart = nil
     end
-    local function destroyAllRadius()
-        destroyRadiusRing()
-        destroyRadiusFace()
-    end
+    local function destroyAllRadius() destroyRadiusRing(); destroyRadiusFace() end
     local function ensureRadiusRing()
         if #radiusRingParts == RING_SEGMENTS and radiusRingParts[1] and radiusRingParts[1].Parent then
             return radiusRingParts
@@ -3417,26 +3069,18 @@ end
             p.Material = Enum.Material.SmoothPlastic
             p.Color = Color3.fromRGB(120, 255, 120)
             p.Transparency = 1
-            p.CanCollide = false
-            p.CanQuery = false
-            p.CanTouch = false
-            p.Anchored = true
-            p.CastShadow = false
+            p.CanCollide = false; p.CanQuery = false; p.CanTouch = false
+            p.Anchored = true; p.CastShadow = false
             p.Parent = Workspace
             local sg = Instance.new("SurfaceGui")
-            sg.Name = "Line"
-            sg.Face = Enum.NormalId.Top
+            sg.Name = "Line"; sg.Face = Enum.NormalId.Top
             sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
-            sg.PixelsPerStud = 40
-            sg.AlwaysOnTop = true
-            sg.LightInfluence = 0
-            sg.Adornee = p
-            sg.Parent = p
+            sg.PixelsPerStud = 40; sg.AlwaysOnTop = true
+            sg.LightInfluence = 0; sg.Adornee = p; sg.Parent = p
             local f = Instance.new("Frame")
             f.Size = UDim2.new(1, 0, 1, 0)
             f.BackgroundColor3 = Color3.fromRGB(120, 255, 120)
-            f.BackgroundTransparency = 0.25
-            f.BorderSizePixel = 0
+            f.BackgroundTransparency = 0.25; f.BorderSizePixel = 0
             f.Parent = sg
             table.insert(radiusRingParts, p)
         end
@@ -3451,25 +3095,16 @@ end
         p.Material = Enum.Material.Neon
         p.Color = Color3.fromRGB(120, 255, 120)
         p.Transparency = 0.9
-        p.CanCollide = false
-        p.CanQuery = false
-        p.CanTouch = false
-        p.Anchored = true
-        p.CastShadow = false
+        p.CanCollide = false; p.CanQuery = false; p.CanTouch = false
+        p.Anchored = true; p.CastShadow = false
         p.Parent = Workspace
         radiusFacePart = p
         return p
     end
     local function updateRadiusDisplay()
-        if not magicBulletEnabled then
-            destroyAllRadius()
-            wasTooLarge = false
-            return
-        end
+        if not magicBulletEnabled then destroyAllRadius(); wasTooLarge = false; return end
         if not mbShowRadiusCircle or mbTargetMode ~= 3 then
-            destroyAllRadius()
-            wasTooLarge = false
-            return
+            destroyAllRadius(); wasTooLarge = false; return
         end
         if mbWorldDistMax > RADIUS_LIMIT then
             destroyAllRadius()
@@ -3480,9 +3115,7 @@ end
                 end)
             end
             return
-        else
-            wasTooLarge = false
-        end
+        else wasTooLarge = false end
         local myChar = lp.Character
         if not myChar then destroyAllRadius(); return end
         local hum = myChar:FindFirstChildOfClass("Humanoid")
@@ -3510,7 +3143,6 @@ end
             p.CFrame = CFrame.new(basePos) * CFrame.Angles(0, 0, math.rad(90))
         end
     end
-
     local lockBB = nil
     local lockTarget = nil
     local function destroyLockBB()
@@ -3523,29 +3155,21 @@ end
         bb.Adornee = part
         bb.Size = UDim2.new(mbBBSizeStuds, 0, mbBBSizeStuds, 0)
         bb.StudsOffsetWorldSpace = Vector3.new(0, mbStudsOffsetY, 0)
-        bb.AlwaysOnTop = true
-        bb.LightInfluence = 0
-        bb.MaxDistance = mbWorldDistMax
-        bb.ResetOnSpawn = false
+        bb.AlwaysOnTop = true; bb.LightInfluence = 0
+        bb.MaxDistance = mbWorldDistMax; bb.ResetOnSpawn = false
         bb.Parent = part
         local f = Instance.new("Frame", bb)
         f.Name = "BoxFrame"
         f.Size = UDim2.new(1, 0, 1, 0)
-        f.AnchorPoint = Vector2.new(0.5, 0.5)
-        f.Position = UDim2.new(0.5, 0, 0.5, 0)
-        f.BackgroundTransparency = 1
-        f.BorderSizePixel = 0
+        f.AnchorPoint = Vector2.new(0.5, 0.5); f.Position = UDim2.new(0.5, 0, 0.5, 0)
+        f.BackgroundTransparency = 1; f.BorderSizePixel = 0
         local s = Instance.new("UIStroke", f)
-        s.Color = Color3.fromRGB(120, 255, 120)
-        s.Thickness = 2
-        s.Transparency = 0.05
+        s.Color = Color3.fromRGB(120, 255, 120); s.Thickness = 2; s.Transparency = 0.05
         local dot = Instance.new("Frame", bb)
         dot.Name = "CenterDot"
         dot.Size = UDim2.new(0, 4, 0, 4)
-        dot.AnchorPoint = Vector2.new(0.5, 0.5)
-        dot.Position = UDim2.new(0.5, 0, 0.5, 0)
-        dot.BackgroundColor3 = Color3.fromRGB(120, 255, 120)
-        dot.BorderSizePixel = 0
+        dot.AnchorPoint = Vector2.new(0.5, 0.5); dot.Position = UDim2.new(0.5, 0, 0.5, 0)
+        dot.BackgroundColor3 = Color3.fromRGB(120, 255, 120); dot.BorderSizePixel = 0
         Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
         spawn(function()
             local deg = 0
@@ -3579,7 +3203,6 @@ end
             lockTarget = target.model
         else lockBB.Enabled = true end
     end
-
     local mbOrigFire = nil
     local mbOrigRaycastNew = nil
     local mbOrigInvoke = nil
@@ -3614,8 +3237,7 @@ end
             if typeof(fp) == "Vector3" then normal = (aimPart.Position - fp).Unit
             else normal = Vector3.new(0, 1, 0) end
         end
-        hitData[2] = aimPart
-        hitData[3] = aimPart.Position
+        hitData[2] = aimPart; hitData[3] = aimPart.Position
         if camPos then hitData[5] = camPos end
         local root = hum.RootPart or char:FindFirstChild("HumanoidRootPart")
         if root then
@@ -3629,8 +3251,8 @@ end
     local teammateCache = { list = {}, tick = 0 }
     local corpseCache = { list = {}, tick = 0 }
     local function forEachModel(fn)
-        for _, folderName in ipairs(AI_CONTAINERS) do
-            local folder = Workspace:FindFirstChild(folderName)
+        for _, fn2 in ipairs(AI_CONTAINERS) do
+            local folder = Workspace:FindFirstChild(fn2)
             if folder then
                 for _, m in ipairs(folder:GetChildren()) do
                     if m:IsA("Model") then fn(m) end
@@ -3665,8 +3287,7 @@ end
             for _, d in ipairs(m:GetDescendants()) do
                 if d:IsA("BasePart") then
                     local n = string.lower(d.Name)
-                    if n:find("helmet", 1, true) or n:find("helm", 1, true)
-                       or n:find("visor", 1, true) then
+                    if n:find("helmet", 1, true) or n:find("helm", 1, true) or n:find("visor", 1, true) then
                         table.insert(list, d)
                     end
                 end
@@ -3741,7 +3362,6 @@ end
         end
         pcall(function() params.FilterDescendantsInstances = newFdi end)
     end
-
     local function installHook()
         if mbHookInstalled then return end
         mbHookInstalled = true
@@ -3839,14 +3459,9 @@ end
     end
     local function mbSetup()
         if magicBulletEnabled then
-            ensureFov()
-            updateFov()
-            installHook()
+            ensureFov(); updateFov(); installHook()
         else
-            uninstallHook()
-            updateFov()
-            destroyAllRadius()
-            wasTooLarge = false
+            uninstallHook(); updateFov(); destroyAllRadius(); wasTooLarge = false
             if autoFireEnabled then
                 autoFireEnabled = false
                 if autoFireBtn then
@@ -3858,30 +3473,33 @@ end
             end
         end
     end
-
     local mbBtn, mbSetState = toggleMagic("启用魔法子弹", UDim2.new(0, 15, 0, 4), false, function(v)
         magicBulletEnabled = v
         if v then
-            if _G._ExamFH and _G._ExamFH.forceOffFn then
-                pcall(_G._ExamFH.forceOffFn)
-            end
+            if _G._ExamFH and _G._ExamFH.forceOffFn then pcall(_G._ExamFH.forceOffFn) end
         end
         mbSetup()
     end, UDim2.new(0, 290, 0, 28))
     _G._ExamMB.magicOffFn = function()
         if mbSetState then pcall(function() mbSetState(false) end) end
+        _G._ExamStates.magicBullet = false
+        if _G._CP_RefreshFns and _G._CP_RefreshFns.magicBullet then
+            pcall(_G._CP_RefreshFns.magicBullet)
+        end
     end
+    _G._ExamSetters.magicBullet = mbSetState
+    _G._ExamStates.magicBullet = false
 
-    toggleMagic("显示 3D 头框", UDim2.new(0, 15, 0, 36), true, function(v)
+    local _a = select(2, toggleMagic("显示 3D 头框", UDim2.new(0, 15, 0, 36), true, function(v)
         mbShowBox = v
         if not v then destroyLockBB() end
-    end, UDim2.new(0, 140, 0, 28))
+    end, UDim2.new(0, 140, 0, 28)))
+    _G._ExamSetters.mbShowBox = _a; _G._ExamStates.mbShowBox = true
 
-    toggleMagic("掩体检测", UDim2.new(0, 165, 0, 36), true, function(v)
+    local _b = select(2, toggleMagic("掩体检测", UDim2.new(0, 165, 0, 36), true, function(v)
         mbRequireVisible = v
         if not v then
-            cachedTarget = nil
-            lastFindTick = 0
+            cachedTarget = nil; lastFindTick = 0
             if autoFireEnabled then
                 autoFireEnabled = false
                 if autoFireBtn then
@@ -3892,111 +3510,112 @@ end
                 autoFireStatus = "掩体检测已关"
             end
         end
-    end, UDim2.new(0, 140, 0, 28))
+    end, UDim2.new(0, 140, 0, 28)))
+    _G._ExamSetters.mbRequireVisible = _b; _G._ExamStates.mbRequireVisible = true
 
-    toggleMagic("穿透盾牌", UDim2.new(0, 15, 0, 68), true, function(v)
+    local _c = select(2, toggleMagic("穿透盾牌", UDim2.new(0, 15, 0, 68), true, function(v)
         pierceShieldEnabled = v
         shieldCache.tick = 0; shieldCache.list = {}
-    end, UDim2.new(0, 140, 0, 28))
-    toggleMagic("穿透SIN头盔", UDim2.new(0, 165, 0, 68), true, function(v)
+    end, UDim2.new(0, 140, 0, 28)))
+    _G._ExamSetters.pierceShield = _c; _G._ExamStates.pierceShield = true
+
+    local _d = select(2, toggleMagic("穿透SIN头盔", UDim2.new(0, 165, 0, 68), true, function(v)
         pierceHelmetEnabled = v
         helmetCache.tick = 0; helmetCache.list = {}
-    end, UDim2.new(0, 140, 0, 28))
+    end, UDim2.new(0, 140, 0, 28)))
+    _G._ExamSetters.pierceHelmet = _d; _G._ExamStates.pierceHelmet = true
 
-    toggleMagic("穿透队友", UDim2.new(0, 15, 0, 100), true, function(v)
+    local _e = select(2, toggleMagic("穿透队友", UDim2.new(0, 15, 0, 100), true, function(v)
         pierceTeammateEnabled = v
         teammateCache.tick = 0; teammateCache.list = {}
-    end, UDim2.new(0, 140, 0, 28))
-    toggleMagic("穿透尸体", UDim2.new(0, 165, 0, 100), true, function(v)
+    end, UDim2.new(0, 140, 0, 28)))
+    _G._ExamSetters.pierceTeammate = _e; _G._ExamStates.pierceTeammate = true
+
+    local _f = select(2, toggleMagic("穿透尸体", UDim2.new(0, 165, 0, 100), true, function(v)
         pierceCorpseEnabled = v
         corpseCache.tick = 0; corpseCache.list = {}
-    end, UDim2.new(0, 140, 0, 28))
+    end, UDim2.new(0, 140, 0, 28)))
+    _G._ExamSetters.pierceCorpse = _f; _G._ExamStates.pierceCorpse = true
 
-    toggleMagic("显示FOV圈", UDim2.new(0, 15, 0, 132), true, function(v)
-        mbShowFovCircle = v
-        updateFov()
-        updateLockBB()
-    end, UDim2.new(0, 140, 0, 28))
+    local _g = select(2, toggleMagic("显示FOV圈", UDim2.new(0, 15, 0, 132), true, function(v)
+        mbShowFovCircle = v; updateFov(); updateLockBB()
+    end, UDim2.new(0, 140, 0, 28)))
+    _G._ExamSetters.mbShowFovCircle = _g; _G._ExamStates.mbShowFovCircle = true
 
-    toggleMagic("未锁定不穿透", UDim2.new(0, 165, 0, 132), true, function(v)
+    local _h = select(2, toggleMagic("未锁定不穿透", UDim2.new(0, 165, 0, 132), true, function(v)
         mbOnlyWhenLocked = v
-    end, UDim2.new(0, 140, 0, 28))
+    end, UDim2.new(0, 140, 0, 28)))
+    _G._ExamSetters.mbOnlyWhenLocked = _h; _G._ExamStates.mbOnlyWhenLocked = true
 
-    local MODE_NAMES = {
-        [1] = "准星最近（FOV内）",
-        [2] = "距离最近（FOV内）",
-        [3] = "360° 距离最近",
-    }
+    local MODE_NAMES = { [1] = "准星最近（FOV内）", [2] = "距离最近（FOV内）", [3] = "360° 距离最近" }
     local modeBtn = Instance.new("TextButton", magicPage)
     modeBtn.Size = UDim2.new(1, -30, 0, 28)
     modeBtn.Position = UDim2.new(0, 15, 0, 164)
     modeBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 100)
     modeBtn.TextColor3 = Color3.new(1, 1, 1)
     modeBtn.Font = Enum.Font.GothamBold
-    modeBtn.TextSize = 12
-    modeBtn.Active = true
+    modeBtn.TextSize = 12; modeBtn.Active = true
+    modeBtn.Visible = false
     Instance.new("UICorner", modeBtn).CornerRadius = UDim.new(0, 5)
     local function refreshModeBtnText()
         modeBtn.Text = "锁定模式: " .. (MODE_NAMES[mbTargetMode] or "?")
-        if mbTargetMode == 3 then
-            modeBtn.BackgroundColor3 = Color3.fromRGB(160, 60, 60)
-        elseif mbTargetMode == 2 then
-            modeBtn.BackgroundColor3 = Color3.fromRGB(150, 110, 50)
-        else
-            modeBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 100)
-        end
+        if mbTargetMode == 3 then modeBtn.BackgroundColor3 = Color3.fromRGB(160, 60, 60)
+        elseif mbTargetMode == 2 then modeBtn.BackgroundColor3 = Color3.fromRGB(150, 110, 50)
+        else modeBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 100) end
     end
     bindTap(modeBtn, function()
         mbTargetMode = mbTargetMode % 3 + 1
-        cachedTarget = nil
-        lastFindTick = 0
-        destroyLockBB()
-        refreshModeBtnText()
-        updateFov()
-        wasTooLarge = false
+        cachedTarget = nil; lastFindTick = 0
+        destroyLockBB(); refreshModeBtnText(); updateFov(); wasTooLarge = false
     end)
     refreshModeBtnText()
-
+    _G._ExamSetters.mbTargetMode = function(v)
+        if type(v) ~= "number" or v < 1 or v > 3 then return end
+        mbTargetMode = v
+        cachedTarget = nil; lastFindTick = 0
+        destroyLockBB(); refreshModeBtnText(); updateFov(); wasTooLarge = false
+    end
+    _G._ExamStates.mbTargetMode = 1
     autoFireBtn = Instance.new("TextButton", magicPage)
     autoFireBtn.Size = UDim2.new(1, -30, 0, 28)
     autoFireBtn.Position = UDim2.new(0, 15, 0, 196)
     autoFireBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
     autoFireBtn.TextColor3 = Color3.new(1, 1, 1)
     autoFireBtn.Font = Enum.Font.GothamBold
-    autoFireBtn.TextSize = 12
-    autoFireBtn.Active = true
+    autoFireBtn.TextSize = 12; autoFireBtn.Active = true
+    autoFireBtn.Visible = false
     autoFireBtn.Text = "自动开火: 关（需开掩体检测）"
     Instance.new("UICorner", autoFireBtn).CornerRadius = UDim.new(0, 5)
     bindTap(autoFireBtn, function()
-        if not magicBulletEnabled then
-            autoFireStatus = "请先开魔法子弹"
-            return
-        end
-        if not mbRequireVisible then
-            autoFireStatus = "请先开掩体检测"
-            return
-        end
+        if not magicBulletEnabled then autoFireStatus = "请先开魔法子弹"; return end
+        if not mbRequireVisible then autoFireStatus = "请先开掩体检测"; return end
         autoFireEnabled = not autoFireEnabled
         autoFireBtn.Text = autoFireEnabled and "自动开火: 开" or "自动开火: 关（需开掩体检测）"
         autoFireBtn.BackgroundColor3 = autoFireEnabled and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(70, 70, 70)
         if autoFireEnabled then
-            scanConnsFresh()
-            autoFireStatus = "启动中"
+            scanConnsFresh(); autoFireStatus = "启动中"
         else
-            releaseFire()
-            releaseFire()
-            autoFireStatus = "关"
+            releaseFire(); releaseFire(); autoFireStatus = "关"
         end
     end)
-
+    _G._ExamSetters.autoFire = function(v)
+        if v and not magicBulletEnabled then return end
+        if v and not mbRequireVisible then return end
+        autoFireEnabled = v
+        autoFireBtn.Text = v and "自动开火: 开" or "自动开火: 关（需开掩体检测）"
+        autoFireBtn.BackgroundColor3 = v and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(70, 70, 70)
+        if v then scanConnsFresh(); autoFireStatus = "启动中"
+        else releaseFire(); releaseFire(); autoFireStatus = "关" end
+    end
+    _G._ExamStates.autoFire = false
     local radiusBtn = Instance.new("TextButton", magicPage)
     radiusBtn.Size = UDim2.new(0, 140, 0, 28)
     radiusBtn.Position = UDim2.new(0, 15, 0, 228)
     radiusBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
     radiusBtn.TextColor3 = Color3.new(1, 1, 1)
     radiusBtn.Font = Enum.Font.GothamBold
-    radiusBtn.TextSize = 11
-    radiusBtn.Active = true
+    radiusBtn.TextSize = 11; radiusBtn.Active = true
+    radiusBtn.Visible = false
     Instance.new("UICorner", radiusBtn).CornerRadius = UDim.new(0, 5)
     radiusBtn.Text = "半径显示: 关"
     bindTap(radiusBtn, function()
@@ -4005,15 +3624,21 @@ end
         radiusBtn.BackgroundColor3 = mbShowRadiusCircle and Color3.fromRGB(0, 130, 0) or Color3.fromRGB(70, 70, 70)
         if not mbShowRadiusCircle then destroyAllRadius() end
     end)
-
+    _G._ExamSetters.mbShowRadius = function(v)
+        mbShowRadiusCircle = v
+        radiusBtn.Text = v and "半径显示: 开" or "半径显示: 关"
+        radiusBtn.BackgroundColor3 = v and Color3.fromRGB(0, 130, 0) or Color3.fromRGB(70, 70, 70)
+        if not v then destroyAllRadius() end
+    end
+    _G._ExamStates.mbShowRadius = false
     local radiusModeBtn = Instance.new("TextButton", magicPage)
     radiusModeBtn.Size = UDim2.new(0, 140, 0, 28)
     radiusModeBtn.Position = UDim2.new(0, 165, 0, 228)
     radiusModeBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 100)
     radiusModeBtn.TextColor3 = Color3.new(1, 1, 1)
     radiusModeBtn.Font = Enum.Font.GothamBold
-    radiusModeBtn.TextSize = 11
-    radiusModeBtn.Active = true
+    radiusModeBtn.TextSize = 11; radiusModeBtn.Active = true
+    radiusModeBtn.Visible = false
     Instance.new("UICorner", radiusModeBtn).CornerRadius = UDim.new(0, 5)
     radiusModeBtn.Text = "半径模式: 线"
     bindTap(radiusModeBtn, function()
@@ -4027,7 +3652,18 @@ end
         end
         destroyAllRadius()
     end)
-
+    _G._ExamSetters.radiusMode = function(v)
+        radiusMode = (v == 1) and "line" or "face"
+        if radiusMode == "line" then
+            radiusModeBtn.Text = "半径模式: 线"
+            radiusModeBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 100)
+        else
+            radiusModeBtn.Text = "半径模式: 面"
+            radiusModeBtn.BackgroundColor3 = Color3.fromRGB(100, 60, 60)
+        end
+        destroyAllRadius()
+    end
+    _G._ExamStates.radiusMode = 1
     local distLbl = Instance.new("TextLabel", magicPage)
     distLbl.Size = UDim2.new(0, 75, 0, 22)
     distLbl.Position = UDim2.new(0, 15, 0, 262)
@@ -4037,26 +3673,22 @@ end
     distLbl.Font = Enum.Font.Gotham
     distLbl.TextSize = 11
     distLbl.TextXAlignment = Enum.TextXAlignment.Left
+    distLbl.Visible = false
     local distIn = Instance.new("TextBox", magicPage)
     distIn.Size = UDim2.new(0, 60, 0, 22)
     distIn.Position = UDim2.new(0, 88, 0, 262)
     distIn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
     distIn.TextColor3 = Color3.new(1, 1, 1)
     distIn.Text = tostring(mbWorldDistMax)
-    distIn.Font = Enum.Font.Gotham
-    distIn.TextSize = 11
-    distIn.BorderSizePixel = 0
+    distIn.Font = Enum.Font.Gotham; distIn.TextSize = 11; distIn.BorderSizePixel = 0
+    distIn.Visible = false
     Instance.new("UICorner", distIn).CornerRadius = UDim.new(0, 4)
     distIn.FocusLost:Connect(function()
         local v = tonumber(distIn.Text)
         if v and v >= 10 and v <= 50000 then
-            mbWorldDistMax = v
-            distIn.Text = tostring(v)
-            cachedTarget = nil
-            lastFindTick = 0
-        else
-            distIn.Text = tostring(mbWorldDistMax)
-        end
+            mbWorldDistMax = v; distIn.Text = tostring(v)
+            cachedTarget = nil; lastFindTick = 0
+        else distIn.Text = tostring(mbWorldDistMax) end
     end)
     local quick50 = Instance.new("TextButton", magicPage)
     quick50.Size = UDim2.new(0, 60, 0, 22)
@@ -4065,8 +3697,8 @@ end
     quick50.Text = "50"
     quick50.TextColor3 = Color3.fromRGB(220, 220, 220)
     quick50.Font = Enum.Font.GothamBold
-    quick50.TextSize = 11
-    quick50.Active = true
+    quick50.TextSize = 11; quick50.Active = true
+    quick50.Visible = false
     Instance.new("UICorner", quick50).CornerRadius = UDim.new(0, 4)
     bindTap(quick50, function()
         mbWorldDistMax = 50; distIn.Text = "50"
@@ -4079,38 +3711,40 @@ end
     quick200.Text = "200"
     quick200.TextColor3 = Color3.fromRGB(220, 220, 220)
     quick200.Font = Enum.Font.GothamBold
-    quick200.TextSize = 11
-    quick200.Active = true
+    quick200.TextSize = 11; quick200.Active = true
+    quick200.Visible = false
     Instance.new("UICorner", quick200).CornerRadius = UDim.new(0, 4)
     bindTap(quick200, function()
         mbWorldDistMax = 200; distIn.Text = "200"
         cachedTarget = nil; lastFindTick = 0
     end)
-
+    _G._ExamSetters.mbWorldDistMax = function(v)
+        if type(v) == "number" and v >= 10 and v <= 50000 then
+            mbWorldDistMax = v; distIn.Text = tostring(v)
+            cachedTarget = nil; lastFindTick = 0
+        end
+    end
+    _G._ExamStates.mbWorldDistMax = mbWorldDistMax
     local charBox = Instance.new("Frame", magicPage)
     charBox.Size = UDim2.new(1, -30, 0, 120)
     charBox.Position = UDim2.new(0, 15, 0, 294)
     charBox.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
-    charBox.BorderSizePixel = 0
+    charBox.BorderSizePixel = 0; charBox.Visible = false
     Instance.new("UICorner", charBox).CornerRadius = UDim.new(0, 6)
-
     local bodyColor = Color3.fromRGB(60, 60, 70)
     local bodyColorSel = Color3.fromRGB(0, 200, 100)
     local figure = Instance.new("Frame", charBox)
     figure.Size = UDim2.new(0, 130, 1, 0)
     figure.Position = UDim2.new(0, 0, 0, 0)
     figure.BackgroundTransparency = 1
-
     local partBtns = {}
     local function makePartBtn(x, y, w, h)
         local b = Instance.new("TextButton", figure)
         b.Size = UDim2.new(0, w, 0, h)
         b.Position = UDim2.new(0, x, 0, y)
         b.BackgroundColor3 = bodyColor
-        b.Text = ""
-        b.BorderSizePixel = 0
-        b.AutoButtonColor = false
-        b.Active = true
+        b.Text = ""; b.BorderSizePixel = 0
+        b.AutoButtonColor = false; b.Active = true
         Instance.new("UICorner", b).CornerRadius = UDim.new(0, 3)
         return b
     end
@@ -4120,20 +3754,10 @@ end
     partBtns[4] = makePartBtn(85, 34, 16, 40)
     partBtns[5] = makePartBtn(47, 78, 16, 38)
     partBtns[6] = makePartBtn(67, 78, 16, 38)
-
     local rightInfo = Instance.new("Frame", charBox)
     rightInfo.Size = UDim2.new(1, -145, 1, 0)
     rightInfo.Position = UDim2.new(0, 140, 0, 0)
     rightInfo.BackgroundTransparency = 1
-    local infoTitle = Instance.new("TextLabel", rightInfo)
-    infoTitle.Size = UDim2.new(1, 0, 0, 18)
-    infoTitle.Position = UDim2.new(0, 0, 0, 12)
-    infoTitle.BackgroundTransparency = 1
-    infoTitle.Text = "当前锁定"
-    infoTitle.TextColor3 = Color3.fromRGB(150, 150, 150)
-    infoTitle.Font = Enum.Font.Gotham
-    infoTitle.TextSize = 11
-    infoTitle.TextXAlignment = Enum.TextXAlignment.Left
     local infoValue = Instance.new("TextLabel", rightInfo)
     infoValue.Size = UDim2.new(1, 0, 0, 40)
     infoValue.Position = UDim2.new(0, 0, 0, 36)
@@ -4143,11 +3767,9 @@ end
     infoValue.Font = Enum.Font.GothamBold
     infoValue.TextSize = 22
     infoValue.TextXAlignment = Enum.TextXAlignment.Left
-
     local function refreshAimSelection()
         for i, btn in ipairs(partBtns) do
-            if i == mbAimPartIndex then
-                btn.BackgroundColor3 = bodyColorSel
+            if i == mbAimPartIndex then btn.BackgroundColor3 = bodyColorSel
             else btn.BackgroundColor3 = bodyColor end
         end
         local info = AIM_PARTS[mbAimPartIndex]
@@ -4156,14 +3778,17 @@ end
     local function selectAim(index)
         if not AIM_PARTS[index] then return end
         mbAimPartIndex = index
-        refreshAimSelection()
-        destroyLockBB()
+        refreshAimSelection(); destroyLockBB()
     end
     for i, btn in ipairs(partBtns) do
         bindTap(btn, function() selectAim(i) end)
     end
     refreshAimSelection()
-
+    _G._ExamSetters.mbAimPart = function(v)
+        if type(v) ~= "number" or v < 1 or v > 6 then return end
+        mbAimPartIndex = v; refreshAimSelection(); destroyLockBB()
+    end
+    _G._ExamStates.mbAimPart = 1
     local fovLbl = Instance.new("TextLabel", magicPage)
     fovLbl.Size = UDim2.new(0, 36, 0, 22)
     fovLbl.Position = UDim2.new(0, 15, 0, 432)
@@ -4172,6 +3797,7 @@ end
     fovLbl.TextColor3 = Color3.new(0.9, 0.9, 0.9)
     fovLbl.Font = Enum.Font.Gotham; fovLbl.TextSize = 10
     fovLbl.TextXAlignment = Enum.TextXAlignment.Left
+    fovLbl.Visible = false
     local fovInput = Instance.new("TextBox", magicPage)
     fovInput.Size = UDim2.new(0, 42, 0, 22)
     fovInput.Position = UDim2.new(0, 48, 0, 432)
@@ -4179,100 +3805,27 @@ end
     fovInput.TextColor3 = Color3.new(1, 1, 1)
     fovInput.Text = tostring(mbFovRadius)
     fovInput.Font = Enum.Font.Gotham; fovInput.TextSize = 10; fovInput.BorderSizePixel = 0
+    fovInput.Visible = false
     Instance.new("UICorner", fovInput).CornerRadius = UDim.new(0, 4)
     fovInput.FocusLost:Connect(function()
         local v = tonumber(fovInput.Text)
         if v and v >= 20 and v <= 800 then
-            mbFovRadius = v; fovInput.Text = tostring(v)
-            updateFov()
+            mbFovRadius = v; fovInput.Text = tostring(v); updateFov()
         else fovInput.Text = tostring(mbFovRadius) end
     end)
-    local bsLbl = Instance.new("TextLabel", magicPage)
-    bsLbl.Size = UDim2.new(0, 32, 0, 22)
-    bsLbl.Position = UDim2.new(0, 100, 0, 432)
-    bsLbl.BackgroundTransparency = 1
-    bsLbl.Text = "框:"
-    bsLbl.TextColor3 = Color3.new(0.9, 0.9, 0.9)
-    bsLbl.Font = Enum.Font.Gotham; bsLbl.TextSize = 10
-    bsLbl.TextXAlignment = Enum.TextXAlignment.Left
-    local bsInput = Instance.new("TextBox", magicPage)
-    bsInput.Size = UDim2.new(0, 42, 0, 22)
-    bsInput.Position = UDim2.new(0, 130, 0, 432)
-    bsInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-    bsInput.TextColor3 = Color3.new(1, 1, 1)
-    bsInput.Text = tostring(mbBBSizeStuds)
-    bsInput.Font = Enum.Font.Gotham; bsInput.TextSize = 10; bsInput.BorderSizePixel = 0
-    Instance.new("UICorner", bsInput).CornerRadius = UDim.new(0, 4)
-    bsInput.FocusLost:Connect(function()
-        local v = tonumber(bsInput.Text)
-        if v and v >= 0.5 and v <= 5 then
-            mbBBSizeStuds = v; bsInput.Text = tostring(v)
-            if lockBB and lockBB.Parent then lockBB.Size = UDim2.new(v, 0, v, 0) end
-        else bsInput.Text = tostring(mbBBSizeStuds) end
-    end)
-    local wdLbl = Instance.new("TextLabel", magicPage)
-    wdLbl.Size = UDim2.new(0, 30, 0, 22)
-    wdLbl.Position = UDim2.new(0, 182, 0, 432)
-    wdLbl.BackgroundTransparency = 1
-    wdLbl.Text = "距:"
-    wdLbl.TextColor3 = Color3.new(0.9, 0.9, 0.9)
-    wdLbl.Font = Enum.Font.Gotham; wdLbl.TextSize = 10
-    wdLbl.TextXAlignment = Enum.TextXAlignment.Left
-    local wdInput = Instance.new("TextBox", magicPage)
-    wdInput.Size = UDim2.new(0, 60, 0, 22)
-    wdInput.Position = UDim2.new(0, 212, 0, 432)
-    wdInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-    wdInput.TextColor3 = Color3.new(1, 1, 1)
-    wdInput.Text = tostring(mbWorldDistMax)
-    wdInput.Font = Enum.Font.Gotham; wdInput.TextSize = 10; wdInput.BorderSizePixel = 0
-    Instance.new("UICorner", wdInput).CornerRadius = UDim.new(0, 4)
-    wdInput.FocusLost:Connect(function()
-        local v = tonumber(wdInput.Text)
-        if v and v >= 50 and v <= 20000 then
-            mbWorldDistMax = v; wdInput.Text = tostring(v)
-        else wdInput.Text = tostring(mbWorldDistMax) end
-    end)
-
-    local magicStatusLbl = Instance.new("TextLabel", magicPage)
-    magicStatusLbl.Size = UDim2.new(1, -20, 0, 18)
-    magicStatusLbl.Position = UDim2.new(0, 10, 0, 460)
-    magicStatusLbl.BackgroundTransparency = 1
-    magicStatusLbl.Text = "状态: 待启动"
-    magicStatusLbl.TextColor3 = Color3.fromRGB(255, 200, 100)
-    magicStatusLbl.Font = Enum.Font.Gotham
-    magicStatusLbl.TextSize = 10
-    magicStatusLbl.TextXAlignment = Enum.TextXAlignment.Left
-
-    local lastMagicStatusText = ""
-    spawn(function()
-        while gui.Parent do
-            local isLocked = cachedTarget ~= nil
-            local txt = string.format("状态: %s  |  锁定: %s  |  自动开火: %s",
-                findLastReason, isLocked and "有" or "无", autoFireStatus)
-            if txt ~= lastMagicStatusText then
-                lastMagicStatusText = txt
-                magicStatusLbl.Text = txt
-            end
-            wait(0.5)
+    _G._ExamSetters.mbParams = function(p)
+        if type(p) == "number" and p >= 20 and p <= 800 then
+            mbFovRadius = p; fovInput.Text = tostring(p); updateFov()
         end
-    end)
-
+    end
+    _G._ExamStates.mbParams = mbFovRadius
     do
         local ev = ReplicatedStorage:FindFirstChild("Events")
         local qteIn = ev and ev:FindFirstChild("QTEInput")
         local qteFb = ev and ev:FindFirstChild("QTEFeedback")
-        if qteIn then
-            qteIn.OnClientEvent:Connect(function()
-                qteLockUntil = tick() + 3
-            end)
-        end
-        if qteFb then
-            qteFb.OnClientEvent:Connect(function()
-                qteLockUntil = math.max(qteLockUntil, tick() + 0.3)
-            end)
-        end
+        if qteIn then qteIn.OnClientEvent:Connect(function() qteLockUntil = tick() + 3 end) end
+        if qteFb then qteFb.OnClientEvent:Connect(function() qteLockUntil = math.max(qteLockUntil, tick() + 0.3) end) end
     end
-
     local lastFire = 0
     local inFiring = false
     RunService.Heartbeat:Connect(function()
@@ -4283,18 +3836,15 @@ end
         end
         if not magicBulletEnabled then
             if inFiring then releaseFire(); inFiring = false end
-            autoFireStatus = "需先开魔法子弹"
-            return
+            autoFireStatus = "需先开魔法子弹"; return
         end
         if not mbRequireVisible then
             if inFiring then releaseFire(); inFiring = false end
-            autoFireStatus = "需开启掩体检测"
-            return
+            autoFireStatus = "需开启掩体检测"; return
         end
         if tick() < qteLockUntil then
             if inFiring then releaseFire(); inFiring = false end
-            autoFireStatus = "QTE中"
-            return
+            autoFireStatus = "QTE中"; return
         end
         local target = findTarget()
         local reloadFlag = isReloading()
@@ -4303,8 +3853,7 @@ end
         if inReloadState then
             if tick() < emergencyCooldownUntil then
                 if inFiring then releaseFire(); inFiring = false end
-                autoFireStatus = "紧急冷却"
-                return
+                autoFireStatus = "紧急冷却"; return
             end
             if target then
                 local _tool = getTool()
@@ -4313,72 +3862,57 @@ end
                 local _nearDone = false
                 local function _clipClose()
                     if _curClip and _curClip > 0 and _maxClip and _maxClip > 0 then
-                        if _curClip >= _maxClip - 1
-                           or _curClip >= _maxClip * EMERGENCY_SKIP_RATIO then
+                        if _curClip >= _maxClip - 1 or _curClip >= _maxClip * EMERGENCY_SKIP_RATIO then
                             return true
                         end
                     end
                     return false
                 end
-                if reloadFlag == true then
-                    _nearDone = _clipClose()
-                elseif reloadFlag == false then
-                    _nearDone = false
-                else
-                    _nearDone = _clipClose()
-                end
+                if reloadFlag == true then _nearDone = _clipClose()
+                elseif reloadFlag == false then _nearDone = false
+                else _nearDone = _clipClose() end
                 if _nearDone then
                     if inFiring then releaseFire(); inFiring = false end
                     autoFireStatus = "换弹快完成(跳过紧急)"
-                    emergencyCooldownUntil = 0
-                    return
+                    emergencyCooldownUntil = 0; return
                 end
                 isEmergency = true
                 emergencyCooldownUntil = tick() + 0.5
-                reloadWindowActive = false
-                reloadWindowEnd = 0
-                reloadPauseUntil = 0
+                reloadWindowActive = false; reloadWindowEnd = 0; reloadPauseUntil = 0
             else
                 if inFiring then releaseFire(); inFiring = false end
-                autoFireStatus = "装填中"
-                return
+                autoFireStatus = "装填中"; return
             end
         end
         if not target then
             if inFiring then releaseFire(); inFiring = false end
-            autoFireStatus = "无锁定目标"
-            return
+            autoFireStatus = "无锁定目标"; return
         end
         if isLowPriority(target.model) then
             if inFiring then releaseFire(); inFiring = false end
-            autoFireStatus = "低优先目标(不自动)"
-            return
+            autoFireStatus = "低优先目标(不自动)"; return
         end
         local now = tick()
         if now - lastFire < 0.1 then return end
-        lastFire = now
-        inFiring = true
+        lastFire = now; inFiring = true
         local ok, reason = doFireOnce(isEmergency)
         autoFireStatus = reason
         if ok then fireCount = fireCount + 1 end
     end)
-
     UserInputService.InputBegan:Connect(function(input, gpe)
         if gpe then return end
         if not autoFireEnabled then return end
         if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
         if input.KeyCode == Enum.KeyCode.R then
             reloadPauseUntil = math.max(reloadPauseUntil, tick() + 0.3)
-            reloadWindowActive = true
-            reloadWindowEnd = tick() + 6
+            reloadWindowActive = true; reloadWindowEnd = tick() + 6
         end
     end)
-
     spawn(function()
         while gui.Parent do
             wait(1)
-            local pg = lp:FindFirstChild("PlayerGui")
-            local mc = pg and pg:FindFirstChild("MobileControls")
+            local pg2 = lp:FindFirstChild("PlayerGui")
+            local mc = pg2 and pg2:FindFirstChild("MobileControls")
             local root = mc and mc:FindFirstChild("Root")
             local reloadBtn = root and root:FindFirstChild("Reload")
             if reloadBtn and not reloadBtn:GetAttribute("__ExamAFMBBound") then
@@ -4398,37 +3932,25 @@ end
                         startPos = nil
                         if d < 30 and autoFireEnabled then
                             reloadPauseUntil = math.max(reloadPauseUntil, tick() + 0.3)
-                            reloadWindowActive = true
-                            reloadWindowEnd = tick() + 6
+                            reloadWindowActive = true; reloadWindowEnd = tick() + 6
                         end
                     end
                 end)
             end
         end
     end)
-
     local lockBBFrame = 0
     RunService.RenderStepped:Connect(function()
         if not gui.Parent then return end
         lockBBFrame = lockBBFrame + 1
         if lockBBFrame % 3 ~= 0 then return end
-        updateLockBB()
-        updateRadiusDisplay()
+        updateLockBB(); updateRadiusDisplay()
     end)
-
-    lp.CharacterAdded:Connect(function()
-        destroyAllRadius()
-        wasTooLarge = false
-    end)
-
+    lp.CharacterAdded:Connect(function() destroyAllRadius(); wasTooLarge = false end)
     table.insert(cleanupFns, function()
         autoFireEnabled = false
-        releaseFire()
-        releaseFire()
-        uninstallHook()
-        destroyFov()
-        destroyLockBB()
-        destroyAllRadius()
+        releaseFire(); releaseFire()
+        uninstallHook(); destroyFov(); destroyLockBB(); destroyAllRadius()
     end)
 end)()
 
@@ -4475,13 +3997,11 @@ do
                 local rel = part.CFrame:PointToObjectSpace(p)
                 local half = part.Size * 0.5
                 if math.abs(rel.X) <= half.X and math.abs(rel.Z) <= half.Z then
-                    rpCacheInside = true
-                    return true
+                    rpCacheInside = true; return true
                 end
             end
         end
-        rpCacheInside = false
-        return false
+        rpCacheInside = false; return false
     end
     local function rpIsRotLockedCached()
         local now = tick()
@@ -4502,8 +4022,8 @@ do
     end
     local function rpCollectEnemies()
         local list = {}
-        for _, folderName in ipairs(AI_CONTAINERS) do
-            local folder = Workspace:FindFirstChild(folderName)
+        for _, fn in ipairs(AI_CONTAINERS) do
+            local folder = Workspace:FindFirstChild(fn)
             if folder then
                 for _, model in ipairs(folder:GetChildren()) do
                     if model:IsA("Model") then
@@ -4518,9 +4038,7 @@ do
                                     c = Color3.fromRGB(170, 0, 255)
                                 elseif n == "RIF Miniboss" or n == "Dave" or n == "CombatEngineer" or n == "Vorax" then
                                     c = Color3.fromRGB(255, 140, 0)
-                                else
-                                    c = Color3.fromRGB(255, 0, 0)
-                                end
+                                else c = Color3.fromRGB(255, 0, 0) end
                                 list[#list+1] = { pos = hrp.Position, color = c, hrp = hrp }
                             end
                         end
@@ -4554,8 +4072,7 @@ do
         local mag = proj.Magnitude
         local clamped = false
         if mag > RP_MAP_RADIUS then
-            proj = proj.Unit * RP_MAP_RADIUS
-            clamped = true
+            proj = proj.Unit * RP_MAP_RADIUS; clamped = true
         end
         return UDim2.fromScale(0.5 + proj.X, 0.5 + proj.Y), clamped
     end
@@ -4576,22 +4093,18 @@ do
         d.Name = "SPRadar_Enemy"
         d.Size = UDim2.new(0, 7, 0, 7)
         d.AnchorPoint = Vector2.new(0.5, 0.5)
-        d.BorderSizePixel = 0
-        d.ZIndex = 50
+        d.BorderSizePixel = 0; d.ZIndex = 50
         Instance.new("UICorner", d).CornerRadius = UDim.new(1, 0)
         local s = Instance.new("UIStroke", d)
-        s.Name = "Outline"
-        s.Thickness = 1
-        s.Transparency = 0.2
-        s.Color = Color3.fromRGB(0, 0, 0)
+        s.Name = "Outline"; s.Thickness = 1
+        s.Transparency = 0.2; s.Color = Color3.fromRGB(0, 0, 0)
         local core = Instance.new("Frame", d)
         core.Name = "Core"
         core.Size = UDim2.new(0.4, 0, 0.4, 0)
         core.AnchorPoint = Vector2.new(0.5, 0.5)
         core.Position = UDim2.new(0.5, 0, 0.5, 0)
         core.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-        core.BackgroundTransparency = 0.5
-        core.BorderSizePixel = 0
+        core.BackgroundTransparency = 0.5; core.BorderSizePixel = 0
         Instance.new("UICorner", core).CornerRadius = UDim.new(1, 0)
         local ar = Instance.new("TextLabel", d)
         ar.Name = "ArrowLabel"
@@ -4604,9 +4117,7 @@ do
         ar.TextStrokeTransparency = 0.3
         ar.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
         ar.Font = Enum.Font.GothamBold
-        ar.TextSize = 12
-        ar.Rotation = 0
-        ar.ZIndex = 51
+        ar.TextSize = 12; ar.Rotation = 0; ar.ZIndex = 51
         ar.Visible = true
         d.Parent = hl
         rpDotPool[i] = d
@@ -4658,8 +4169,7 @@ do
                 local wantSize = clamped and UDim2.new(0, 5, 0, 5) or UDim2.new(0, 7, 0, 7)
                 if dot.Size ~= wantSize then dot.Size = wantSize end
                 local wantTrans
-                if isSameLayer then
-                    wantTrans = clamped and 0.35 or 0
+                if isSameLayer then wantTrans = clamped and 0.35 or 0
                 else
                     wantTrans = RP_DIFF_LAYER_TRANSPARENCY
                     if clamped and wantTrans < 0.35 then wantTrans = 0.35 end
@@ -4679,7 +4189,6 @@ do
             if d and d.Parent and d.Visible then d.Visible = false end
         end
     end
-
     local rpLastHB = 0
     RunService.Heartbeat:Connect(function()
         if not rpEnabled or not rpUseHeartbeat then return end
@@ -4691,14 +4200,10 @@ do
     spawn(function()
         while gui.Parent do
             if rpEnabled and not rpUseHeartbeat then
-                pcall(rpUpdateOnce)
-                wait(RP_SAMPLE_INTERVAL)
-            else
-                wait(0.05)
-            end
+                pcall(rpUpdateOnce); wait(RP_SAMPLE_INTERVAL)
+            else wait(0.05) end
         end
     end)
-
     local rbZoneBackup = {}
     local rbScriptBackup = {}
     local rbMainLoop = nil
@@ -4776,15 +4281,13 @@ do
         for _, name in ipairs(RB_NORMAL_VISIBLE) do
             local el = mc:FindFirstChild(name)
             if el and el:IsA("GuiObject") and not el.Visible then
-                pcall(function() el.Visible = true end)
-                fixed = fixed + 1
+                pcall(function() el.Visible = true end); fixed = fixed + 1
             end
         end
         for _, name in ipairs(RB_FORCE_HIDE) do
             local el = mc:FindFirstChild(name)
             if el and el:IsA("GuiObject") and el.Visible then
-                pcall(function() el.Visible = false end)
-                fixed = fixed + 1
+                pcall(function() el.Visible = false end); fixed = fixed + 1
             end
         end
         for _, name in ipairs({"UIStroke","Stroke2"}) do
@@ -4869,12 +4372,16 @@ do
         end
     end
 
-    toggleRadar("启用（雷达探敌）", UDim2.new(0, 15, 0, 4), false, function(v)
+    local _r1 = select(2, toggleRadar("启用（雷达探敌）", UDim2.new(0, 15, 0, 4), false, function(v)
         rpEnabled = v
         if not v then rpClearDots() end
-    end, UDim2.new(0, 290, 0, 28))
-    toggleRadar("高刷新率（可能会造成卡顿）", UDim2.new(0, 15, 0, 36), true, function(v) rpUseHeartbeat = v end, UDim2.new(0, 290, 0, 28))
-    toggleRadar("显示敌人朝向箭头", UDim2.new(0, 15, 0, 68), true, function(v)
+    end, UDim2.new(0, 290, 0, 28)))
+    _G._ExamSetters.radar = _r1; _G._ExamStates.radar = false
+
+    local _r2 = select(2, toggleRadar("高刷新率（可能会造成卡顿）", UDim2.new(0, 15, 0, 36), true, function(v) rpUseHeartbeat = v end, UDim2.new(0, 290, 0, 28)))
+    _G._ExamSetters.radarFast = _r2; _G._ExamStates.radarFast = true
+
+    local _r3 = select(2, toggleRadar("显示敌人朝向箭头", UDim2.new(0, 15, 0, 68), true, function(v)
         rpShowArrow = v
         if not v then
             for _, d in pairs(rpDotPool) do
@@ -4884,102 +4391,1087 @@ do
                 end
             end
         end
-    end, UDim2.new(0, 290, 0, 28))
-    toggleRadar("雷达信号增幅器", UDim2.new(0, 15, 0, 100), false, function(v)
-        radarBoostEnabled = v
-        rbSetup()
-    end, UDim2.new(0, 290, 0, 28))
+    end, UDim2.new(0, 290, 0, 28)))
+    _G._ExamSetters.radarArrow = _r3; _G._ExamStates.radarArrow = true
 
-    local rpTip = Instance.new("TextLabel", radarPage)
-    rpTip.Size = UDim2.new(1, -30, 0, 60)
-    rpTip.Position = UDim2.new(0, 15, 0, 140)
-    rpTip.BackgroundTransparency = 1
-    rpTip.Text = "箭头贴在圆点外沿  |  不同层半透明  |  超出边缘钉住"
-    rpTip.TextColor3 = Color3.fromRGB(150, 150, 150)
-    rpTip.Font = Enum.Font.Gotham
-    rpTip.TextSize = 10
-    rpTip.TextXAlignment = Enum.TextXAlignment.Left
-    rpTip.TextYAlignment = Enum.TextYAlignment.Top
-    rpTip.TextWrapped = true
+    local _r4 = select(2, toggleRadar("雷达信号增幅器", UDim2.new(0, 15, 0, 100), false, function(v)
+        radarBoostEnabled = v; rbSetup()
+    end, UDim2.new(0, 290, 0, 28)))
+    _G._ExamSetters.radarBoost = _r4; _G._ExamStates.radarBoost = false
 
     table.insert(cleanupFns, function()
-        rpEnabled = false
-        rpClearDots()
-        radarBoostEnabled = false
+        rpEnabled = false; rpClearDots(); radarBoostEnabled = false
         if rbMainLoop then pcall(function() rbMainLoop:Disconnect() end) end
         rbRestoreZones(); rbRestoreScripts(); rbHideLabel()
     end)
 end
 
--- ============ 折叠 ============
-local function setCollapsed(v)
-    isCollapsed = v
-    local L = LAYOUT[currentLayout]
-    if v then
-        main.Size = UDim2.new(0, L.W, 0, L.TitleH)
-        for _, child in ipairs(main:GetChildren()) do
-            if child ~= titleBar and child:IsA("GuiObject") then child.Visible = false end
-        end
-        collapseBtn.Text = "▼"
-    else
-        main.Size = UDim2.new(0, L.W, 0, getTabHeight())
-        for _, child in ipairs(main:GetChildren()) do
-            if child ~= titleBar and child:IsA("GuiObject")
-               and child ~= basePage and child ~= magicPage and child ~= radarPage then
-                child.Visible = true
-            end
-        end
-        basePage.Visible = (currentTab == "base")
-        magicPage.Visible = (currentTab == "magic")
-        radarPage.Visible = (currentTab == "radar")
-        collapseBtn.Text = "▲"
-    end
-end
-bindTap(collapseBtn, function() setCollapsed(not isCollapsed) end)
+print("[Exam] 功能模块已加载 (SEGMENT 1)")
+-- ===SEGMENT 2/2===
 
-bindTap(closeBtn, function()
-    infStaminaEnabled = false
-    espEnabled = false
-    headHitboxEnabled = false
-    autoInteractEnabled = false
-    forceResetEnabled = false
-    slideEnabled = false
-    slideSteerEnabled = false
-    nvgEnabled = false
-    elephantImmuneEnabled = false
-    radarBoostEnabled = false
-    recoilEnabled = false
-    muzzleEnabled = false
-    magicBulletEnabled = false
-    forceHeadshotEnabled = false
-    chatForceEnabled = false
-    autoQTEEnabled = false
-    shotgunNoPumpEnabled = false
-    shieldFixEnabled = false
-    shieldVMEnabled = false
-    noCDEnabled = false
-    noCDActiveUntil = 0
-    wait(0.7)
-    for _, fn in ipairs(cleanupFns) do pcall(fn) end
-    cleanupFns = {}
-    pcall(function() StarterGui:SetCore("ResetButtonCallback", false) end)
-    if tipGui then pcall(function() tipGui:Destroy() end) end
-    _G.ExamRadiusTip = nil
-    _G.ExaminationUI = nil
-    gui:Destroy()
-    for _, n in ipairs({"ExamRadiusRing", "ExamRadiusFace"}) do
-        for _, d in ipairs(Workspace:GetChildren()) do
-            if d.Name == n then pcall(function() d:Destroy() end) end
+-- ============================================================
+-- 控制面板 UI
+-- ============================================================
+local function bindTapCP(btn, fn)
+    local startPos = nil
+    btn.InputBegan:Connect(function(input)
+        local ut = input.UserInputType
+        if ut == Enum.UserInputType.Touch or ut == Enum.UserInputType.MouseButton1 then
+            startPos = input.Position
+        end
+    end)
+    btn.InputEnded:Connect(function(input)
+        if not startPos then return end
+        local ut = input.UserInputType
+        if ut == Enum.UserInputType.Touch or ut == Enum.UserInputType.MouseButton1 then
+            local d = (input.Position - startPos).Magnitude
+            startPos = nil
+            if d < 12 then fn() end
+        end
+    end)
+end
+
+local CLICK_SFX = "rbxassetid://8617766509"
+local function playClickCP()
+    pcall(function()
+        local s = Instance.new("Sound")
+        s.SoundId = CLICK_SFX; s.Volume = 0.5
+        s:SetAttribute("__CP_SFX", true)
+        s.Parent = SoundService; s:Play()
+        Debris:AddItem(s, 2)
+    end)
+end
+
+local function findTopbarLeft()
+    local pg2 = lp:FindFirstChild("PlayerGui")
+    if not pg2 then return nil end
+    local tb = pg2:FindFirstChild("TopbarStandard")
+    if not tb then return nil end
+    local h = tb:FindFirstChild("Holders")
+    if not h then return nil end
+    return h:FindFirstChild("Left")
+end
+local topbarLeft = findTopbarLeft()
+local btnClickCP
+if topbarLeft then
+    local btn = Instance.new("Frame")
+    btn.Name = "ControlPanelBtn"
+    btn.Size = UDim2.new(0, 90, 0, 44)
+    btn.BackgroundTransparency = 1
+    btn.BorderSizePixel = 0
+    btn.ZIndex = 20
+    btn.LayoutOrder = 100
+    btn.Parent = topbarLeft
+
+    local iconButton = Instance.new("Frame", btn)
+    iconButton.Name = "IconButton"
+    iconButton.Size = UDim2.new(1, 0, 1, 0)
+    iconButton.BackgroundColor3 = Color3.new(0, 0, 0)
+    iconButton.BackgroundTransparency = 0.3
+    iconButton.BorderSizePixel = 0
+    iconButton.ZIndex = 2
+    Instance.new("UICorner", iconButton).CornerRadius = UDim.new(1, 0)
+
+    local iconSpot = Instance.new("Frame", iconButton)
+    iconSpot.Name = "IconSpot"
+    iconSpot.Size = UDim2.new(1, -8, 1, -8)
+    iconSpot.Position = UDim2.new(0.5, 0, 0.5, 0)
+    iconSpot.AnchorPoint = Vector2.new(0.5, 0.5)
+    iconSpot.BackgroundColor3 = Color3.new(1, 1, 1)
+    iconSpot.BackgroundTransparency = 1
+    iconSpot.BorderSizePixel = 1
+    iconSpot.ZIndex = 4
+    Instance.new("UICorner", iconSpot).CornerRadius = UDim.new(1, 0)
+    local spotGrad = Instance.new("UIGradient", iconSpot)
+    spotGrad.Name = "IconSpotGradient"
+    spotGrad.Rotation = 45
+    spotGrad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(96, 98, 100)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(77, 78, 80)),
+    })
+
+    local iconOverlay = Instance.new("Frame", iconSpot)
+    iconOverlay.Name = "IconOverlay"
+    iconOverlay.Size = UDim2.new(1, 0, 1, 0)
+    iconOverlay.BackgroundColor3 = Color3.new(1, 1, 1)
+    iconOverlay.BackgroundTransparency = 0.925
+    iconOverlay.BorderSizePixel = 1
+    iconOverlay.Visible = false
+    iconOverlay.ZIndex = 5
+    Instance.new("UICorner", iconOverlay).CornerRadius = UDim.new(1, 0)
+
+    local lbl = Instance.new("TextLabel", iconSpot)
+    lbl.Name = "IconLabel"
+    lbl.Size = UDim2.new(1, 0, 1, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = "控制面板"
+    lbl.TextColor3 = Color3.new(1, 1, 1)
+    lbl.TextSize = 16
+    lbl.Font = Enum.Font.GothamMedium
+    lbl.TextXAlignment = Enum.TextXAlignment.Center
+    lbl.ZIndex = 10
+
+    btnClickCP = Instance.new("TextButton", iconSpot)
+    btnClickCP.Name = "ClickRegion"
+    btnClickCP.Size = UDim2.new(1, 0, 1, 0)
+    btnClickCP.BackgroundTransparency = 1
+    btnClickCP.Text = ""
+    btnClickCP.ZIndex = 20
+    btnClickCP.AutoButtonColor = false
+    Instance.new("UICorner", btnClickCP).CornerRadius = UDim.new(1, 0)
+
+    local function setHover(on)
+        if on then
+            iconSpot.BackgroundTransparency = 0.7
+            iconOverlay.Visible = true
+        else
+            iconSpot.BackgroundTransparency = 1
+            iconOverlay.Visible = false
         end
     end
-    if collectgarbage then
-        local cg = collectgarbage :: any
-        pcall(cg, "collect")
-        pcall(cg, "collect")
-    end
-    print("[Exam] v16.7.17 已完全卸载")
+    btnClickCP.MouseEnter:Connect(function() setHover(true) end)
+    btnClickCP.MouseLeave:Connect(function() setHover(false) end)
+    btnClickCP.MouseButton1Down:Connect(function() setHover(true) end)
+    btnClickCP.MouseButton1Up:Connect(function() setHover(true) end)
+    btnClickCP.TouchTap:Connect(function() setHover(false) end)
+end
+
+local function calcAdaptiveScaleCP()
+    local cam = workspace.CurrentCamera
+    local vs = cam and cam.ViewportSize or Vector2.new(800, 600)
+    local wScale = (vs.X * 0.92) / 460
+    local hScale = (vs.Y * 0.85) / 580
+    local s = math.min(wScale, hScale)
+    return math.clamp(s, 0.45, 1.15)
+end
+
+local panelGui = Instance.new("ScreenGui")
+panelGui.Name = "ControlPanelUI"
+panelGui.ResetOnSpawn = false
+panelGui.IgnoreGuiInset = true
+panelGui.DisplayOrder = 101
+panelGui.Enabled = false
+panelGui.Parent = uiParent
+_G.ControlPanelUI = panelGui
+
+local uiScale = Instance.new("UIScale", panelGui)
+uiScale.Scale = calcAdaptiveScaleCP()
+workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+    uiScale.Scale = calcAdaptiveScaleCP()
 end)
 
-print("[Exam] v16.7.17 已加载（布局=" .. currentLayout .. "）")
+-- ★ 遮罩完全透明（只捕获点击，不改背景）
+local shieldCP = Instance.new("TextButton", panelGui)
+shieldCP.Size = UDim2.new(1, 0, 1, 0)
+shieldCP.BackgroundTransparency = 1
+shieldCP.Text = ""
+shieldCP.AutoButtonColor = false
+shieldCP.ZIndex = 1
+shieldCP.Active = true
 
+local panel = Instance.new("Frame", panelGui)
+panel.Size = UDim2.new(0, 460, 0, 580)
+panel.AnchorPoint = Vector2.new(0.5, 0.5)
+panel.Position = UDim2.new(0.5, 0, 0.5, 0)
+panel.BackgroundColor3 = Color3.fromRGB(15, 15, 18)
+panel.BackgroundTransparency = 0.05
+panel.BorderSizePixel = 0
+panel.ZIndex = 2
+panel.Active = true
+Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 8)
+local pStroke = Instance.new("UIStroke", panel)
+pStroke.Color = Color3.fromRGB(60, 60, 70)
+pStroke.Thickness = 1
+pStroke.Transparency = 0.5
+
+local bigTitle = Instance.new("TextLabel", panel)
+bigTitle.Size = UDim2.new(1, 0, 0, 56)
+bigTitle.Position = UDim2.new(0, 0, 0, 8)
+bigTitle.BackgroundTransparency = 1
+bigTitle.Text = "控制面板"
+bigTitle.TextColor3 = Color3.new(1, 1, 1)
+bigTitle.Font = Enum.Font.GothamBlack
+bigTitle.TextSize = 30
+bigTitle.ZIndex = 3
+
+local tabBarCP = Instance.new("Frame", panel)
+tabBarCP.Size = UDim2.new(1, -40, 0, 44)
+tabBarCP.Position = UDim2.new(0, 20, 0, 74)
+tabBarCP.BackgroundTransparency = 1
+tabBarCP.ZIndex = 3
+local tlCP = Instance.new("UIListLayout", tabBarCP)
+tlCP.FillDirection = Enum.FillDirection.Horizontal
+tlCP.Padding = UDim.new(0, 6)
+tlCP.HorizontalAlignment = Enum.HorizontalAlignment.Center
+
+local listFrame = Instance.new("ScrollingFrame", panel)
+listFrame.Size = UDim2.new(1, -40, 1, -200)
+listFrame.Position = UDim2.new(0, 20, 0, 130)
+listFrame.BackgroundTransparency = 1
+listFrame.BorderSizePixel = 0
+listFrame.ZIndex = 3
+listFrame.ScrollBarThickness = 4
+listFrame.ScrollBarImageColor3 = Color3.fromRGB(100, 100, 110)
+listFrame.ScrollBarImageTransparency = 0.3
+listFrame.ScrollingDirection = Enum.ScrollingDirection.Y
+listFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+listFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+listFrame.ElasticBehavior = Enum.ElasticBehavior.WhenScrollable
+listFrame.Active = true
+local listPad = Instance.new("UIPadding", listFrame)
+listPad.PaddingTop = UDim.new(0, 2)
+listPad.PaddingBottom = UDim.new(0, 8)
+listPad.PaddingRight = UDim.new(0, 6)
+local ll2 = Instance.new("UIListLayout", listFrame)
+ll2.FillDirection = Enum.FillDirection.Vertical
+ll2.Padding = UDim.new(0, 6)
+ll2.SortOrder = Enum.SortOrder.LayoutOrder
+
+local hintCP = Instance.new("TextLabel", panel)
+hintCP.Size = UDim2.new(1, 0, 0, 24)
+hintCP.Position = UDim2.new(0, 0, 1, -30)
+hintCP.BackgroundTransparency = 1
+hintCP.Text = "点击边界之外以关闭"
+hintCP.TextColor3 = Color3.fromRGB(150, 150, 160)
+hintCP.Font = Enum.Font.Gotham
+hintCP.TextSize = 13
+hintCP.ZIndex = 3
+
+local TABS = {
+    ["基础"] = {
+        {kind="toggle", name="无限体力", desc="让体力永远保持满状态", key="stamina"},
+        {kind="expandable", name="敌人透视", desc="给所有 AI 加高亮", key="esp",
+            children={
+                {kind="subToggle", name="显示名称", key="espName"},
+                {kind="subToggle", name="显示血量", key="espHP"},
+            }},
+        {kind="expandable", name="头部 Hitbox 放大", desc="自定义头部碰撞体积大小", key="headHitbox",
+            children={
+                {kind="numberInput", name="头部大小", key="headSizeVal", min=1, max=20},
+            }},
+        {kind="toggle", name="及时交互", desc="与可互动的物体进行秒交互", key="autoInteract"},
+        {kind="toggle", name="无条件重置", desc="随时可以重置角色", key="forceReset"},
+        {kind="expandable", name="滑铲距离修改", desc="调整滑铲距离倍率", key="slide",
+            children={
+                {kind="numberInput", name="滑铲距离倍率", key="slideDistanceMult", min=1, max=10},
+            }},
+        {kind="expandable", name="滑铲变向", desc="滑铲时根据方向变向", key="slideSteer",
+            children={
+                {kind="subCycle", name="变向模式", options={"视角控制","移动控制"}, key="slideSteerMode"},
+            }},
+        {kind="toggle", name="无限电量夜视仪", desc="夜视仪电量无限", key="nvg"},
+        {kind="toggle", name="免疫象脚", desc="免疫象脚和致死区", key="elephantImmune"},
+        {kind="toggle", name="去除枪口遮挡", desc="贴墙时不会挡住枪口", key="muzzle"},
+        {kind="toggle", name="无后坐力", desc="消除枪械后坐力", key="recoil"},
+        {kind="toggle", name="聊天框强制显示", desc="始终显示聊天窗口", key="chatForce"},
+        {kind="toggle", name="强制爆头", desc="命中四肢/身体判定为爆头/不能和魔法子弹同时开启", key="forceHeadshot"},
+        {kind="toggle", name="自动 QTE", desc="QTE 自动完美完成", key="autoQTE"},
+        {kind="toggle", name="霰弹枪连发", desc="霰弹枪免拉栓动画", key="shotgunNoPump"},
+        {kind="toggle", name="修复盾牌滑铲/疾跑", desc="持盾也能滑铲疾跑", key="shieldSlide"},
+        {kind="expandable", name="第一人称盾牌半透明", desc="第一人称盾牌半透明显示", key="shieldVM",
+            children={
+                {kind="numberInput", name="盾牌透明度", key="shieldVMAlpha", min=0, max=0.99},
+            }},
+        {kind="toggle", name="无滑铲冷却", desc="滑铲无冷却（有 bug）", key="noCD"},
+        {kind="toggle", name="快速换弹", desc="换弹速度 2 倍", key="fastReload"},
+    },
+    ["魔法子弹"] = {
+        {kind="expandable", name="启用魔法子弹", desc="自动锁定准星内最近的敌人", key="magicBullet",
+            children={
+                {kind="subToggle", name="显示 3D 头框", key="mbShowBox"},
+                {kind="subToggle", name="掩体检测", key="mbRequireVisible"},
+                {kind="subToggle", name="穿透盾牌", key="pierceShield"},
+                {kind="subToggle", name="穿透 SIN 头盔", key="pierceHelmet"},
+                {kind="subToggle", name="穿透队友", key="pierceTeammate"},
+                {kind="subToggle", name="穿透尸体", key="pierceCorpse"},
+                {kind="subToggle", name="显示 FOV 圈", key="mbShowFovCircle"},
+                {kind="subToggle", name="未锁定不穿透", key="mbOnlyWhenLocked"},
+            }},
+        {kind="expandableCycle", name="锁定模式", desc="切换目标选择方式",
+            key="mbTargetMode",
+            options={"锁定FOV内准星模式","锁定FOV内最近距离模式","360°模式"},
+            children={
+                {kind="subToggle", name="360°锁定半径锁定显示", key="mbShowRadius"},
+                {kind="subCycle", name="360°锁定半径显示模式", options={"线","面"}, key="radiusMode"},
+            }},
+        {kind="toggle", name="自动开火", desc="锁定后自动开火（需先开魔法子弹+掩体检测）", key="autoFire"},
+        {kind="triple", name="FOV锁定半径",
+            desc="FOV=锁定半径（像素）",
+            key="mbParams",
+            fields={"FOV"},
+            defaults={"200"}},
+        {kind="input", name="最大锁定距离", desc="锁定目标的最远距离（studs）", key="mbWorldDistMax",
+            default="200", quick={50, 200}},
+        {kind="body2d", name="锁定部位", desc="选择锁定的身体部位", key="mbAimPart"},
+    },
+    ["雷达"] = {
+        {kind="toggle", name="雷达探敌", desc="小地图上显示所有敌人", key="radar"},
+        {kind="toggle", name="高刷新率", desc="雷达刷新更频繁（耗性能）", key="radarFast"},
+        {kind="toggle", name="朝向箭头", desc="显示敌人的朝向", key="radarArrow"},
+        {kind="toggle", name="信号增幅器", desc="去除无信号区域干扰", key="radarBoost"},
+    },
+    ["其他"] = {
+        {kind="label", name="占位符", desc="后续功能将陆续加入"},
+    },
+}
+
+for _, tabList in pairs(TABS) do
+    for _, d in ipairs(tabList) do
+        if d.kind == "expandable" or d.kind == "expandableCycle" then
+            for _, ch in ipairs(d.children or {}) do
+                if ch.kind == "subCycle" then
+                    if _G._ExamStates[ch.key] == nil then _G._ExamStates[ch.key] = 1 end
+                end
+            end
+        end
+    end
+end
+
+local currentTabCP = "基础"
+local tabButtonsCP = {}
+local renderListCP
+
+local function switchTabCP(name)
+    currentTabCP = name
+    for n, b in pairs(tabButtonsCP) do
+        if n == name then
+            b.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+            b.TextColor3 = Color3.fromRGB(15, 15, 18)
+        else
+            b.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+            b.TextColor3 = Color3.fromRGB(220, 220, 220)
+        end
+    end
+    if renderListCP then renderListCP() end
+end
+
+local function mkTabCP(name, order)
+    local b = Instance.new("TextButton", tabBarCP)
+    b.Size = UDim2.new(0, 88, 1, 0)
+    b.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+    b.Text = name
+    b.TextColor3 = Color3.fromRGB(220, 220, 220)
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 14
+    b.Active = true
+    b.AutoButtonColor = false
+    b.LayoutOrder = order
+    b.ZIndex = 4
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+    bindTapCP(b, function() playClickCP(); switchTabCP(name) end)
+    tabButtonsCP[name] = b
+end
+
+mkTabCP("基础", 1)
+mkTabCP("魔法子弹", 2)
+mkTabCP("雷达", 3)
+mkTabCP("其他", 4)
+
+local function addTitleDescCP(item, data, titleOffset, width)
+    local t = Instance.new("TextLabel", item)
+    t.Size = UDim2.new(1, width or -80, 0, 22)
+    t.Position = UDim2.new(0, 12, 0, titleOffset or 8)
+    t.BackgroundTransparency = 1
+    t.Text = data.name
+    t.TextColor3 = Color3.fromRGB(240, 240, 245)
+    t.Font = Enum.Font.GothamBold
+    t.TextSize = 14
+    t.TextXAlignment = Enum.TextXAlignment.Left
+    t.ZIndex = 5
+    t.Active = false
+end
+
+local function addDescCP(item, data, y, width)
+    local d = Instance.new("TextLabel", item)
+    d.Size = UDim2.new(1, width or -80, 0, 18)
+    d.Position = UDim2.new(0, 12, 0, y)
+    d.BackgroundTransparency = 1
+    d.Text = data.desc
+    d.TextColor3 = Color3.fromRGB(130, 130, 140)
+    d.Font = Enum.Font.Gotham
+    d.TextSize = 12
+    d.TextXAlignment = Enum.TextXAlignment.Left
+    d.ZIndex = 5
+    d.Active = false
+end
+
+local function mkCheckboxCP(parent, key, size, rightOffset)
+    local cbHit = Instance.new("TextButton", parent)
+    cbHit.Size = UDim2.new(0, size + 16, 0, size + 16)
+    cbHit.Position = UDim2.new(1, rightOffset - (size + 16), 0.5, -(size + 16)/2)
+    cbHit.BackgroundTransparency = 1
+    cbHit.Text = ""
+    cbHit.ZIndex = 20
+    cbHit.AutoButtonColor = false
+    cbHit.Active = true
+
+    local cb = Instance.new("Frame", cbHit)
+    cb.Size = UDim2.new(0, size, 0, size)
+    cb.Position = UDim2.new(0.5, -size/2, 0.5, -size/2)
+    cb.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
+    cb.BackgroundTransparency = 0.2
+    cb.BorderSizePixel = 0
+    cb.ZIndex = 5
+    cb.Active = false
+    Instance.new("UICorner", cb).CornerRadius = UDim.new(0, 4)
+
+    local st = Instance.new("UIStroke", cb)
+    st.Color = Color3.fromRGB(80, 80, 90)
+    st.Thickness = 1
+    st.Transparency = 0.3
+
+    local cm = Instance.new("TextLabel", cb)
+    cm.Size = UDim2.new(1, 0, 1, 0)
+    cm.BackgroundTransparency = 1
+    cm.Text = "✓"
+    cm.TextColor3 = Color3.fromRGB(15, 15, 18)
+    cm.Font = Enum.Font.GothamBold
+    cm.TextSize = size * 0.8
+    cm.Visible = false
+    cm.ZIndex = 6
+    cm.Active = false
+
+    local function refresh()
+        if _G._ExamStates[key] == true then
+            cb.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+            cb.BackgroundTransparency = 0
+            cm.Visible = true
+            st.Transparency = 1
+        else
+            cb.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
+            cb.BackgroundTransparency = 0.2
+            cm.Visible = false
+            st.Transparency = 0.3
+        end
+    end
+    refresh()
+
+    _G._CP_RefreshFns = _G._CP_RefreshFns or {}
+    _G._CP_RefreshFns[key] = refresh
+
+    bindTapCP(cbHit, function()
+        local cur = _G._ExamStates[key] == true
+        local nv = not cur
+        _G._ExamStates[key] = nv
+        if _G._ExamSetters[key] then pcall(_G._ExamSetters[key], nv) end
+        refresh()
+        playClickCP()
+    end)
+    return cbHit
+end
+
+local function mkChildCP(parent, ch, order)
+    local child = Instance.new("Frame", parent)
+    child.Size = UDim2.new(1, 0, 0, 42)
+    child.BackgroundColor3 = Color3.fromRGB(20, 20, 26)
+    child.BackgroundTransparency = 0.3
+    child.BorderSizePixel = 0
+    child.LayoutOrder = order
+    child.ZIndex = 5
+    child.Active = false
+    Instance.new("UICorner", child).CornerRadius = UDim.new(0, 3)
+
+    local bar = Instance.new("Frame", child)
+    bar.Size = UDim2.new(0, 2, 1, -14)
+    bar.Position = UDim2.new(0, 6, 0, 7)
+    bar.BackgroundColor3 = Color3.fromRGB(0, 180, 120)
+    bar.BorderSizePixel = 0
+    bar.ZIndex = 6
+    Instance.new("UICorner", bar).CornerRadius = UDim.new(1, 0)
+
+    local t = Instance.new("TextLabel", child)
+    t.Size = UDim2.new(1, -100, 1, 0)
+    t.Position = UDim2.new(0, 16, 0, 0)
+    t.BackgroundTransparency = 1
+    t.Text = ch.name
+    t.TextColor3 = Color3.fromRGB(220, 220, 225)
+    t.Font = Enum.Font.Gotham
+    t.TextSize = 13
+    t.TextXAlignment = Enum.TextXAlignment.Left
+    t.ZIndex = 6
+    t.Active = false
+
+    if ch.kind == "subToggle" then
+        mkCheckboxCP(child, ch.key, 22, -8)
+    elseif ch.kind == "subCycle" then
+        local cycleBtn = Instance.new("TextButton", child)
+        cycleBtn.Size = UDim2.new(0, 110, 0, 26)
+        cycleBtn.Position = UDim2.new(1, -118, 0.5, -13)
+        cycleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 100)
+        cycleBtn.TextColor3 = Color3.new(1, 1, 1)
+        cycleBtn.Font = Enum.Font.GothamBold
+        cycleBtn.TextSize = 12
+        cycleBtn.Active = true
+        cycleBtn.AutoButtonColor = false
+        cycleBtn.ZIndex = 20
+        Instance.new("UICorner", cycleBtn).CornerRadius = UDim.new(0, 5)
+        local function refresh()
+            cycleBtn.Text = ch.options[_G._ExamStates[ch.key] or 1] or "?"
+        end
+        refresh()
+        bindTapCP(cycleBtn, function()
+            local cur = _G._ExamStates[ch.key] or 1
+            local nv = cur % #ch.options + 1
+            _G._ExamStates[ch.key] = nv
+            if _G._ExamSetters[ch.key] then pcall(_G._ExamSetters[ch.key], nv) end
+            refresh(); playClickCP()
+        end)
+    elseif ch.kind == "numberInput" then
+        local inputBox = Instance.new("TextBox", child)
+        inputBox.Size = UDim2.new(0, 70, 0, 26)
+        inputBox.Position = UDim2.new(1, -78, 0.5, -13)
+        inputBox.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+        inputBox.TextColor3 = Color3.new(1, 1, 1)
+        inputBox.Text = tostring(_G._ExamStates[ch.key] or ch.min or 1)
+        inputBox.Font = Enum.Font.Gotham
+        inputBox.TextSize = 13
+        inputBox.BorderSizePixel = 0
+        inputBox.ClearTextOnFocus = false
+        inputBox.ZIndex = 20
+        Instance.new("UICorner", inputBox).CornerRadius = UDim.new(0, 4)
+        inputBox.FocusLost:Connect(function()
+            local v = tonumber(inputBox.Text)
+            if v then
+                v = math.clamp(v, ch.min or 1, ch.max or 100)
+                _G._ExamStates[ch.key] = v
+                inputBox.Text = tostring(v)
+                if _G._ExamSetters[ch.key] then pcall(_G._ExamSetters[ch.key], v) end
+            else
+                inputBox.Text = tostring(_G._ExamStates[ch.key] or ch.min or 1)
+            end
+        end)
+    end
+    return child
+end
+
+local function mkExpandableCP(parent, data, order)
+    local item = Instance.new("Frame", parent)
+    item.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+    item.BackgroundTransparency = 0.15
+    item.BorderSizePixel = 0
+    item.ZIndex = 4
+    item.LayoutOrder = order
+    item.Active = false
+    Instance.new("UICorner", item).CornerRadius = UDim.new(0, 4)
+
+    local mainRow = Instance.new("Frame", item)
+    mainRow.Size = UDim2.new(1, 0, 0, 58)
+    mainRow.Position = UDim2.new(0, 0, 0, 0)
+    mainRow.BackgroundTransparency = 1
+    mainRow.ZIndex = 4
+    mainRow.Active = false
+
+    addTitleDescCP(mainRow, data, 8)
+    addDescCP(mainRow, data, 30)
+    mkCheckboxCP(mainRow, data.key, 28, -50)
+
+    local arrowBtn = Instance.new("TextButton", mainRow)
+    arrowBtn.Size = UDim2.new(0, 36, 0, 36)
+    arrowBtn.Position = UDim2.new(1, -42, 0.5, -18)
+    arrowBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
+    arrowBtn.TextColor3 = Color3.fromRGB(200, 200, 210)
+    arrowBtn.Font = Enum.Font.GothamBold
+    arrowBtn.TextSize = 14
+    arrowBtn.Active = true
+    arrowBtn.AutoButtonColor = false
+    arrowBtn.ZIndex = 20
+    Instance.new("UICorner", arrowBtn).CornerRadius = UDim.new(0, 5)
+
+    local childBox = Instance.new("Frame", item)
+    childBox.Size = UDim2.new(1, -16, 0, 0)
+    childBox.Position = UDim2.new(0, 8, 0, 58)
+    childBox.BackgroundTransparency = 1
+    childBox.ClipsDescendants = true
+    childBox.ZIndex = 4
+    childBox.Active = false
+
+    local childLayout = Instance.new("UIListLayout", childBox)
+    childLayout.FillDirection = Enum.FillDirection.Vertical
+    childLayout.Padding = UDim.new(0, 4)
+    childLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+    local childH = 0
+    for i, ch in ipairs(data.children or {}) do
+        mkChildCP(childBox, ch, i)
+        childH = childH + 42 + 4
+    end
+    if childH > 0 then childH = childH - 4 end
+
+    local expanded = data.expandDefault or false
+    local function refreshSize()
+        local extra = expanded and (childH + 12) or 0
+        item.Size = UDim2.new(1, 0, 0, 58 + extra)
+        childBox.Size = UDim2.new(1, -16, 0, expanded and childH or 0)
+        arrowBtn.Text = expanded and "▲" or "▼"
+        childBox.Visible = expanded
+    end
+    refreshSize()
+
+    bindTapCP(arrowBtn, function()
+        expanded = not expanded
+        playClickCP()
+        refreshSize()
+    end)
+end
+
+local function mkExpandableCycleCP(parent, data, order)
+    local item = Instance.new("Frame", parent)
+    item.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+    item.BackgroundTransparency = 0.15
+    item.BorderSizePixel = 0
+    item.ZIndex = 4
+    item.LayoutOrder = order
+    item.Active = false
+    Instance.new("UICorner", item).CornerRadius = UDim.new(0, 4)
+
+    local mainRow = Instance.new("Frame", item)
+    mainRow.Size = UDim2.new(1, 0, 0, 58)
+    mainRow.Position = UDim2.new(0, 0, 0, 0)
+    mainRow.BackgroundTransparency = 1
+    mainRow.ZIndex = 4
+    mainRow.Active = false
+
+    addTitleDescCP(mainRow, data, 8)
+    addDescCP(mainRow, data, 30)
+    local key = data.key
+
+    local cycleBtn = Instance.new("TextButton", mainRow)
+    cycleBtn.Size = UDim2.new(0, 170, 0, 32)
+    cycleBtn.Position = UDim2.new(1, -216, 0.5, -16)
+    cycleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 100)
+    cycleBtn.TextColor3 = Color3.new(1, 1, 1)
+    cycleBtn.Font = Enum.Font.GothamBold
+    cycleBtn.TextSize = 12
+    cycleBtn.Active = true
+    cycleBtn.AutoButtonColor = false
+    cycleBtn.ZIndex = 20
+    Instance.new("UICorner", cycleBtn).CornerRadius = UDim.new(0, 5)
+
+    local arrowBtn = Instance.new("TextButton", mainRow)
+    arrowBtn.Size = UDim2.new(0, 36, 0, 36)
+    arrowBtn.Position = UDim2.new(1, -42, 0.5, -18)
+    arrowBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
+    arrowBtn.TextColor3 = Color3.fromRGB(200, 200, 210)
+    arrowBtn.Font = Enum.Font.GothamBold
+    arrowBtn.TextSize = 14
+    arrowBtn.Active = true
+    arrowBtn.AutoButtonColor = false
+    arrowBtn.ZIndex = 20
+    Instance.new("UICorner", arrowBtn).CornerRadius = UDim.new(0, 5)
+
+    local childBox = Instance.new("Frame", item)
+    childBox.Size = UDim2.new(1, -16, 0, 0)
+    childBox.Position = UDim2.new(0, 8, 0, 58)
+    childBox.BackgroundTransparency = 1
+    childBox.ClipsDescendants = true
+    childBox.ZIndex = 4
+    childBox.Active = false
+
+    local childLayout = Instance.new("UIListLayout", childBox)
+    childLayout.FillDirection = Enum.FillDirection.Vertical
+    childLayout.Padding = UDim.new(0, 4)
+    childLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+    local childH = 0
+    for i, ch in ipairs(data.children or {}) do
+        mkChildCP(childBox, ch, i)
+        childH = childH + 42 + 4
+    end
+    if childH > 0 then childH = childH - 4 end
+
+    local expanded = data.expandDefault or false
+    local IS_LAST = #data.options
+
+    local function refreshSize()
+        local extra = expanded and (childH + 12) or 0
+        item.Size = UDim2.new(1, 0, 0, 58 + extra)
+        childBox.Size = UDim2.new(1, -16, 0, expanded and childH or 0)
+        arrowBtn.Text = expanded and "▲" or "▼"
+        childBox.Visible = expanded
+    end
+
+    local function refreshCycle()
+        cycleBtn.Text = data.options[_G._ExamStates[key] or 1] or "?"
+        if (_G._ExamStates[key] or 1) == IS_LAST then
+            arrowBtn.Visible = true
+        else
+            arrowBtn.Visible = false
+            if expanded then
+                expanded = false
+                refreshSize()
+            end
+        end
+    end
+
+    refreshCycle()
+    refreshSize()
+
+    bindTapCP(cycleBtn, function()
+        local cur = _G._ExamStates[key] or 1
+        local nv = cur % #data.options + 1
+        _G._ExamStates[key] = nv
+        if _G._ExamSetters[key] then pcall(_G._ExamSetters[key], nv) end
+        refreshCycle()
+        playClickCP()
+    end)
+    bindTapCP(arrowBtn, function()
+        expanded = not expanded
+        playClickCP()
+        refreshSize()
+    end)
+end
+
+local function mkToggleItemCP(parent, data, order)
+    local item = Instance.new("Frame", parent)
+    item.Size = UDim2.new(1, 0, 0, 58)
+    item.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+    item.BackgroundTransparency = 0.15
+    item.BorderSizePixel = 0
+    item.ZIndex = 4
+    item.LayoutOrder = order
+    item.Active = false
+    Instance.new("UICorner", item).CornerRadius = UDim.new(0, 4)
+    addTitleDescCP(item, data, 8)
+    addDescCP(item, data, 30)
+    mkCheckboxCP(item, data.key, 28, -8)
+end
+
+local function mkLabelItemCP(parent, data, order)
+    local item = Instance.new("Frame", parent)
+    item.Size = UDim2.new(1, 0, 0, 58)
+    item.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+    item.BackgroundTransparency = 0.15
+    item.BorderSizePixel = 0
+    item.ZIndex = 4
+    item.LayoutOrder = order
+    item.Active = false
+    Instance.new("UICorner", item).CornerRadius = UDim.new(0, 4)
+    addTitleDescCP(item, data, 8)
+    addDescCP(item, data, 30)
+end
+
+local function mkInputItemCP(parent, data, order)
+    local item = Instance.new("Frame", parent)
+    item.Size = UDim2.new(1, 0, 0, 58)
+    item.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+    item.BackgroundTransparency = 0.15
+    item.BorderSizePixel = 0
+    item.ZIndex = 4
+    item.LayoutOrder = order
+    item.Active = false
+    Instance.new("UICorner", item).CornerRadius = UDim.new(0, 4)
+    addTitleDescCP(item, data, 8)
+    addDescCP(item, data, 30)
+    local key = data.key
+    local inputBox = Instance.new("TextBox", item)
+    inputBox.Size = UDim2.new(0, 70, 0, 30)
+    inputBox.Position = UDim2.new(1, -230, 0.5, -15)
+    inputBox.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+    inputBox.TextColor3 = Color3.new(1, 1, 1)
+    inputBox.Text = tostring(_G._ExamStates[key] or data.default or "200")
+    inputBox.Font = Enum.Font.Gotham
+    inputBox.TextSize = 13
+    inputBox.BorderSizePixel = 0
+    inputBox.ClearTextOnFocus = false
+    inputBox.ZIndex = 20
+    Instance.new("UICorner", inputBox).CornerRadius = UDim.new(0, 4)
+    inputBox.FocusLost:Connect(function()
+        local v = tonumber(inputBox.Text)
+        if v then
+            _G._ExamStates[key] = v
+            inputBox.Text = tostring(v)
+            if _G._ExamSetters[key] then pcall(_G._ExamSetters[key], v) end
+        else
+            inputBox.Text = tostring(_G._ExamStates[key] or "200")
+        end
+    end)
+    if data.quick then
+        local qBtnW = 55
+        local qGap = 4
+        local qStartX = -230 + 70 + 6
+        for i, v in ipairs(data.quick) do
+            local qb = Instance.new("TextButton", item)
+            qb.Size = UDim2.new(0, qBtnW, 0, 30)
+            qb.Position = UDim2.new(1, qStartX + (i-1) * (qBtnW + qGap), 0.5, -15)
+            qb.BackgroundColor3 = Color3.fromRGB(60, 80, 100)
+            qb.TextColor3 = Color3.fromRGB(220, 220, 220)
+            qb.Text = tostring(v)
+            qb.Font = Enum.Font.GothamBold
+            qb.TextSize = 12
+            qb.Active = true
+            qb.AutoButtonColor = false
+            qb.ZIndex = 20
+            Instance.new("UICorner", qb).CornerRadius = UDim.new(0, 4)
+            bindTapCP(qb, function()
+                _G._ExamStates[key] = v
+                inputBox.Text = tostring(v)
+                if _G._ExamSetters[key] then pcall(_G._ExamSetters[key], v) end
+                playClickCP()
+            end)
+        end
+    end
+end
+
+local function mkTripleItemCP(parent, data, order)
+    local item = Instance.new("Frame", parent)
+    item.Size = UDim2.new(1, 0, 0, 74)
+    item.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+    item.BackgroundTransparency = 0.15
+    item.BorderSizePixel = 0
+    item.ZIndex = 4
+    item.LayoutOrder = order
+    item.Active = false
+    Instance.new("UICorner", item).CornerRadius = UDim.new(0, 4)
+    addTitleDescCP(item, data, 6)
+    local descLbl = Instance.new("TextLabel", item)
+    descLbl.Size = UDim2.new(1, -20, 0, 16)
+    descLbl.Position = UDim2.new(0, 12, 0, 26)
+    descLbl.BackgroundTransparency = 1
+    descLbl.Text = data.desc
+    descLbl.TextColor3 = Color3.fromRGB(130, 130, 140)
+    descLbl.Font = Enum.Font.Gotham
+    descLbl.TextSize = 11
+    descLbl.TextXAlignment = Enum.TextXAlignment.Left
+    descLbl.TextWrapped = false
+    descLbl.ZIndex = 5
+    descLbl.Active = false
+    local key = data.key
+    local fieldW = 60
+    local gap = 8
+    local totalW = (#data.fields) * fieldW + (#data.fields - 1) * gap
+    local startX = 1 - (totalW + 12)
+    for i, field in ipairs(data.fields) do
+        local lbl = Instance.new("TextLabel", item)
+        lbl.Size = UDim2.new(0, 26, 0, 22)
+        lbl.Position = UDim2.new(1, startX + (i-1) * (fieldW + gap) - 26, 0, 48)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = field
+        lbl.TextColor3 = Color3.fromRGB(200, 200, 200)
+        lbl.Font = Enum.Font.Gotham
+        lbl.TextSize = 11
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.ZIndex = 6
+        lbl.Active = false
+        local box = Instance.new("TextBox", item)
+        box.Size = UDim2.new(0, fieldW, 0, 22)
+        box.Position = UDim2.new(1, startX + (i-1) * (fieldW + gap), 0, 48)
+        box.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+        box.TextColor3 = Color3.new(1, 1, 1)
+        box.Text = tostring(_G._ExamStates[key] or data.defaults[i] or "")
+        box.Font = Enum.Font.Gotham
+        box.TextSize = 12
+        box.BorderSizePixel = 0
+        box.ClearTextOnFocus = false
+        box.ZIndex = 20
+        Instance.new("UICorner", box).CornerRadius = UDim.new(0, 4)
+        box.FocusLost:Connect(function()
+            local v = tonumber(box.Text)
+            if v then
+                _G._ExamStates[key] = v
+                if _G._ExamSetters[key] then pcall(_G._ExamSetters[key], v) end
+            else
+                box.Text = tostring(_G._ExamStates[key] or data.defaults[i] or "")
+            end
+        end)
+    end
+end
+
+local AIM_PARTS_CP = {"头部","躯干","左臂","右臂","左腿","右腿"}
+local function mkBody2dItemCP(parent, data, order)
+    local item = Instance.new("Frame", parent)
+    item.Size = UDim2.new(1, 0, 0, 230)
+    item.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+    item.BackgroundTransparency = 0.15
+    item.BorderSizePixel = 0
+    item.ZIndex = 4
+    item.LayoutOrder = order
+    item.Active = false
+    Instance.new("UICorner", item).CornerRadius = UDim.new(0, 4)
+    local title = Instance.new("TextLabel", item)
+    title.Size = UDim2.new(1, -20, 0, 22)
+    title.Position = UDim2.new(0, 12, 0, 6)
+    title.BackgroundTransparency = 1
+    title.Text = data.name
+    title.TextColor3 = Color3.fromRGB(240, 240, 245)
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 14
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.ZIndex = 5
+    title.Active = false
+    local desc = Instance.new("TextLabel", item)
+    desc.Size = UDim2.new(1, -20, 0, 16)
+    desc.Position = UDim2.new(0, 12, 0, 26)
+    desc.BackgroundTransparency = 1
+    desc.Text = data.desc
+    desc.TextColor3 = Color3.fromRGB(130, 130, 140)
+    desc.Font = Enum.Font.Gotham
+    desc.TextSize = 12
+    desc.TextXAlignment = Enum.TextXAlignment.Left
+    desc.ZIndex = 5
+    desc.Active = false
+    local bodyFrame = Instance.new("Frame", item)
+    bodyFrame.Size = UDim2.new(0, 160, 0, 170)
+    bodyFrame.Position = UDim2.new(0, 30, 0, 48)
+    bodyFrame.BackgroundTransparency = 1
+    bodyFrame.ZIndex = 5
+    local bodyColor = Color3.fromRGB(60, 60, 70)
+    local bodyColorSel = Color3.fromRGB(0, 200, 100)
+    local function mkPartBtn(x, y, w, h)
+        local b = Instance.new("TextButton", bodyFrame)
+        b.Size = UDim2.new(0, w, 0, h)
+        b.Position = UDim2.new(0, x, 0, y)
+        b.BackgroundColor3 = bodyColor
+        b.Text = ""
+        b.BorderSizePixel = 0
+        b.AutoButtonColor = false
+        b.ZIndex = 6
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 4)
+        return b
+    end
+    local parts = {}
+    parts[1] = mkPartBtn(55, 6, 50, 30)
+    parts[2] = mkPartBtn(55, 42, 50, 60)
+    parts[3] = mkPartBtn(30, 42, 22, 60)
+    parts[4] = mkPartBtn(108, 42, 22, 60)
+    parts[5] = mkPartBtn(55, 108, 22, 50)
+    parts[6] = mkPartBtn(83, 108, 22, 50)
+    local key = data.key
+    local infoValue
+    local function refresh()
+        local cur = _G._ExamStates[key] or 1
+        for i, b in ipairs(parts) do
+            if i == cur then
+                b.BackgroundColor3 = bodyColorSel
+            else
+                b.BackgroundColor3 = bodyColor
+            end
+        end
+        if infoValue then infoValue.Text = AIM_PARTS_CP[cur] or "头部" end
+    end
+    for i, b in ipairs(parts) do
+        bindTapCP(b, function()
+            _G._ExamStates[key] = i
+            if _G._ExamSetters[key] then pcall(_G._ExamSetters[key], i) end
+            refresh()
+            playClickCP()
+        end)
+    end
+    local rightInfo = Instance.new("Frame", item)
+    rightInfo.Size = UDim2.new(1, -220, 1, -48)
+    rightInfo.Position = UDim2.new(0, 210, 0, 48)
+    rightInfo.BackgroundTransparency = 1
+    rightInfo.ZIndex = 5
+    local infoTitle = Instance.new("TextLabel", rightInfo)
+    infoTitle.Size = UDim2.new(1, 0, 0, 18)
+    infoTitle.Position = UDim2.new(0, 0, 0, 30)
+    infoTitle.BackgroundTransparency = 1
+    infoTitle.Text = "当前锁定"
+    infoTitle.TextColor3 = Color3.fromRGB(150, 150, 150)
+    infoTitle.Font = Enum.Font.Gotham
+    infoTitle.TextSize = 12
+    infoTitle.TextXAlignment = Enum.TextXAlignment.Left
+    infoTitle.ZIndex = 6
+    infoValue = Instance.new("TextLabel", rightInfo)
+    infoValue.Size = UDim2.new(1, 0, 0, 50)
+    infoValue.Position = UDim2.new(0, 0, 0, 52)
+    infoValue.BackgroundTransparency = 1
+    infoValue.Text = AIM_PARTS_CP[_G._ExamStates[key] or 1]
+    infoValue.TextColor3 = Color3.fromRGB(0, 220, 120)
+    infoValue.Font = Enum.Font.GothamBold
+    infoValue.TextSize = 26
+    infoValue.TextXAlignment = Enum.TextXAlignment.Left
+    infoValue.ZIndex = 6
+    refresh()
+end
+
+local function mkItemCP(parent, data, order)
+    if data.kind == "toggle" then mkToggleItemCP(parent, data, order)
+    elseif data.kind == "label" then mkLabelItemCP(parent, data, order)
+    elseif data.kind == "expandable" then mkExpandableCP(parent, data, order)
+    elseif data.kind == "expandableCycle" then mkExpandableCycleCP(parent, data, order)
+    elseif data.kind == "input" then mkInputItemCP(parent, data, order)
+    elseif data.kind == "body2d" then mkBody2dItemCP(parent, data, order)
+    elseif data.kind == "triple" then mkTripleItemCP(parent, data, order)
+    end
+end
+
+renderListCP = function()
+    for _, c in ipairs(listFrame:GetChildren()) do
+        if c:IsA("Frame") then c:Destroy() end
+    end
+    local list = TABS[currentTabCP] or {}
+    for i, dd in ipairs(list) do
+        mkItemCP(listFrame, dd, i)
+    end
+    listFrame.CanvasPosition = Vector2.new(0, 0)
+end
+
+switchTabCP("基础")
+
+-- ★ 弹入 / 收起动画（UIScale 驱动，1:1 原生体感）
+local animScale = Instance.new("UIScale", panel)
+animScale.Scale = 1
+local _panelTween = nil
+local PANEL_OPEN_SCALE = 0.7
+
+local function tweenScale(target, dur, style, dir, onDone)
+    if _panelTween then pcall(function() _panelTween:Cancel() end) end
+    _panelTween = TweenService:Create(
+        animScale,
+        TweenInfo.new(dur, style, dir),
+        { Scale = target }
+    )
+    _panelTween:Play()
+    _panelTween.Completed:Connect(function(state)
+        if state == Enum.PlaybackState.Completed then
+            _panelTween = nil
+            if onDone then onDone() end
+        end
+    end)
+end
+
+local function openPanelCP()
+    playClickCP()
+    panelGui.Enabled = true
+    if animScale.Scale >= 0.99 then animScale.Scale = PANEL_OPEN_SCALE end
+    tweenScale(1, 0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+end
+
+local function closePanelCP()
+    playClickCP()
+    tweenScale(PANEL_OPEN_SCALE, 0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.In, function()
+        panelGui.Enabled = false
+        animScale.Scale = 1
+    end)
+end
+
+shieldCP.Activated:Connect(function()
+    local mp = UserInputService:GetMouseLocation()
+    local ap = panel.AbsolutePosition
+    local asz = panel.AbsoluteSize
+    if mp.X >= ap.X and mp.X <= ap.X + asz.X and mp.Y >= ap.Y and mp.Y <= ap.Y + asz.Y then return end
+    closePanelCP()
+end)
+if btnClickCP then
+    btnClickCP.Activated:Connect(function()
+        if panelGui.Enabled then closePanelCP() else openPanelCP() end
+    end)
+end
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.KeyCode == Enum.KeyCode.Delete then
+        if panelGui.Enabled then closePanelCP() else openPanelCP() end
+    end
+end)
+
+task.spawn(function()
+    task.wait(2)
+    for _, key in ipairs({"espName","espHP","mbShowBox","mbRequireVisible",
+        "pierceShield","pierceHelmet","pierceTeammate","pierceCorpse",
+        "mbShowFovCircle","mbOnlyWhenLocked","radarFast","radarArrow"}) do
+        if _G._ExamSetters[key] then pcall(_G._ExamSetters[key], true) end
+    end
+end)
+
+print("[Exam] 控制面板 + v16.7.17 功能 已加载")
 -- ===END OF SCRIPT===
