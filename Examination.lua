@@ -1,5 +1,5 @@
 --!nolint
--- Examination v16.7.17 完全重做了UI
+-- Examination v16.7.17 新增射击视觉效果
 -- 此脚本使用AI生成
 -- 因使用混淆加密会导致手机用户无法正常使用所以没有使用混淆加密
 -- 请不要拿去缝合 此脚本永久免费
@@ -53,6 +53,16 @@ local slideDistanceMult = 2
 local shieldVMAlpha = 0.9
 local slideSteerMode = "camera"
 local mbTargetMode = 1
+
+-- 射击视觉效果（大功能默认关，子功能默认开）
+local shootVisualEnabled = false
+local tracerEnabled = true
+local hitMarkerEnabled = true
+local tracerColorIdx = 3
+local tracerDurationSec = 1
+local hmColorIdx = 3
+local hmDurationSec = 1
+local hmSizeIdx = 1
 
 local AI_CONTAINERS = {"Characters", "Reactor1", "Reactor2", "Reactor3", "Reactor4"}
 local SHOTGUN_PUMP_IDS = {
@@ -238,6 +248,9 @@ local function safeCleanup()
         for _, d in ipairs(Workspace:GetChildren()) do
             if d.Name == n then pcall(function() d:Destroy() end) end
         end
+    end
+    for _, d in ipairs(Workspace:GetChildren()) do
+        if d.Name == "ExamTracer_Visual" then pcall(function() d:Destroy() end) end
     end
     if _G.ExamRadiusTip and _G.ExamRadiusTip.Parent then pcall(function() _G.ExamRadiusTip:Destroy() end) end
     _G.ExamRadiusTip = nil
@@ -2036,7 +2049,7 @@ do
     table.insert(cleanupFns, function() stopGuard() end)
 end
 
--- ============ 模块 14: 强制爆头（与魔法子弹互斥） ============
+-- ============ 模块 14: 强制爆头 ============
 do
     local fhHookInstalled = false
     local fhOrigInvoke = nil
@@ -2632,7 +2645,7 @@ local function showCountdownTip(msg, duration)
     if tipToken == myToken then tipLbl.Visible = false end
 end
 
--- ============ 模块 17: 魔法子弹 + 自动开火（与强制爆头互斥） ============
+-- ============ 模块 17: 魔法子弹 + 自动开火 + 射击视觉效果 ============
 (function()
     local mbAimPartIndex = 1
     local mbFovRadius = 200
@@ -2664,6 +2677,200 @@ end
     local clipMaxTickByTool = {}
     local EMERGENCY_SKIP_RATIO = 0.7
     local CLIP_MAX_TTL = 30
+
+    -- 射击视觉效果
+    local TRACER_COLORS = {Color3.fromRGB(255,60,60), Color3.fromRGB(60,255,60), Color3.fromRGB(60,180,255)}
+    local HM_COLORS = {Color3.new(1,1,1), Color3.fromRGB(255,60,60), Color3.fromRGB(60,255,255)}
+    local HM_SIZE = {
+        {size=15, gap=4, thickness=2},
+        {size=25, gap=6, thickness=2.5},
+        {size=40, gap=8, thickness=3},
+    }
+    local MAX_TRACERS = 30
+    local MAX_HIT_MARKERS = 20
+    local tracerPool = {}
+    local tracerActive = {}
+    local hitMarkerPool = {}
+    local hitMarkerActive = {}
+    local tracerLoopStarted = false
+
+    local function initPools()
+        for i = 1, MAX_TRACERS do
+            local p = Instance.new("Part")
+            p.Name = "ExamTracer_Visual"
+            p.Anchored = true; p.CanCollide = false; p.CanQuery = false; p.CanTouch = false
+            p.CastShadow = false; p.Material = Enum.Material.Neon; p.Transparency = 1
+            p.Parent = nil
+            tracerPool[i] = p
+        end
+        for i = 1, MAX_HIT_MARKERS do
+            local lines = {}
+            for j = 1, 4 do
+                local l = Drawing.new("Line")
+                l.Thickness = 2; l.Transparency = 1; l.Visible = false
+                lines[j] = l
+            end
+            hitMarkerPool[i] = lines
+        end
+    end
+    initPools()
+
+    local function spawnTracer(startPos, endPos)
+        if not shootVisualEnabled or not tracerEnabled then return end
+        local part = table.remove(tracerPool)
+        if not part then
+            local oldest = table.remove(tracerActive, 1)
+            if oldest and oldest.part then
+                oldest.part.Parent = nil
+                part = oldest.part
+            else return end
+        end
+        part.Size = Vector3.new(0.1, 0.1, (startPos - endPos).Magnitude)
+        part.CFrame = CFrame.new(startPos, endPos) * CFrame.new(0, 0, -part.Size.Z / 2)
+        part.Transparency = 0
+        part.Color = TRACER_COLORS[tracerColorIdx] or Color3.fromRGB(255,60,60)
+        part.Parent = Workspace
+        table.insert(tracerActive, {part = part, startTick = tick(), duration = tracerDurationSec})
+    end
+
+    local function spawnHitMarker(worldPos)
+        if not shootVisualEnabled or not hitMarkerEnabled then return end
+        local lines = table.remove(hitMarkerPool)
+        if not lines then
+            local oldest = table.remove(hitMarkerActive, 1)
+            if oldest and oldest.lines then
+                for _, l in ipairs(oldest.lines) do l.Visible = false end
+                lines = oldest.lines
+            else return end
+        end
+        table.insert(hitMarkerActive, {lines = lines, worldPos = worldPos, startTick = tick(), duration = hmDurationSec})
+    end
+
+    local function startTracerLoop()
+        if tracerLoopStarted then return end
+        tracerLoopStarted = true
+        spawn(function()
+            local frame = 0
+            while gui.Parent do
+                RunService.RenderStepped:Wait()
+                frame = frame + 1
+                local now = tick()
+                if frame % 2 == 0 then
+                    for i = #tracerActive, 1, -1 do
+                        local item = tracerActive[i]
+                        local t = (now - item.startTick) / item.duration
+                        if t >= 1 then
+                            item.part.Parent = nil
+                            item.part.Transparency = 1
+                            table.insert(tracerPool, item.part)
+                            table.remove(tracerActive, i)
+                        else
+                            item.part.Transparency = t
+                            if tracerColorIdx == 4 then
+                                item.part.Color = Color3.fromHSV((now * 0.5) % 1, 1, 1)
+                            end
+                        end
+                    end
+                end
+                if #hitMarkerActive > 0 then
+                    local cam = Workspace.CurrentCamera
+                    if cam then
+                        for i = #hitMarkerActive, 1, -1 do
+                            local item = hitMarkerActive[i]
+                            local lifeT = (now - item.startTick) / item.duration
+                            if lifeT >= 1 then
+                                for _, l in ipairs(item.lines) do l.Visible = false end
+                                table.insert(hitMarkerPool, item.lines)
+                                table.remove(hitMarkerActive, i)
+                            else
+                                local sp, onScreen = cam:WorldToViewportPoint(item.worldPos)
+                                if onScreen then
+                                    local col = HM_COLORS[hmColorIdx] or Color3.new(1,1,1)
+                                    if hmColorIdx == 4 then
+                                        col = Color3.fromHSV((now * 0.3) % 1, 1, 1)
+                                    end
+                                    local sizeP = HM_SIZE[hmSizeIdx] or HM_SIZE[1]
+                                    local pulse = 1 + 0.3 * math.sin(lifeT * math.pi * 4)
+                                    local size = sizeP.size * pulse
+                                    local gap = sizeP.gap * pulse
+                                    local baseAngles = {45, 135, 225, 315}
+                                    for j = 1, 4 do
+                                        local line = item.lines[j]
+                                        local a = math.rad(baseAngles[j])
+                                        local cosA, sinA = math.cos(a), math.sin(a)
+                                        line.From = Vector2.new(sp.X + cosA * gap, sp.Y + sinA * gap)
+                                        line.To = Vector2.new(sp.X + cosA * (gap + size), sp.Y + sinA * (gap + size))
+                                        line.Color = col
+                                        line.Thickness = sizeP.thickness
+                                        line.Transparency = math.max(0, 1 - lifeT * 0.3)
+                                        line.Visible = true
+                                    end
+                                else
+                                    for _, l in ipairs(item.lines) do l.Visible = false end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
+    local function processHitVisuals(args)
+        local hitData = nil
+        for i = #args, 1, -1 do
+            local v = args[i]
+            if type(v) == "table" then
+                local h = v[1]
+                if typeof(h) == "Instance" and h:IsA("Humanoid") then
+                    hitData = v
+                    break
+                end
+            end
+        end
+        if not hitData then return end
+        local endPos = hitData[3]
+        if typeof(endPos) ~= "Vector3" then return end
+        local startPos = hitData[5]
+        if typeof(startPos) ~= "Vector3" then
+            local cam = Workspace.CurrentCamera
+            if cam then startPos = cam.CFrame.Position end
+        end
+        if tracerEnabled and startPos then spawnTracer(startPos, endPos) end
+        if hitMarkerEnabled then spawnHitMarker(endPos) end
+    end
+
+    _G._ExamSetters.shootVisual = function(v)
+        shootVisualEnabled = v
+        if v then startTracerLoop() end
+        if _G._ExamMB and _G._ExamMB.recheckHookFn then pcall(_G._ExamMB.recheckHookFn) end
+    end
+    _G._ExamStates.shootVisual = false
+    _G._ExamSetters.tracerOn = function(v)
+        tracerEnabled = v
+        if v then startTracerLoop() end
+        if _G._ExamMB and _G._ExamMB.recheckHookFn then pcall(_G._ExamMB.recheckHookFn) end
+    end
+    _G._ExamStates.tracerOn = true
+    _G._ExamSetters.hitMarkerOn = function(v)
+        hitMarkerEnabled = v
+        if v then startTracerLoop() end
+        if _G._ExamMB and _G._ExamMB.recheckHookFn then pcall(_G._ExamMB.recheckHookFn) end
+    end
+    _G._ExamStates.hitMarkerOn = true
+    _G._ExamSetters.tracerColor = function(v) tracerColorIdx = v end
+    _G._ExamStates.tracerColor = 3
+    _G._ExamSetters.tracerDuration = function(v) tracerDurationSec = ({1,2,3,5})[v] or 1 end
+    _G._ExamStates.tracerDuration = 1
+    _G._ExamSetters.hmColor = function(v) hmColorIdx = v end
+    _G._ExamStates.hmColor = 3
+    _G._ExamSetters.hmDuration = function(v) hmDurationSec = ({1,2,3,5})[v] or 1 end
+    _G._ExamStates.hmDuration = 1
+    _G._ExamSetters.hmSize = function(v) hmSizeIdx = v end
+    _G._ExamStates.hmSize = 1
+
+    startTracerLoop()
+
     local function getTool()
         local char = lp.Character
         if not char then return nil end
@@ -3368,10 +3575,15 @@ end
         if mbNetwork and type(mbNetwork.InvokeServer) == "function" then
             mbOrigInvoke = mbNetwork.InvokeServer
             local w = function(self, action, ...)
-                if action == "hit" and magicBulletEnabled then
+                if action == "hit" then
                     local args = {...}
-                    forceAimPart(args[3])
-                    return mbOrigInvoke(self, action, args[1], args[2], args[3])
+                    if shootVisualEnabled and (tracerEnabled or hitMarkerEnabled) then
+                        pcall(processHitVisuals, args)
+                    end
+                    if magicBulletEnabled then
+                        forceAimPart(args[3])
+                    end
+                    return mbOrigInvoke(self, action, unpack(args))
                 end
                 return mbOrigInvoke(self, action, ...)
             end
@@ -3457,9 +3669,18 @@ end
         end
         mbOrigInvoke = nil
     end
+    local function needHook()
+        return magicBulletEnabled or (shootVisualEnabled and (tracerEnabled or hitMarkerEnabled))
+    end
+    _G._ExamMB.recheckHookFn = function()
+        if needHook() then installHook() else uninstallHook() end
+    end
     local function mbSetup()
-        if magicBulletEnabled then
-            ensureFov(); updateFov(); installHook()
+        if needHook() then
+            if magicBulletEnabled then
+                ensureFov(); updateFov()
+            end
+            installHook()
         else
             uninstallHook(); updateFov(); destroyAllRadius(); wasTooLarge = false
             if autoFireEnabled then
@@ -3951,6 +4172,18 @@ end
         autoFireEnabled = false
         releaseFire(); releaseFire()
         uninstallHook(); destroyFov(); destroyLockBB(); destroyAllRadius()
+        for _, item in ipairs(tracerActive) do
+            if item.part then item.part.Parent = nil end
+        end
+        tracerActive = {}
+        for _, lines in ipairs(hitMarkerActive) do
+            for _, l in ipairs(lines.lines) do pcall(function() l:Remove() end) end
+        end
+        hitMarkerActive = {}
+        for _, p in ipairs(tracerPool) do if p then p:Destroy() end end
+        for _, lines in ipairs(hitMarkerPool) do
+            for _, l in ipairs(lines) do pcall(function() l:Remove() end) end
+        end
     end)
 end)()
 
@@ -4405,8 +4638,6 @@ do
         rbRestoreZones(); rbRestoreScripts(); rbHideLabel()
     end)
 end
-
-print("[Exam] 功能模块已加载 (SEGMENT 1)")
 -- ===SEGMENT 2/2===
 
 -- ============================================================
@@ -4560,7 +4791,6 @@ workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(functio
     uiScale.Scale = calcAdaptiveScaleCP()
 end)
 
--- ★ 遮罩完全透明（只捕获点击，不改背景）
 local shieldCP = Instance.new("TextButton", panelGui)
 shieldCP.Size = UDim2.new(1, 0, 1, 0)
 shieldCP.BackgroundTransparency = 1
@@ -4695,6 +4925,16 @@ local TABS = {
                 {kind="subCycle", name="360°锁定半径显示模式", options={"线","面"}, key="radiusMode"},
             }},
         {kind="toggle", name="自动开火", desc="锁定后自动开火（需先开魔法子弹+掩体检测）", key="autoFire"},
+        {kind="expandable", name="射击视觉效果", desc="命中时显示追踪线 / 命中标记", key="shootVisual",
+            children={
+                {kind="subToggle", name="子弹追踪", key="tracerOn"},
+                {kind="subCycle", name="追踪线颜色", options={"红","绿","蓝","彩虹"}, key="tracerColor"},
+                {kind="subCycle", name="追踪线时长", options={"1秒","2秒","3秒","5秒"}, key="tracerDuration"},
+                {kind="subToggle", name="命中标记", key="hitMarkerOn"},
+                {kind="subCycle", name="命中标记颜色", options={"白","红","青","彩虹"}, key="hmColor"},
+                {kind="subCycle", name="命中标记时长", options={"1秒","2秒","3秒","5秒"}, key="hmDuration"},
+                {kind="subCycle", name="命中标记大小", options={"小","中","大"}, key="hmSize"},
+            }},
         {kind="triple", name="FOV锁定半径",
             desc="FOV=锁定半径（像素）",
             key="mbParams",
@@ -5408,7 +5648,7 @@ end
 
 switchTabCP("基础")
 
--- ★ 弹入 / 收起动画（UIScale 驱动，1:1 原生体感）
+-- 面板弹入 / 收起动画（UIScale 驱动）
 local animScale = Instance.new("UIScale", panel)
 animScale.Scale = 1
 local _panelTween = nil
@@ -5472,6 +5712,3 @@ task.spawn(function()
         if _G._ExamSetters[key] then pcall(_G._ExamSetters[key], true) end
     end
 end)
-
-print("[Exam] 控制面板 + v16.7.17 功能 已加载")
--- ===END OF SCRIPT===
