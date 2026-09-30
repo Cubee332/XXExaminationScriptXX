@@ -1,5 +1,5 @@
 --!nolint
--- Examination v16.7.17 新增射击视觉效果
+-- Examination v16.7.17 性能优化
 -- 此脚本使用AI生成
 -- 因使用混淆加密会导致手机用户无法正常使用所以没有使用混淆加密
 -- 请不要拿去缝合 此脚本永久免费
@@ -701,7 +701,7 @@ do
     end)
 end
 
--- ============ 模块 2: AI ESP ============
+-- ============ 模块 2: AI ESP（优化版：label 更新中央循环） ============
 do
     local espConnections = {}
     local ESP_HL_NEW = "_ExamESP_HL"
@@ -715,6 +715,7 @@ do
     local C_DRONE = Color3.fromRGB(255, 80, 200)
     local showESPName = true
     local showESPHealth = true
+    local labelRefreshList = {}
     local function isAICharacter(m)
         if not m or not m:IsA("Model") then return false end
         if Players:GetPlayerFromCharacter(m) then return false end
@@ -792,6 +793,7 @@ do
     local function clearESP()
         for _, conn in ipairs(espConnections) do pcall(function() conn:Disconnect() end) end
         espConnections = {}; cleanAllESP()
+        labelRefreshList = {}
     end
     local function tryHealth(m)
         local hum = m:FindFirstChildOfClass("Humanoid")
@@ -815,20 +817,9 @@ do
         tl.TextStrokeTransparency = 0; tl.TextScaled = true
         tl.Font = Enum.Font.SourceSansBold
         local pre = tagToPre(tag)
-        spawn(function()
-            while model and model.Parent and espEnabled and model:FindFirstChild(ESP_HL_NEW) do
-                local hum = model:FindFirstChildOfClass("Humanoid")
-                if hum then
-                    if hum.Health <= 0 then
-                        if hl then hl:Destroy() end
-                        if bb then bb:Destroy() end
-                        break
-                    end
-                    tl.Text = genText(model, hum, pre)
-                end
-                wait(0.3)
-            end
-        end)
+        table.insert(labelRefreshList, {
+            model = model, tl = tl, pre = pre, hl = hl, bb = bb,
+        })
     end
     local function getBTRModel()
         local map = Workspace:FindFirstChild("Map")
@@ -877,14 +868,10 @@ do
             return "[BOSS] " .. table.concat(parts, " | ")
         end
         tl.Text = btrText(hp)
-        spawn(function()
-            while btrModel and btrModel.Parent and espEnabled and btrModel:FindFirstChild(ESP_HL_NEW) do
-                local cur = getBTRHealth(btrModel)
-                if cur and cur <= 0 then removeBTR(btrModel); break end
-                tl.Text = btrText(cur)
-                wait(0.3)
-            end
-        end)
+        table.insert(labelRefreshList, {
+            model = btrModel, tl = tl, pre = "", hl = hl, bb = bb,
+            isBTR = true,
+        })
     end
     local function highlightDrone(drone)
         if not espEnabled then return end
@@ -921,13 +908,10 @@ do
             return "[无人机] " .. table.concat(parts, " | ")
         end
         tl.Text = droneText(tryHealth(drone))
-        spawn(function()
-            while drone and drone.Parent and espEnabled and drone:FindFirstChild(ESP_HL_NEW) do
-                local cur, max = tryHealth(drone)
-                tl.Text = droneText(cur, max)
-                wait(0.3)
-            end
-        end)
+        table.insert(labelRefreshList, {
+            model = drone, tl = tl, pre = "", hl = hl, bb = bb,
+            isDrone = true,
+        })
     end
     local function setupESP()
         clearESP()
@@ -997,6 +981,48 @@ do
             end
         end)
     end
+
+    -- 中央 label 更新循环（替代 69 个独立协程）
+    spawn(function()
+        while gui.Parent do
+            wait(0.3)
+            if espEnabled then
+                for i = #labelRefreshList, 1, -1 do
+                    local item = labelRefreshList[i]
+                    local m = item.model
+                    if not m or not m.Parent or not m:FindFirstChild(ESP_HL_NEW) then
+                        table.remove(labelRefreshList, i)
+                    else
+                        local hum = m:FindFirstChildOfClass("Humanoid")
+                        if hum then
+                            if hum.Health <= 0 then
+                                if item.hl then item.hl:Destroy() end
+                                if item.bb then item.bb:Destroy() end
+                                table.remove(labelRefreshList, i)
+                            else
+                                if item.isBTR then
+                                    item.tl.Text = "[BOSS] BTR-82 | " .. math.floor(hum.Health)
+                                elseif item.isDrone then
+                                    item.tl.Text = "[无人机] " .. math.floor(hum.Health) .. " / " .. math.floor(hum.MaxHealth)
+                                else
+                                    item.tl.Text = genText(m, hum, item.pre)
+                                end
+                            end
+                        end
+                    end
+                end
+            else
+                if #labelRefreshList > 0 then
+                    for _, item in ipairs(labelRefreshList) do
+                        if item.hl then pcall(function() item.hl:Destroy() end) end
+                        if item.bb then pcall(function() item.bb:Destroy() end) end
+                    end
+                    labelRefreshList = {}
+                end
+            end
+        end
+    end)
+
     toggleBase("AI ESP（高亮常开）", "esp", false, function(v)
         espEnabled = v; setupESP()
     end)
@@ -2678,7 +2704,6 @@ end
     local EMERGENCY_SKIP_RATIO = 0.7
     local CLIP_MAX_TTL = 30
 
-    -- 射击视觉效果
     local TRACER_COLORS = {Color3.fromRGB(255,60,60), Color3.fromRGB(60,255,60), Color3.fromRGB(60,180,255)}
     local HM_COLORS = {Color3.new(1,1,1), Color3.fromRGB(255,60,60), Color3.fromRGB(60,255,255)}
     local HM_SIZE = {
@@ -2914,7 +2939,7 @@ end
         return v
     end
     local _busyCache = {}
-    local BUSY_CACHE_TTL = 0.15
+    local BUSY_CACHE_TTL = 0.5
     local function isBusy(m)
         if not m then return false end
         local now = tick()
@@ -3168,7 +3193,7 @@ end
     local findLastReason = "init"
     local function findTarget()
         local now = tick()
-        if now - lastFindTick < 0.016 then return cachedTarget end
+        if now - lastFindTick < 0.05 then return cachedTarget end
         lastFindTick = now
         local myChar = lp.Character
         local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
@@ -4638,6 +4663,7 @@ do
         rbRestoreZones(); rbRestoreScripts(); rbHideLabel()
     end)
 end
+
 -- ===SEGMENT 2/2===
 
 -- ============================================================
