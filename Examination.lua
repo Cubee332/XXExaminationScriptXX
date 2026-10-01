@@ -54,7 +54,6 @@ local shieldVMAlpha = 0.9
 local slideSteerMode = "camera"
 local mbTargetMode = 1
 
--- 射击视觉效果（大功能默认关，子功能默认开）
 local shootVisualEnabled = false
 local tracerEnabled = true
 local hitMarkerEnabled = true
@@ -607,7 +606,7 @@ local toggleBase = mkCreateToggle(basePage)
 local toggleMagic = mkCreateToggle(magicPage)
 local toggleRadar = mkCreateToggle(radarPage)
 
--- ============ 模块 1: 无限体力 ============
+-- ============ 模块 1: 无限体力（PATCH: applyInf 加保护 + toggle 延迟恢复） ============
 do
     local staminaLoop
     local originalStamina = {}
@@ -647,6 +646,8 @@ do
         _G._ExamStaminaBackup = originalStamina
     end
     local function applyInf(s)
+        -- PATCH: 加保护，避免关闭瞬间被"最后一击"覆盖
+        if not infStaminaEnabled then return end
         s.stamina.current = INFINITE_STAMINA
         s.stamina.fullRegen = false
         s.stamina.regenDelay = 0
@@ -686,8 +687,14 @@ do
         if v then
             originalStamina = {}; cachedState = nil; setupLoop()
         else
-            if staminaLoop then pcall(function() staminaLoop:Disconnect() end); staminaLoop = nil end
-            restoreOrig()
+            -- PATCH: 立即置 nil 让旧循环退出，然后延迟双次恢复（覆盖游戏服务端刷回）
+            staminaLoop = nil
+            spawn(function()
+                wait(0.7)
+                restoreOrig()
+                wait(0.7)
+                restoreOrig()
+            end)
         end
     end)
     lp.CharacterAdded:Connect(function()
@@ -701,7 +708,7 @@ do
     end)
 end
 
--- ============ 模块 2: AI ESP（优化版：label 更新中央循环） ============
+-- ============ 模块 2: AI ESP ============
 do
     local espConnections = {}
     local ESP_HL_NEW = "_ExamESP_HL"
@@ -982,7 +989,6 @@ do
         end)
     end
 
-    -- 中央 label 更新循环（替代 69 个独立协程）
     spawn(function()
         while gui.Parent do
             wait(0.3)
@@ -1696,12 +1702,13 @@ do
     end)
 end
 
--- ============ 模块 9: 快速换弹 ============
+-- ============ 模块 9: 快速换弹（PATCH: frRestore 改成 token + 循环刷） ============
 do
     local FR_TARGET_MULT = 2.0
     local frEnabled = false
     local frLoopToken = 0
     local frBackup = nil
+    local frRestoreToken = 0
     local function frCaptureBackup(char)
         if frBackup then return end
         frBackup = { Active = char:GetAttribute("SquadBuffActive"), Reload = char:GetAttribute("SquadReloadSpeedMultiplier") }
@@ -1712,16 +1719,28 @@ do
         pcall(function() char:SetAttribute("SquadBuffActive", true) end)
         pcall(function() char:SetAttribute("SquadReloadSpeedMultiplier", FR_TARGET_MULT) end)
     end
+    -- PATCH: frRestore 循环刷 2.5 秒覆盖游戏服务端刷回
     local function frRestore()
-        local char = lp.Character
-        if not char or not frBackup then return end
-        if frBackup.Active ~= nil then
-            pcall(function() char:SetAttribute("SquadBuffActive", frBackup.Active) end)
-        else pcall(function() char:SetAttribute("SquadBuffActive", nil) end) end
-        if frBackup.Reload ~= nil then
-            pcall(function() char:SetAttribute("SquadReloadSpeedMultiplier", frBackup.Reload) end)
-        else pcall(function() char:SetAttribute("SquadReloadSpeedMultiplier", nil) end) end
+        frRestoreToken = frRestoreToken + 1
+        local myToken = frRestoreToken
+        local backup = frBackup
+        if not backup then return end
         frBackup = nil
+        local tA = backup.Active
+        if tA == nil then tA = false end
+        local tR = backup.Reload
+        if tR == nil then tR = 1 end
+        spawn(function()
+            local endAt = tick() + 2.5
+            while frRestoreToken == myToken and tick() < endAt do
+                local c = lp.Character
+                if c then
+                    pcall(function() c:SetAttribute("SquadBuffActive", tA) end)
+                    pcall(function() c:SetAttribute("SquadReloadSpeedMultiplier", tR) end)
+                end
+                wait(0.05)
+            end
+        end)
     end
     local function frStartLoop()
         frLoopToken = frLoopToken + 1
@@ -1753,6 +1772,7 @@ do
         frEnabled = false; frLoopToken = frLoopToken + 1; frRestore()
     end)
 end
+-- ===SEGMENT 2/2===
 
 -- ============ 模块 11: 去除枪口遮挡 ============
 do
@@ -4664,8 +4684,6 @@ do
     end)
 end
 
--- ===SEGMENT 2/2===
-
 -- ============================================================
 -- 控制面板 UI
 -- ============================================================
@@ -5674,7 +5692,7 @@ end
 
 switchTabCP("基础")
 
--- 面板弹入 / 收起动画（UIScale 驱动）
+-- 面板弹入 / 收起动画
 local animScale = Instance.new("UIScale", panel)
 animScale.Scale = 1
 local _panelTween = nil
@@ -5738,3 +5756,4 @@ task.spawn(function()
         if _G._ExamSetters[key] then pcall(_G._ExamSetters[key], true) end
     end
 end)
+
