@@ -1,5 +1,5 @@
 --!nolint
--- Examination v16.7.17 性能优化
+-- Examination v16.7.17 修复了一些bug
 -- 此脚本使用AI生成
 -- 因使用混淆加密会导致手机用户无法正常使用所以没有使用混淆加密
 -- 请不要拿去缝合 此脚本永久免费
@@ -606,7 +606,7 @@ local toggleBase = mkCreateToggle(basePage)
 local toggleMagic = mkCreateToggle(magicPage)
 local toggleRadar = mkCreateToggle(radarPage)
 
--- ============ 模块 1: 无限体力（PATCH: applyInf 加保护 + toggle 延迟恢复） ============
+-- ============ 模块 1: 无限体力（v66.1: 一步恢复，不延迟/不循环） ============
 do
     local staminaLoop
     local originalStamina = {}
@@ -646,7 +646,6 @@ do
         _G._ExamStaminaBackup = originalStamina
     end
     local function applyInf(s)
-        -- PATCH: 加保护，避免关闭瞬间被"最后一击"覆盖
         if not infStaminaEnabled then return end
         s.stamina.current = INFINITE_STAMINA
         s.stamina.fullRegen = false
@@ -687,14 +686,14 @@ do
         if v then
             originalStamina = {}; cachedState = nil; setupLoop()
         else
-            -- PATCH: 立即置 nil 让旧循环退出，然后延迟双次恢复（覆盖游戏服务端刷回）
+            -- v66.1: 关闭必须"丝滑"= 一步恢复到开启前 current
+            -- 不 tween / 不延迟 / 不循环连刷
+            -- 逻辑：flag 已 false → 循环下一轮 applyInf 会立即 return
+            --       task.wait() 等一帧让正在跑的 applyInf 收尾
+            --       restoreOrig() 一步写回开启前的值
             staminaLoop = nil
-            spawn(function()
-                wait(0.7)
-                restoreOrig()
-                wait(0.7)
-                restoreOrig()
-            end)
+            task.wait()
+            restoreOrig()
         end
     end)
     lp.CharacterAdded:Connect(function()
@@ -1702,7 +1701,7 @@ do
     end)
 end
 
--- ============ 模块 9: 快速换弹（PATCH: frRestore 改成 token + 循环刷） ============
+-- ============ 模块 9: 快速换弹（v66: 立即恢复 + 1秒连刷 + 结束时清 backup） ============
 do
     local FR_TARGET_MULT = 2.0
     local frEnabled = false
@@ -1719,27 +1718,34 @@ do
         pcall(function() char:SetAttribute("SquadBuffActive", true) end)
         pcall(function() char:SetAttribute("SquadReloadSpeedMultiplier", FR_TARGET_MULT) end)
     end
-    -- PATCH: frRestore 循环刷 2.5 秒覆盖游戏服务端刷回
+    -- v66: SquadBuffActive / SquadReloadSpeedMultiplier 是游戏维护字段
+    -- 恢复必须：立即恢复一次 + 1 秒内 50ms 连刷 + 结束时才清 backup
     local function frRestore()
         frRestoreToken = frRestoreToken + 1
         local myToken = frRestoreToken
         local backup = frBackup
         if not backup then return end
-        frBackup = nil
-        local tA = backup.Active
-        if tA == nil then tA = false end
-        local tR = backup.Reload
-        if tR == nil then tR = 1 end
+        local tA = backup.Active; if tA == nil then tA = false end
+        local tR = backup.Reload; if tR == nil then tR = 1 end
+        -- 1) 立即恢复一次（同一帧）
+        local c0 = lp.Character
+        if c0 then
+            pcall(function() c0:SetAttribute("SquadBuffActive", tA) end)
+            pcall(function() c0:SetAttribute("SquadReloadSpeedMultiplier", tR) end)
+        end
+        -- 2) 之后 1 秒内 50ms 连刷，防止被游戏写回
         spawn(function()
-            local endAt = tick() + 2.5
+            local endAt = tick() + 1
             while frRestoreToken == myToken and tick() < endAt do
                 local c = lp.Character
                 if c then
                     pcall(function() c:SetAttribute("SquadBuffActive", tA) end)
                     pcall(function() c:SetAttribute("SquadReloadSpeedMultiplier", tR) end)
                 end
-                wait(0.05)
+                task.wait(0.05)
             end
+            -- 3) 连刷结束后才清 backup
+            if frRestoreToken == myToken then frBackup = nil end
         end)
     end
     local function frStartLoop()
@@ -1772,8 +1778,6 @@ do
         frEnabled = false; frLoopToken = frLoopToken + 1; frRestore()
     end)
 end
--- ===SEGMENT 2/2===
-
 -- ============ 模块 11: 去除枪口遮挡 ============
 do
     local muzzleHbConn = nil
@@ -5756,4 +5760,3 @@ task.spawn(function()
         if _G._ExamSetters[key] then pcall(_G._ExamSetters[key], true) end
     end
 end)
-
