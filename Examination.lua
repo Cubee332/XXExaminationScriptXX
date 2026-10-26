@@ -396,7 +396,7 @@ local magicPage = _hiddenDock
 local radarPage = _hiddenDock
 local main      = _hiddenDock
 
-local function reg(g) return g end
+local function reg(g, key) --[[ 兼容旧 UI 的位置登记接口，新 UI 不需要 ]] return g end
 
 _G._ExamFH = _G._ExamFH or {}
 _G._ExamFH.forceOffFn = nil
