@@ -1,10 +1,16 @@
--- Examination
 -- 此脚本使用AI生成
 -- 因使用混淆加密会导致手机用户无法正常使用所以没有使用混淆加密
 -- 请不要拿去缝合 此脚本永久免费
 -- 若随意缝合和偷源码自称是自制的该脚本会进行删库处理并停止对外更新( AI写的史山代码你也要？？？？)
 -- 倒卖脚本私冯！！！
 
+--!nolint
+-- Examination v16.7.17 修复了一些bug
+-- 此脚本使用AI生成
+-- 因使用混淆加密会导致手机用户无法正常使用所以没有使用混淆加密
+-- 请不要拿去缝合 此脚本永久免费
+-- 若随意缝合和偷源码自称是自制的该脚本会进行删库处理并停止对外更新( AI写的史山代码你也要？？？？)
+-- 倒卖脚本私冯！！！
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -320,9 +326,8 @@ end
 local currentLayout = detectLayout()
 
 -- ============================================================
--- 基础设施（模块依赖，旧 UI 移除后需要保留）
+-- 基础设施
 -- ============================================================
--- 点击判定：位移 < 12px 才算点击（避免拖动时误触）
 local function bindTap(btn, fn)
     local startPos = nil
     btn.InputBegan:Connect(function(input)
@@ -348,7 +353,6 @@ end
 local CDMUI = loadstring(game:HttpGet(
     "https://raw.githubusercontent.com/Cubee332/CDMUI/main/CDMUI.lua"))()
 
--- 隐藏容器：承接模块里创建的辅助控件（名称按钮 / 数值输入框等）
 local uiParent = CoreGui
 local _hiddenDock = Instance.new("Frame")
 _hiddenDock.Name = "ExamHiddenDock"
@@ -378,29 +382,22 @@ cdLabel.TextTransparency = 1
 cdLabel.Parent = _hiddenDock
 
 -- ============================================================
--- 开关注册表
+-- 回调注册表
 -- ============================================================
-local Registry = { base = {}, magic = {}, radar = {} }
+local Callbacks = {}
 
 local function mkToggleRegistrar(group)
     return function(text, posSpec, default, callback, sizeSpec)
         local key = (type(posSpec) == "string") and posSpec or text
-        local entry = {
-            key = key,
-            title = text,
-            default = default and true or false,
-            callback = callback,
-        }
-        table.insert(Registry[group], entry)
+        Callbacks[key] = callback
 
-        local state = entry.default
-        local function setState(nv)
+        local state = default and true or false
+        _G._ExamSetters[key] = function(nv)
             if state == nv then return end
             state = nv
             if callback then pcall(callback, state) end
         end
-        _G._ExamSetters[key] = setState
-        _G._ExamStates[key] = entry.default
+        _G._ExamStates[key] = state
 
         local btn = Instance.new("TextButton")
         btn.Visible = false
@@ -409,7 +406,7 @@ local function mkToggleRegistrar(group)
         btn.Text = ""
         btn.Parent = _hiddenDock
 
-        return btn, setState
+        return btn, _G._ExamSetters[key]
     end
 end
 
@@ -4505,36 +4502,169 @@ end
 -- ============================================================
 -- CDMUI 控制面板
 -- ============================================================
+-- 统一回调入口
+local function CB(key, value)
+    _G._ExamStates[key] = value
+    local cb = Callbacks[key]
+    if cb then pcall(cb, value) end
+end
+
 local win = CDMUI.Create({
     Title = "控制面板",
     TopbarText = "控制面板",
 })
 
-local function buildTab(tabName, groupName)
-    local tab = win:Tab(tabName)
-    for _, e in ipairs(Registry[groupName]) do
-        tab:Toggle({
-            Key = e.key,
-            Title = e.title,
-            Default = e.default,
-            Callback = function(v)
-                _G._ExamStates[e.key] = v
-                if e.callback then pcall(e.callback, v) end
-            end,
-        })
-    end
-    return tab
+-- 所有控件回调统一走这里
+win.OnToggle = function(key, value)
+    _G._ExamStates[key] = value
+    local cb = Callbacks[key]
+    if cb then pcall(cb, value) end
 end
 
-buildTab("基础", "base")
-buildTab("魔法子弹", "magic")
-buildTab("雷达", "radar")
 
-local miscTab = win:Tab("其他")
-miscTab:Label({
-    Title = "关于",
-    Desc = "此脚本使用 AI 生成 · 永久免费 · 请勿缝合倒卖",
+local tab
+
+-- ── 基础 ──
+tab = win:Tab("基础")
+tab:Toggle({ Key = "stamina", Name = "无限体力", Desc = "让体力永远保持满状态", Default = false,
+    Callback = function(v) CB("stamina", v) end })
+tab:Expand({
+    Key = "esp",
+    Callback = function(v) CB("esp", v) end,
+    Name = "敌人透视",
+    Desc = "给所有 AI 加高亮",
+    Children = {
+        { Kind = "toggle", Key = "espName", Name = "显示名称", Default = false },
+        { Kind = "toggle", Key = "espHP", Name = "显示血量", Default = false },
+    },
 })
+tab:Expand({
+    Key = "headHitbox",
+    Callback = function(v) CB("headHitbox", v) end,
+    Name = "头部 Hitbox 放大",
+    Desc = "自定义头部碰撞体积大小",
+    Children = {
+        { Kind = "number", Key = "headSizeVal", Name = "头部大小", Min = 1, Max = 20, Default = 1 },
+    },
+})
+tab:Toggle({ Key = "autoInteract", Name = "及时交互", Desc = "与可互动的物体进行秒交互", Default = false,
+    Callback = function(v) CB("autoInteract", v) end })
+tab:Toggle({ Key = "forceReset", Name = "无条件重置", Desc = "随时可以重置角色", Default = false,
+    Callback = function(v) CB("forceReset", v) end })
+tab:Expand({
+    Key = "slide",
+    Callback = function(v) CB("slide", v) end,
+    Name = "滑铲距离修改",
+    Desc = "调整滑铲距离倍率",
+    Children = {
+        { Kind = "number", Key = "slideDistanceMult", Name = "滑铲距离倍率", Min = 1, Max = 10, Default = 1 },
+    },
+})
+tab:Expand({
+    Key = "slideSteer",
+    Callback = function(v) CB("slideSteer", v) end,
+    Name = "滑铲变向",
+    Desc = "滑铲时根据方向变向",
+    Children = {
+        { Kind = "cycle", Key = "slideSteerMode", Name = "变向模式", Options = { "视角控制", "移动控制" } },
+    },
+})
+tab:Toggle({ Key = "nvg", Name = "无限电量夜视仪", Desc = "夜视仪电量无限", Default = false,
+    Callback = function(v) CB("nvg", v) end })
+tab:Toggle({ Key = "elephantImmune", Name = "免疫象脚", Desc = "免疫象脚和致死区", Default = false,
+    Callback = function(v) CB("elephantImmune", v) end })
+tab:Toggle({ Key = "muzzle", Name = "去除枪口遮挡", Desc = "贴墙时不会挡住枪口", Default = false,
+    Callback = function(v) CB("muzzle", v) end })
+tab:Toggle({ Key = "recoil", Name = "无后坐力", Desc = "消除枪械后坐力", Default = false,
+    Callback = function(v) CB("recoil", v) end })
+tab:Toggle({ Key = "chatForce", Name = "聊天框强制显示", Desc = "始终显示聊天窗口", Default = false,
+    Callback = function(v) CB("chatForce", v) end })
+tab:Toggle({ Key = "forceHeadshot", Name = "强制爆头", Desc = "命中四肢/身体判定为爆头/不能和魔法子弹同时开启", Default = false,
+    Callback = function(v) CB("forceHeadshot", v) end })
+tab:Toggle({ Key = "autoQTE", Name = "自动 QTE", Desc = "QTE 自动完美完成", Default = false,
+    Callback = function(v) CB("autoQTE", v) end })
+tab:Toggle({ Key = "shotgunNoPump", Name = "霰弹枪连发", Desc = "霰弹枪免拉栓动画", Default = false,
+    Callback = function(v) CB("shotgunNoPump", v) end })
+tab:Toggle({ Key = "shieldSlide", Name = "修复盾牌滑铲/疾跑", Desc = "持盾也能滑铲疾跑", Default = false,
+    Callback = function(v) CB("shieldSlide", v) end })
+tab:Expand({
+    Key = "shieldVM",
+    Callback = function(v) CB("shieldVM", v) end,
+    Name = "第一人称盾牌半透明",
+    Desc = "第一人称盾牌半透明显示",
+    Children = {
+        { Kind = "number", Key = "shieldVMAlpha", Name = "盾牌透明度", Min = 0, Max = 0.99, Default = 0 },
+    },
+})
+tab:Toggle({ Key = "noCD", Name = "无滑铲冷却", Desc = "滑铲无冷却（有 bug）", Default = false,
+    Callback = function(v) CB("noCD", v) end })
+tab:Toggle({ Key = "fastReload", Name = "快速换弹", Desc = "换弹速度 2 倍", Default = false,
+    Callback = function(v) CB("fastReload", v) end })
+
+-- ── 魔法子弹 ──
+tab = win:Tab("魔法子弹")
+tab:Expand({
+    Key = "magicBullet",
+    Callback = function(v) CB("magicBullet", v) end,
+    Name = "启用魔法子弹",
+    Desc = "自动锁定准星内最近的敌人",
+    Children = {
+        { Kind = "toggle", Key = "mbShowBox", Name = "显示 3D 头框", Default = false },
+        { Kind = "toggle", Key = "mbRequireVisible", Name = "掩体检测", Default = false },
+        { Kind = "toggle", Key = "pierceShield", Name = "穿透盾牌", Default = false },
+        { Kind = "toggle", Key = "pierceHelmet", Name = "穿透 SIN 头盔", Default = false },
+        { Kind = "toggle", Key = "pierceTeammate", Name = "穿透队友", Default = false },
+        { Kind = "toggle", Key = "pierceCorpse", Name = "穿透尸体", Default = false },
+        { Kind = "toggle", Key = "mbShowFovCircle", Name = "显示 FOV 圈", Default = false },
+        { Kind = "toggle", Key = "mbOnlyWhenLocked", Name = "未锁定不穿透", Default = false },
+    },
+})
+tab:Expand({
+    Key = "mbTargetMode",
+    Callback = function(v) CB("mbTargetMode", v) end,
+    Name = "锁定模式",
+    Desc = "切换目标选择方式",
+    Children = {
+        { Kind = "toggle", Key = "mbShowRadius", Name = "360°锁定半径锁定显示", Default = false },
+        { Kind = "cycle", Key = "radiusMode", Name = "360°锁定半径显示模式", Options = { "线", "面" } },
+    },
+})
+tab:Toggle({ Key = "autoFire", Name = "自动开火", Desc = "锁定后自动开火（需先开魔法子弹+掩体检测）", Default = false,
+    Callback = function(v) CB("autoFire", v) end })
+tab:Expand({
+    Key = "shootVisual",
+    Callback = function(v) CB("shootVisual", v) end,
+    Name = "射击视觉效果",
+    Desc = "命中时显示追踪线 / 命中标记",
+    Children = {
+        { Kind = "toggle", Key = "tracerOn", Name = "子弹追踪", Default = false },
+        { Kind = "cycle", Key = "tracerColor", Name = "追踪线颜色", Options = { "红", "绿", "蓝", "彩虹" } },
+        { Kind = "cycle", Key = "tracerDuration", Name = "追踪线时长", Options = { "1秒", "2秒", "3秒", "5秒" } },
+        { Kind = "toggle", Key = "hitMarkerOn", Name = "命中标记", Default = false },
+        { Kind = "cycle", Key = "hmColor", Name = "命中标记颜色", Options = { "白", "红", "青", "彩虹" } },
+        { Kind = "cycle", Key = "hmDuration", Name = "命中标记时长", Options = { "1秒", "2秒", "3秒", "5秒" } },
+        { Kind = "cycle", Key = "hmSize", Name = "命中标记大小", Options = { "小", "中", "大" } },
+    },
+})
+tab:Input({ Key = "mbParams", Name = "FOV锁定半径", Desc = "FOV=锁定半径（像素）", Default = "200",
+    Callback = function(v) CB("mbParams", v) end })
+tab:Input({ Key = "mbWorldDistMax", Name = "最大锁定距离", Desc = "锁定目标的最远距离（studs）", Default = "200",
+    Callback = function(v) CB("mbWorldDistMax", v) end })
+
+-- ── 雷达 ──
+tab = win:Tab("雷达")
+tab:Toggle({ Key = "radar", Name = "雷达探敌", Desc = "小地图上显示所有敌人", Default = false,
+    Callback = function(v) CB("radar", v) end })
+tab:Toggle({ Key = "radarFast", Name = "高刷新率", Desc = "雷达刷新更频繁（耗性能）", Default = false,
+    Callback = function(v) CB("radarFast", v) end })
+tab:Toggle({ Key = "radarArrow", Name = "朝向箭头", Desc = "显示敌人的朝向", Default = false,
+    Callback = function(v) CB("radarArrow", v) end })
+tab:Toggle({ Key = "radarBoost", Name = "信号增幅器", Desc = "去除无信号区域干扰", Default = false,
+    Callback = function(v) CB("radarBoost", v) end })
+
+-- ── 其他 ──
+tab = win:Tab("其他")
+tab:Label({ Name = "敬请期待", Desc = "此页面功能正在开发中" })
 
 pcall(safeCleanup)
 
