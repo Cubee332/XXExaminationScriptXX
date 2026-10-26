@@ -350,8 +350,38 @@ end
 -- ============================================================
 -- UI 库：CDMUI
 -- ============================================================
-local CDMUI = loadstring(game:HttpGet(
-    "https://raw.githubusercontent.com/Cubee332/CDMUI/main/CDMUI.lua"))()
+local CDMUI
+do
+    local urls = {
+        "https://raw.githubusercontent.com/Cubee332/CDMUI/main/CDMUI.lua",
+        "https://cdn.jsdelivr.net/gh/Cubee332/CDMUI@main/CDMUI.lua",
+    }
+    local errs = {}
+    for _, url in ipairs(urls) do
+        local ok, res = pcall(function()
+            local src = game:HttpGet(url)
+            local chunk = loadstring(src)
+            if not chunk then error("loadstring failed") end
+            return chunk()
+        end)
+        if ok and type(res) == "table" and res.Create then
+            CDMUI = res
+            break
+        end
+        table.insert(errs, tostring(res))
+    end
+    if not CDMUI then
+        -- 最后尝试本地缓存
+        local ok, res = pcall(function()
+            local src = readfile("CDMUI.lua")
+            return loadstring(src)()
+        end)
+        if ok then CDMUI = res end
+    end
+    if not CDMUI then
+        error("[Examination] CDMUI 加载失败: " .. table.concat(errs, " | "))
+    end
+end
 
 local uiParent = CoreGui
 local _hiddenDock = Instance.new("Frame")
@@ -531,9 +561,140 @@ do
     local showESPName = true
     local showESPHealth = true
     local labelRefreshList = {}
+
+    -- 玩家透视（默认关闭，需显式开启）
+    local showPlayers = false
+    local showPlayerName = false
+    local showPlayerHealth = false
+    local playerESPNodes = {}   -- [player] = { hl = Highlight, bb = BillboardGui, tl = TextLabel }
+
+    local C_PLAYER = Color3.fromRGB(0, 200, 255)
+
+    local function clearPlayerESP()
+        for pl, node in pairs(playerESPNodes) do
+            if node.hl then pcall(function() node.hl:Destroy() end) end
+            if node.bb then pcall(function() node.bb:Destroy() end) end
+            playerESPNodes[pl] = nil
+        end
+    end
+
+    local function playerLabelText(pl)
+        local parts = {}
+        if showPlayerName then table.insert(parts, pl.DisplayName) end
+        if showPlayerHealth then
+            local ch = pl.Character
+            local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+            if hum then
+                table.insert(parts, string.format("%d / %d",
+                    math.floor(hum.Health), math.floor(hum.MaxHealth)))
+            end
+        end
+        if #parts == 0 then return pl.DisplayName end
+        return table.concat(parts, " | ")
+    end
+
+    local function applyPlayerESP(pl)
+        local node = playerESPNodes[pl]
+
+        local function removeNode()
+            if node then
+                if node.hl then pcall(function() node.hl:Destroy() end) end
+                if node.bb then pcall(function() node.bb:Destroy() end) end
+                playerESPNodes[pl] = nil
+            end
+        end
+
+        if not showPlayers or pl == Players.LocalPlayer then
+            removeNode()
+            return
+        end
+
+        local ch = pl.Character
+        local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+        if not ch or not hum or hum.Health <= 0 then
+            removeNode()
+            return
+        end
+
+        -- 角色换了（重生）：清掉旧的重新建
+        if node and node.hl and node.hl.Parent ~= ch then
+            removeNode()
+            node = nil
+        end
+        local node = playerESPNodes[pl]
+        if not node then
+            local hl = Instance.new("Highlight")
+            hl.Name = ESP_HL_NEW
+            hl.Adornee = ch
+            hl.FillColor = C_PLAYER
+            hl.OutlineColor = Color3.new(1, 1, 1)
+            hl.OutlineTransparency = 1
+            hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+            hl.Parent = ch
+
+            local bb = Instance.new("BillboardGui")
+            bb.Name = ESP_HB_NEW
+            bb.Adornee = ch
+            bb.Size = UDim2.new(0, 220, 0, 25)
+            bb.StudsOffset = Vector3.new(0, 4, 0)
+            bb.AlwaysOnTop = true
+            bb.MaxDistance = 400
+            bb.Parent = ch
+
+            local tl = Instance.new("TextLabel")
+            tl.Parent = bb
+            tl.Size = UDim2.new(1, 0, 1, 0)
+            tl.BackgroundTransparency = 1
+            tl.TextColor3 = C_PLAYER
+            tl.TextStrokeTransparency = 0
+            tl.TextScaled = true
+            tl.Font = Enum.Font.SourceSansBold
+
+            node = { hl = hl, bb = bb, tl = tl }
+            playerESPNodes[pl] = node
+        else
+            -- 角色重生时重新绑定
+            if node.hl and node.hl.Parent ~= ch then
+                pcall(function() node.hl:Destroy() end)
+                pcall(function() node.bb:Destroy() end)
+                playerESPNodes[pl] = nil
+                return applyPlayerESP(pl)
+            end
+        end
+        node.tl.Text = playerLabelText(pl)
+    end
+
+    local function refreshPlayerESP()
+        if not showPlayers then
+            clearPlayerESP()
+            return
+        end
+        for _, pl in ipairs(Players:GetPlayers()) do
+            if pl ~= Players.LocalPlayer then
+                pcall(applyPlayerESP, pl)
+            end
+        end
+    end
     local function isAICharacter(m)
         if not m or not m:IsA("Model") then return false end
+
+        -- 1) 是某个玩家的角色 → 不是 AI
         if Players:GetPlayerFromCharacter(m) then return false end
+
+        -- 2) 是玩家变身的实体 → 不是 AI
+        if m:GetAttribute("IsEntity") == true
+           or m:GetAttribute("PlayerEntity") == true then
+            return false
+        end
+
+        -- 3) 模型里挂着某个玩家的角色（子父关系）→ 不是 AI
+        for _, pl in ipairs(Players:GetPlayers()) do
+            local ch = pl.Character
+            if ch and (ch == m or ch:IsDescendantOf(m) or m:IsDescendantOf(ch)) then
+                return false
+            end
+        end
+
         if m.Name == "Leaper" then return true end
         if m:FindFirstChild("AI") or m:FindFirstChild("GrabField")
            or m:FindFirstChild("AmbushScenery") or m:FindFirstChild("CharacterTeam") then
@@ -604,8 +765,20 @@ do
             local f = Workspace:FindFirstChild(fn)
             if f then for _, c in ipairs(f:GetChildren()) do cleanIn(c) end end
         end
+
+        -- 兜底：全场景扫一遍，把任何残留的 ESP 节点都清掉
+        -- （BTR 重生、实体换容器等情况下，上面的定点清理会漏）
+        local scanned = 0
+        for _, d in ipairs(Workspace:GetDescendants()) do
+            if isOurESPNode(d) then
+                pcall(function() d:Destroy() end)
+            end
+            scanned = scanned + 1
+            if scanned % 2000 == 0 then task.wait() end
+        end
     end
     local function clearESP()
+        clearPlayerESP()
         for _, conn in ipairs(espConnections) do pcall(function() conn:Disconnect() end) end
         espConnections = {}; cleanAllESP()
         labelRefreshList = {}
@@ -627,11 +800,15 @@ do
         bb.Size = UDim2.new(0, 220, 0, 25); bb.StudsOffset = Vector3.new(0, 4, 0)
         bb.AlwaysOnTop = true; bb.MaxDistance = 300; bb.Parent = model
         local tl = Instance.new("TextLabel")
+        tl.Name = "Label"
         tl.Parent = bb; tl.Size = UDim2.new(1, 0, 1, 0)
         tl.BackgroundTransparency = 1; tl.TextColor3 = color
         tl.TextStrokeTransparency = 0; tl.TextScaled = true
         tl.Font = Enum.Font.SourceSansBold
         local pre = tagToPre(tag)
+        -- 关键：创建时立刻赋文本，否则要等刷新循环才更新
+        local hum = model:FindFirstChildOfClass("Humanoid")
+        tl.Text = genText(model, hum, pre)
         table.insert(labelRefreshList, {
             model = model, tl = tl, pre = pre, hl = hl, bb = bb,
         })
@@ -671,6 +848,7 @@ do
         bb.Size = UDim2.new(0, 300, 0, 30); bb.StudsOffset = Vector3.new(0, 12, 0)
         bb.AlwaysOnTop = true; bb.MaxDistance = 600; bb.Parent = btrModel
         local tl = Instance.new("TextLabel")
+        tl.Name = "Label"
         tl.Parent = bb; tl.Size = UDim2.new(1, 0, 1, 0)
         tl.BackgroundTransparency = 1; tl.TextColor3 = C_BTR
         tl.TextStrokeTransparency = 0; tl.TextScaled = true
@@ -741,11 +919,13 @@ do
                     end
                 end
                 table.insert(espConnections, folder.ChildAdded:Connect(function(v)
-                    wait(0.1)
+                    task.wait(0.1)
+                    -- 两次检查：wait 期间可能已被关闭
                     if espEnabled and isAICharacter(v) then
                         local c, t = classify(v)
                         highlightAI(v, c, t)
                     end
+                    if not espEnabled then cleanAllESP() end
                 end))
             end
         end
@@ -754,7 +934,14 @@ do
         local map = Workspace:FindFirstChild("Map")
         if map then
             table.insert(espConnections, map.ChildAdded:Connect(function(c)
-                if espEnabled and c.Name == "BTR-82 (BOSS)" then wait(0.5); highlightBTR(c) end
+                if c.Name == "BTR-82 (BOSS)" then
+                    task.wait(0.5)
+                    if espEnabled then
+                        highlightBTR(c)
+                    else
+                        cleanAllESP()
+                    end
+                end
             end))
             table.insert(espConnections, map.ChildRemoved:Connect(function(c)
                 if espEnabled and c.Name == "BTR-82 (BOSS)" then
@@ -770,15 +957,49 @@ do
         end
         local drone = Workspace:FindFirstChild("BTRDrone")
         if drone then highlightDrone(drone) end
+
+        -- 玩家透视
+        refreshPlayerESP()
+        table.insert(espConnections, Players.PlayerAdded:Connect(function(pl)
+            if espEnabled and showPlayers then
+                pl.CharacterAdded:Wait()
+                task.wait(0.3)
+                if espEnabled then refreshPlayerESP() end
+            end
+        end))
+        table.insert(espConnections, Players.PlayerRemoving:Connect(function(pl)
+            local node = playerESPNodes[pl]
+            if node then
+                if node.hl then pcall(function() node.hl:Destroy() end) end
+                if node.bb then pcall(function() node.bb:Destroy() end) end
+                playerESPNodes[pl] = nil
+            end
+        end))
+        for _, pl in ipairs(Players:GetPlayers()) do
+            table.insert(espConnections, pl.CharacterAdded:Connect(function()
+                task.wait(0.5)
+                if espEnabled and showPlayers then refreshPlayerESP() end
+            end))
+        end
         table.insert(espConnections, Workspace.ChildAdded:Connect(function(c)
-            if espEnabled and c.Name == "BTRDrone" then wait(0.3); highlightDrone(c) end
+            if c.Name == "BTRDrone" then
+                task.wait(0.3)
+                if espEnabled then
+                    highlightDrone(c)
+                else
+                    cleanAllESP()
+                end
+            end
         end))
         spawn(function()
             local lastHP = nil
             local lastRefresh = 0
             while espEnabled do
-                wait(0.5)
-                if not espEnabled then break end
+                task.wait(0.5)
+                if not espEnabled then
+                    cleanAllESP()
+                    break
+                end
                 local b = getBTRModel()
                 if b then
                     local hp = getBTRHealth(b)
@@ -799,7 +1020,7 @@ do
 
     spawn(function()
         while gui.Parent do
-            wait(0.3)
+            task.wait(0.3)
             if espEnabled then
                 for i = #labelRefreshList, 1, -1 do
                     local item = labelRefreshList[i]
@@ -837,8 +1058,14 @@ do
         end
     end)
 
-    toggleBase("AI ESP（高亮常开）", "esp", false, function(v)
-        espEnabled = v; setupESP()
+    toggleBase("透视功能", "esp", false, function(v)
+        espEnabled = v
+        if v then
+            setupESP()
+        else
+            -- 关闭立即清理，不等 8 秒轮询
+            clearESP()
+        end
     end)
     local nameBtn = Instance.new("TextButton", basePage)
     nameBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
@@ -882,13 +1109,50 @@ do
         if espEnabled then refreshAllLabels() end
     end
     _G._ExamStates.espHP = true
+
+    -- 玩家透视子项（默认关闭）
+    _G._ExamSetters.hlPlayers = function(v)
+        showPlayers = v
+        if espEnabled then
+            refreshPlayerESP()
+        else
+            clearPlayerESP()
+        end
+    end
+    _G._ExamStates.hlPlayers = false
+
+    _G._ExamSetters.hlPlayerName = function(v)
+        showPlayerName = v
+        if espEnabled and showPlayers then refreshPlayerESP() end
+    end
+    _G._ExamStates.hlPlayerName = false
+
+    _G._ExamSetters.hlPlayerHP = function(v)
+        showPlayerHealth = v
+        if espEnabled and showPlayers then refreshPlayerESP() end
+    end
+    _G._ExamStates.hlPlayerHP = false
+
+    -- 玩家血量/名称需要持续刷新（血量会变）
     spawn(function()
         while gui.Parent do
-            wait(8)
-            if not espEnabled then cleanAllESP() end
+            task.wait(0.5)
+            if espEnabled and showPlayers then
+                refreshPlayerESP()
+            end
         end
     end)
-    table.insert(cleanupFns, function() clearESP() end)
+    -- 兜底轮询：只在开启状态下检查异常残留，关闭时由 clearESP 即时处理
+    spawn(function()
+        while gui.Parent do
+            wait(2)
+            if not espEnabled then
+                -- 双保险：万一有漏网的 ESP 节点（比如别的脚本加的），清掉
+                cleanAllESP()
+            end
+        end
+    end)
+    table.insert(cleanupFns, function() espEnabled = false; clearESP() end)
 end
 
 -- ============ 模块 3: 头部 Hitbox ============
@@ -4531,11 +4795,15 @@ tab:Toggle({ Key = "stamina", Name = "无限体力", Desc = "让体力永远保�
 tab:Expand({
     Key = "esp",
     Callback = function(v) CB("esp", v) end,
-    Name = "敌人透视",
-    Desc = "给所有 AI 加高亮",
+    Name = "透视功能",
+    Desc = "高亮 AI 实体，可开启玩家透视",
+    Default = false,
     Children = {
-        { Kind = "toggle", Key = "espName", Name = "显示名称", Default = false },
-        { Kind = "toggle", Key = "espHP", Name = "显示血量", Default = false },
+        { Kind = "toggle", Key = "espName", Name = "显示名称", Default = true },
+        { Kind = "toggle", Key = "espHP", Name = "显示血量", Default = true },
+        { Kind = "toggle", Key = "hlPlayers", Name = "高亮玩家", Default = false },
+        { Kind = "toggle", Key = "hlPlayerName", Name = "显示玩家名称", Default = false },
+        { Kind = "toggle", Key = "hlPlayerHP", Name = "显示玩家血量", Default = false },
     },
 })
 tab:Expand({
@@ -4543,6 +4811,7 @@ tab:Expand({
     Callback = function(v) CB("headHitbox", v) end,
     Name = "头部 Hitbox 放大",
     Desc = "自定义头部碰撞体积大小",
+    Default = false,
     Children = {
         { Kind = "number", Key = "headSizeVal", Name = "头部大小", Min = 1, Max = 20, Default = 1 },
     },
@@ -4556,6 +4825,7 @@ tab:Expand({
     Callback = function(v) CB("slide", v) end,
     Name = "滑铲距离修改",
     Desc = "调整滑铲距离倍率",
+    Default = false,
     Children = {
         { Kind = "number", Key = "slideDistanceMult", Name = "滑铲距离倍率", Min = 1, Max = 10, Default = 1 },
     },
@@ -4565,6 +4835,7 @@ tab:Expand({
     Callback = function(v) CB("slideSteer", v) end,
     Name = "滑铲变向",
     Desc = "滑铲时根据方向变向",
+    Default = false,
     Children = {
         { Kind = "cycle", Key = "slideSteerMode", Name = "变向模式", Options = { "视角控制", "移动控制" } },
     },
@@ -4592,8 +4863,9 @@ tab:Expand({
     Callback = function(v) CB("shieldVM", v) end,
     Name = "第一人称盾牌半透明",
     Desc = "第一人称盾牌半透明显示",
+    Default = false,
     Children = {
-        { Kind = "number", Key = "shieldVMAlpha", Name = "盾牌透明度", Min = 0, Max = 0.99, Default = 0 },
+        { Kind = "slider", Key = "shieldVMAlpha", Name = "盾牌透明度", Min = 0, Max = 0.99, Step = 0.05, Default = 0.9 },
     },
 })
 tab:Toggle({ Key = "noCD", Name = "无滑铲冷却", Desc = "滑铲无冷却（有 bug）", Default = false,
@@ -4608,15 +4880,16 @@ tab:Expand({
     Callback = function(v) CB("magicBullet", v) end,
     Name = "启用魔法子弹",
     Desc = "自动锁定准星内最近的敌人",
+    Default = false,
     Children = {
-        { Kind = "toggle", Key = "mbShowBox", Name = "显示 3D 头框", Default = false },
-        { Kind = "toggle", Key = "mbRequireVisible", Name = "掩体检测", Default = false },
-        { Kind = "toggle", Key = "pierceShield", Name = "穿透盾牌", Default = false },
-        { Kind = "toggle", Key = "pierceHelmet", Name = "穿透 SIN 头盔", Default = false },
-        { Kind = "toggle", Key = "pierceTeammate", Name = "穿透队友", Default = false },
-        { Kind = "toggle", Key = "pierceCorpse", Name = "穿透尸体", Default = false },
-        { Kind = "toggle", Key = "mbShowFovCircle", Name = "显示 FOV 圈", Default = false },
-        { Kind = "toggle", Key = "mbOnlyWhenLocked", Name = "未锁定不穿透", Default = false },
+        { Kind = "toggle", Key = "mbShowBox", Name = "显示 3D 头框", Default = true },
+        { Kind = "toggle", Key = "mbRequireVisible", Name = "掩体检测", Default = true },
+        { Kind = "toggle", Key = "pierceShield", Name = "穿透盾牌", Default = true },
+        { Kind = "toggle", Key = "pierceHelmet", Name = "穿透 SIN 头盔", Default = true },
+        { Kind = "toggle", Key = "pierceTeammate", Name = "穿透队友", Default = true },
+        { Kind = "toggle", Key = "pierceCorpse", Name = "穿透尸体", Default = true },
+        { Kind = "toggle", Key = "mbShowFovCircle", Name = "显示 FOV 圈", Default = true },
+        { Kind = "toggle", Key = "mbOnlyWhenLocked", Name = "未锁定不穿透", Default = true },
     },
 })
 tab:Expand({
@@ -4624,6 +4897,7 @@ tab:Expand({
     Callback = function(v) CB("mbTargetMode", v) end,
     Name = "锁定模式",
     Desc = "切换目标选择方式",
+    Default = false,
     Children = {
         { Kind = "toggle", Key = "mbShowRadius", Name = "360°锁定半径锁定显示", Default = false },
         { Kind = "cycle", Key = "radiusMode", Name = "360°锁定半径显示模式", Options = { "线", "面" } },
@@ -4636,11 +4910,12 @@ tab:Expand({
     Callback = function(v) CB("shootVisual", v) end,
     Name = "射击视觉效果",
     Desc = "命中时显示追踪线 / 命中标记",
+    Default = false,
     Children = {
-        { Kind = "toggle", Key = "tracerOn", Name = "子弹追踪", Default = false },
+        { Kind = "toggle", Key = "tracerOn", Name = "子弹追踪", Default = true },
         { Kind = "cycle", Key = "tracerColor", Name = "追踪线颜色", Options = { "红", "绿", "蓝", "彩虹" } },
         { Kind = "cycle", Key = "tracerDuration", Name = "追踪线时长", Options = { "1秒", "2秒", "3秒", "5秒" } },
-        { Kind = "toggle", Key = "hitMarkerOn", Name = "命中标记", Default = false },
+        { Kind = "toggle", Key = "hitMarkerOn", Name = "命中标记", Default = true },
         { Kind = "cycle", Key = "hmColor", Name = "命中标记颜色", Options = { "白", "红", "青", "彩虹" } },
         { Kind = "cycle", Key = "hmDuration", Name = "命中标记时长", Options = { "1秒", "2秒", "3秒", "5秒" } },
         { Kind = "cycle", Key = "hmSize", Name = "命中标记大小", Options = { "小", "中", "大" } },
@@ -4655,9 +4930,9 @@ tab:Input({ Key = "mbWorldDistMax", Name = "最大锁定距离", Desc = "锁定�
 tab = win:Tab("雷达")
 tab:Toggle({ Key = "radar", Name = "雷达探敌", Desc = "小地图上显示所有敌人", Default = false,
     Callback = function(v) CB("radar", v) end })
-tab:Toggle({ Key = "radarFast", Name = "高刷新率", Desc = "雷达刷新更频繁（耗性能）", Default = false,
+tab:Toggle({ Key = "radarFast", Name = "高刷新率", Desc = "雷达刷新更频繁（耗性能）", Default = true,
     Callback = function(v) CB("radarFast", v) end })
-tab:Toggle({ Key = "radarArrow", Name = "朝向箭头", Desc = "显示敌人的朝向", Default = false,
+tab:Toggle({ Key = "radarArrow", Name = "朝向箭头", Desc = "显示敌人的朝向", Default = true,
     Callback = function(v) CB("radarArrow", v) end })
 tab:Toggle({ Key = "radarBoost", Name = "信号增幅器", Desc = "去除无信号区域干扰", Default = false,
     Callback = function(v) CB("radarBoost", v) end })
@@ -4666,7 +4941,8 @@ tab:Toggle({ Key = "radarBoost", Name = "信号增幅器", Desc = "去除无信�
 tab = win:Tab("其他")
 tab:Label({ Name = "敬请期待", Desc = "此页面功能正在开发中" })
 
-pcall(safeCleanup)
+-- 注意：safeCleanup 会在开头调用一次清理旧实例；
+-- 这里不要再调，否则会把刚注册的 _G._ExamSetters / _G._ExamStates 清空
 
 getgenv().ExaminationWin = win
 getgenv().ExaminationUILoaded = true
