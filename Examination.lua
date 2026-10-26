@@ -6,11 +6,6 @@
 
 --!nolint
 -- Examination v16.7.17 修复了一些bug
--- 此脚本使用AI生成
--- 因使用混淆加密会导致手机用户无法正常使用所以没有使用混淆加密
--- 请不要拿去缝合 此脚本永久免费
--- 若随意缝合和偷源码自称是自制的该脚本会进行删库处理并停止对外更新( AI写的史山代码你也要？？？？)
--- 倒卖脚本私冯！！！
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
