@@ -520,16 +520,23 @@ do
         if backup.maximum ~= nil then s.stamina.maximum = backup.maximum end
         originalStamina = {}; _G._ExamStaminaBackup = nil
     end
+    local loopToken = 0
     local function setupLoop()
-        if staminaLoop then pcall(function() staminaLoop:Disconnect() end); staminaLoop = nil end
+        -- 每次启动递增 token，旧循环检测到 token 变化就自行退出
+        loopToken = loopToken + 1
+        local myToken = loopToken
+        staminaLoop = true
         if not infStaminaEnabled then return end
-        staminaLoop = spawn(function()
-            while infStaminaEnabled and gui.Parent do
+        spawn(function()
+            while infStaminaEnabled and loopToken == myToken and gui.Parent do
                 local s = getStaminaState()
-                if s then saveOrig(s); applyInf(s) end
+                if s and infStaminaEnabled and loopToken == myToken then
+                    saveOrig(s)
+                    applyInf(s)
+                end
                 wait(0.5)
             end
-            staminaLoop = nil
+            if loopToken == myToken then staminaLoop = nil end
         end)
     end
     toggleBase("无限体力", "stamina", false, function(v)
@@ -542,7 +549,12 @@ do
             -- 逻辑：flag 已 false → 循环下一轮 applyInf 会立即 return
             --       task.wait() 等一帧让正在跑的 applyInf 收尾
             --       restoreOrig() 一步写回开启前的值
+            -- 先让循环失效，再等一帧确保它不会把值刷回去
+            loopToken = loopToken + 1
             staminaLoop = nil
+            task.wait()
+            restoreOrig()
+            -- 再等一帧后补一次，防止引擎自动回填
             task.wait()
             restoreOrig()
         end
@@ -553,7 +565,8 @@ do
     end)
     table.insert(cleanupFns, function()
         infStaminaEnabled = false
-        if staminaLoop then pcall(function() staminaLoop:Disconnect() end) end
+        loopToken = loopToken + 1
+        staminaLoop = nil
         restoreOrig()
     end)
 end
@@ -1675,9 +1688,12 @@ do
         if _G._InfNVG_BarSignalConn then _G._InfNVG_BarSignalConn:Disconnect(); _G._InfNVG_BarSignalConn = nil end
     end
     local function startLoop()
-        if _G._InfNVG_Loop then pcall(function() _G._InfNVG_Loop:Disconnect() end); _G._InfNVG_Loop = nil end
-        _G._InfNVG_Loop = spawn(function()
-            while nvgEnabled and gui.Parent do
+        _G._InfNVG_Token = (_G._InfNVG_Token or 0) + 1; _G._InfNVG_Loop = nil
+        _G._InfNVG_Token = (_G._InfNVG_Token or 0) + 1
+    local _nvgTok = _G._InfNVG_Token
+    _G._InfNVG_Loop = true
+    spawn(function()
+            while nvgEnabled and _G._InfNVG_Token == _nvgTok and gui.Parent do
                 makeCloaker()
                 if not _G._InfNVG_TextSignalConn then bindBattery() end
                 wait(0.3)
@@ -1685,7 +1701,7 @@ do
         end)
     end
     local function stopRestore()
-        if _G._InfNVG_Loop then pcall(function() _G._InfNVG_Loop:Disconnect() end); _G._InfNVG_Loop = nil end
+        _G._InfNVG_Token = (_G._InfNVG_Token or 0) + 1; _G._InfNVG_Loop = nil
         unbindBattery()
         local char = lp.Character
         if char and _G._InfNVG_AddedCloaker then
@@ -1805,9 +1821,11 @@ do
     end
     local killPartScanLoop = nil
     local function startKillPartScan()
-        if killPartScanLoop then killPartScanLoop = nil end
-        killPartScanLoop = spawn(function()
-            while elephantImmuneEnabled and gui.Parent do
+        elephantToken = (elephantToken or 0) + 1
+        local _elTok = elephantToken
+        killPartScanLoop = true
+        spawn(function()
+            while elephantImmuneEnabled and elephantToken == _elTok and gui.Parent do
                 wait(2)
                 if not elephantImmuneEnabled then break end
                 local function scanOne(inst)
@@ -1828,7 +1846,7 @@ do
     local elephantLoop = nil
     local lastElephantScan = 0
     local function startElephantLoop()
-        if elephantLoop then pcall(function() elephantLoop:Disconnect() end); elephantLoop = nil end
+        elephantToken = (elephantToken or 0) + 1; elephantLoop = nil
         if not elephantImmuneEnabled then return end
         elephantLoop = RunService.Heartbeat:Connect(function()
             if not elephantImmuneEnabled then return end
@@ -1838,7 +1856,7 @@ do
         end)
     end
     local function setup()
-        if elephantLoop then pcall(function() elephantLoop:Disconnect() end); elephantLoop = nil end
+        elephantToken = (elephantToken or 0) + 1; elephantLoop = nil
         if killPartScanLoop then killPartScanLoop = nil end
         if not elephantImmuneEnabled then killPartRestore(); restoreScripts(); return end
         disableScripts(); killPartFullScan(); startKillPartScan(); startElephantLoop()
@@ -2128,9 +2146,12 @@ do
     end
     local function startZeroLoop()
         if recoilZeroLoop then return end
-        recoilZeroLoop = spawn(function()
+        recoilToken = (recoilToken or 0) + 1
+        local _rcTok = recoilToken
+        recoilZeroLoop = true
+        spawn(function()
             local frame = 0
-            while recoilEnabled and gui.Parent do
+            while recoilEnabled and recoilToken == _rcTok and gui.Parent do
                 frame = frame + 1
                 if frame % 3 == 0 then
                     for inst in pairs(recoilPatchedInsts) do
@@ -2149,7 +2170,7 @@ do
         end)
     end
     local function stopZeroLoop()
-        if recoilZeroLoop then pcall(function() recoilZeroLoop:Disconnect() end); recoilZeroLoop = nil end
+        recoilToken = (recoilToken or 0) + 1; recoilZeroLoop = nil
     end
     local recoilSpringModule = nil
     local recoilSpring2Module = nil
@@ -4775,8 +4796,11 @@ do
         if rbBoostLabel then pcall(function() rbBoostLabel:Destroy() end); rbBoostLabel = nil end
     end
     local function rbStartLoop()
-        if rbMainLoop then pcall(function() rbMainLoop:Disconnect() end); rbMainLoop = nil end
-        rbMainLoop = spawn(function()
+        rbToken = (rbToken or 0) + 1; rbMainLoop = nil
+        rbToken = (rbToken or 0) + 1
+        local _rbTok = rbToken
+        rbMainLoop = true
+        spawn(function()
             while radarBoostEnabled and gui.Parent do
                 local zones = rbGetZones()
                 if zones then
@@ -4807,7 +4831,7 @@ do
         if radarBoostEnabled then
             rbNeutralize(); rbDisableFadeScripts(); rbFixMinimapUI(); rbShowLabel(); rbStartLoop()
         else
-            if rbMainLoop then pcall(function() rbMainLoop:Disconnect() end); rbMainLoop = nil end
+            rbToken = (rbToken or 0) + 1; rbMainLoop = nil
             rbRestoreZones(); rbRestoreScripts(); rbHideLabel()
         end
     end
@@ -4841,7 +4865,7 @@ do
 
     table.insert(cleanupFns, function()
         rpEnabled = false; rpClearDots(); radarBoostEnabled = false
-        if rbMainLoop then pcall(function() rbMainLoop:Disconnect() end) end
+        rbToken = (rbToken or 0) + 1; rbMainLoop = nil
         rbRestoreZones(); rbRestoreScripts(); rbHideLabel()
     end)
 end
