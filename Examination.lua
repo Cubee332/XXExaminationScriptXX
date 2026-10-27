@@ -734,7 +734,8 @@ do
         if showESPHealth and hum then
             table.insert(parts, string.format("%d / %d", math.floor(hum.Health), math.floor(hum.MaxHealth)))
         end
-        if #parts == 0 then return pre ~= "" and pre:sub(1, -2) or "" end
+        -- 名称和血量都关掉时，整个标签不显示（连 [BOSS] 前缀也不要）
+        if #parts == 0 then return "" end
         return pre .. table.concat(parts, " | ")
     end
     local function refreshAllLabels()
@@ -746,7 +747,10 @@ do
             if not tl then return end
             local _, tag = classify(obj)
             local hum = obj:FindFirstChildOfClass("Humanoid")
-            tl.Text = genText(obj, hum, tagToPre(tag))
+            local txt = genText(obj, hum, tagToPre(tag))
+            tl.Text = txt
+            -- 文本为空时把整个 BillboardGui 隐藏，避免留下空白框
+            bb.Enabled = (txt ~= "")
         end
         for _, fn in ipairs(AI_CONTAINERS) do
             local f = Workspace:FindFirstChild(fn)
@@ -828,7 +832,9 @@ do
         local pre = tagToPre(tag)
         -- 关键：创建时立刻赋文本，否则要等刷新循环才更新
         local hum = model:FindFirstChildOfClass("Humanoid")
-        tl.Text = genText(model, hum, pre)
+        local initialText = genText(model, hum, pre)
+        tl.Text = initialText
+        bb.Enabled = (initialText ~= "")
         table.insert(labelRefreshList, {
             model = model, tl = tl, pre = pre, hl = hl, bb = bb,
         })
@@ -877,7 +883,7 @@ do
             local parts = {}
             if showESPName then table.insert(parts, "BTR-82") end
             if showESPHealth and cur then table.insert(parts, tostring(math.floor(cur))) end
-            if #parts == 0 then return "[BOSS]" end
+            if #parts == 0 then return "" end
             return "[BOSS] " .. table.concat(parts, " | ")
         end
         tl.Text = btrText(hp)
