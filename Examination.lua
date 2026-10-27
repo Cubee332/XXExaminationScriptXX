@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.2.1  适配 CDMUI v1.4.0 的横向滚动 Tab 栏
+-- Examination v1.2.2  武器箱透视改定时补扫（3秒），优化扫描与清理性能
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -1956,18 +1956,17 @@ do
         crateLinks[pp] = nil
     end
 
+    -- 记录所有建出来的高亮节点，清理时直接 Destroy，不再全图扫
+    local crateNodes = {}
+
     local function cleanAllCrates()
         for pp in pairs(crateLinks) do removeCrate(pp) end
         crateLinks = {}
         crateOwnerUsed = {}
-        -- 兜底：把地图上所有残留的节点也清掉（上次运行可能留下）
-        pcall(function()
-            for _, d in ipairs(Workspace:GetDescendants()) do
-                if d.Name == CRATE_HL or d.Name == CRATE_BB then
-                    d:Destroy()
-                end
-            end
-        end)
+        for node in pairs(crateNodes) do
+            pcall(function() if node and node.Parent then node:Destroy() end end)
+        end
+        crateNodes = {}
     end
 
     local function addCrate(pp, kind)
@@ -2008,6 +2007,7 @@ do
         hl.OutlineTransparency = 0.1
         hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
         hl.Parent = node
+        crateNodes[hl] = true
 
         -- 找该模型最高的部件当作标签锚点
         local topPart, topY = nil, -math.huge
@@ -2027,6 +2027,7 @@ do
         bb.MaxDistance = 800
         bb.LightInfluence = 0
         bb.Parent = node
+        crateNodes[bb] = true
 
         local tl = Instance.new("TextLabel")
         tl.Parent = bb
@@ -2120,18 +2121,35 @@ do
         crateSignals[pp] = nil
     end
 
-    -- 建立：扫一遍地图（只做一次），给每个箱子挂高亮并绑定状态信号
+    -- 建立：扫一遍地图，给还没挂过的箱子挂高亮并绑定状态信号
+    -- 支持重复调用（增量补扫），地图流式加载后新刷出来的箱子也能补上
     local crateBuilt = false
+    local crateScanning = false
     local function buildCrates()
-        if crateBuilt then return end
+        if crateScanning then return end
+        crateScanning = true
         crateBuilt = true
         pcall(function()
-            -- 先一次性收集外观模型，后面按距离匹配用
-            crateDecoList = {}
+            -- 外观模型列表只在第一次收集；后续重扫只补新的
+            local firstScan = (crateDecoList == nil)
+            if firstScan then crateDecoList = {} end
+
+            -- 收集外观模型 + 顺便抓 ProximityPrompt，只遍历一次
+            local prompts = {}
+            local decoSeen = {}
+            if firstScan then
+                for _, e in ipairs(crateDecoList) do decoSeen[e.model] = true end
+            else
+                for _, e in ipairs(crateDecoList) do decoSeen[e.model] = true end
+            end
+
             for _, d in ipairs(Workspace:GetDescendants()) do
-                if d:IsA("Model") then
+                if d:IsA("ProximityPrompt") then
+                    prompts[#prompts + 1] = d
+                elseif d:IsA("Model") then
                     local n = d.Name
-                    if n == "BigCrateOpen" or n == "Big Crate" or n == "LootCrate" or n == "LootBox" then
+                    if (n == "BigCrateOpen" or n == "Big Crate" or n == "LootCrate" or n == "LootBox")
+                       and not decoSeen[d] then
                         if not d:FindFirstChildWhichIsA("ProximityPrompt", true) then
                             local part
                             for _, k in ipairs(d:GetDescendants()) do
@@ -2141,13 +2159,14 @@ do
                                 crateDecoList[#crateDecoList + 1] = {
                                     model = d, pos = part.Position, used = false,
                                 }
+                                decoSeen[d] = true
                             end
                         end
                     end
                 end
             end
 
-            for _, d in ipairs(Workspace:GetDescendants()) do
+            for _, d in ipairs(prompts) do
                 if d:IsA("ProximityPrompt") then
                     local kind = crateKindOf(d)
                     if kind then
@@ -2173,6 +2192,7 @@ do
                 end
             end
         end)
+        crateScanning = false
     end
 
     local function destroyCrates()
@@ -2182,20 +2202,47 @@ do
         crateBuilt = false
     end
 
+    -- 定时补扫：地图是流式加载的，刚进游戏很多箱子还没刷出来，
+    -- 靠一次扫描会漏掉。开着的时候每 3 秒补扫一次，只补新增的。
+    local crateLoop = nil
+    local CRATE_RESCAN = 3.0
+
+    local function startCrateLoop()
+        if crateLoop then return end
+        task.spawn(function()
+            while crateEnabled and gui.Parent do
+                task.wait(CRATE_RESCAN)
+                if not crateEnabled then break end
+                pcall(buildCrates)
+            end
+            crateLoop = nil
+        end)
+        crateLoop = true
+    end
+
+    local function stopCrateLoop()
+        crateLoop = nil
+    end
+
     -- 开/关
     _G._ExamSetters.crateESP = function(v)
         crateEnabled = v and true or false
         if crateEnabled then
             buildCrates()
+            startCrateLoop()
         else
+            stopCrateLoop()
             destroyCrates()
         end
     end
 
     -- 清理时也要断开
     table.insert(cleanupFns, function()
+        crateEnabled = false
+        stopCrateLoop()
         for pp in pairs(crateSignals) do unbindPrompt(pp) end
         crateSignals = {}
+        cleanAllCrates()
     end)
 
     toggleBase("人物角色透视", "esp", false, function(v)
@@ -6407,7 +6454,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.2.1"
+local CURRENT_VERSION = "1.2.2"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
