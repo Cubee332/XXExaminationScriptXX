@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v16.7.17 修复了一些bug
+-- Examination v1.0.0 正式版
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -5083,6 +5083,88 @@ tab:Toggle({ Key = "radarBoost", Name = "信号增幅器", Desc = "去除无信�
 
 -- ── 其他 ──
 tab = win:Tab("其他")
+
+-- ============================================================
+-- 版本检测
+-- ============================================================
+local CURRENT_VERSION = "1.0.0"
+local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
+
+local function parseVersion(s)
+    if type(s) ~= "string" then return nil end
+    local a, b, c = s:match("(%d+)%.(%d+)%.(%d+)")
+    if not a then return nil end
+    return tonumber(a) * 10000 + tonumber(b) * 100 + tonumber(c)
+end
+
+local function versionString(v)
+    local a = math.floor(v / 10000)
+    local b = math.floor((v % 10000) / 100)
+    local c = v % 100
+    return string.format("%d.%d.%d", a, b, c)
+end
+
+local statusLabel
+local hasUpdate = false
+local remoteVer = nil
+
+-- 版本行：标题/描述在左，检测按钮在右
+local verRow = tab:RowButton({
+    Name = "当前 v" .. CURRENT_VERSION,
+    Desc = "点击右侧按钮检测最新版本",
+    Text = "检测更新",
+    Variant = "secondary",
+    Width = 76,
+    Callback = function(btn)
+        if verRow then verRow.SetBusy(true) end
+        if verRow then verRow.Set("当前 v" .. CURRENT_VERSION, "正在连接 GitHub…") end
+
+        task.spawn(function()
+            local ok, result = pcall(function()
+                local src = game:HttpGet(VERSION_URL .. "?t=" .. tostring(os.time()))
+                return src:match("%-%-%s*Examination%s+v([%d%.]+)")
+            end)
+
+            if verRow then verRow.SetBusy(false) end
+
+            if not ok or not result then
+                if verRow then
+                    verRow.Set("检测失败", "无法连接 GitHub，请检查网络")
+                end
+                return
+            end
+
+            remoteVer = result
+            local cur = parseVersion(CURRENT_VERSION)
+            local rem = parseVersion(result)
+
+            if not rem then
+                if verRow then verRow.Set("检测失败", "版本号解析失败") end
+                return
+            end
+
+            if rem > cur then
+                hasUpdate = true
+                if verRow then
+                    verRow.Set("发现新版本 v" .. result,
+                        "当前 v" .. CURRENT_VERSION .. "，请更新")
+                end
+            elseif rem == cur then
+                hasUpdate = false
+                if verRow then
+                    verRow.Set("已是最新版本", "当前 v" .. CURRENT_VERSION)
+                end
+            else
+                hasUpdate = false
+                if verRow then
+                    verRow.Set("本地版本较新",
+                        "当前 v" .. CURRENT_VERSION .. " / 线上 v" .. result)
+                end
+            end
+        end)
+    end,
+})
+
 tab:Label({ Name = "敬请期待", Desc = "此页面功能正在开发中" })
 
 -- 注意：safeCleanup 会在开头调用一次清理旧实例；
