@@ -626,9 +626,9 @@ do
             hl.Name = ESP_HL_NEW
             hl.Adornee = ch
             hl.FillColor = C_PLAYER
-            hl.OutlineColor = Color3.new(1, 1, 1)
-            hl.OutlineTransparency = 0.3
-            hl.FillTransparency = 0.25
+            hl.OutlineColor = C_PLAYER
+            hl.OutlineTransparency = 0
+            hl.FillTransparency = 0.75
             hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
             hl.Parent = ch
 
