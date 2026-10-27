@@ -4955,6 +4955,21 @@ tab:Input({ Key = "mbParams", Name = "FOV锁定半径", Desc = "FOV=锁定半径
     Callback = function(v) CB("mbParams", v) end })
 tab:Input({ Key = "mbWorldDistMax", Name = "最大锁定距离", Desc = "锁定目标的最远距离（studs）", Default = "200",
     Callback = function(v) CB("mbWorldDistMax", v) end })
+tab:Body2D({
+    Key = "mbAimPart",
+    Name = "锁定部位",
+    Desc = "点击小人选择锁定的身体部位",
+    Default = 1,
+    Callback = function(idx, label) CB("mbAimPart", idx) end,
+    Parts = {
+        { Key = 1, Name = "头部" },
+        { Key = 2, Name = "躯干" },
+        { Key = 3, Name = "左臂" },
+        { Key = 4, Name = "右臂" },
+        { Key = 5, Name = "左腿" },
+        { Key = 6, Name = "右腿" },
+    },
+})
 
 -- ── 雷达 ──
 tab = win:Tab("雷达")
