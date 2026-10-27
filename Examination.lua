@@ -623,7 +623,8 @@ do
             hl.Adornee = ch
             hl.FillColor = C_PLAYER
             hl.OutlineColor = Color3.new(1, 1, 1)
-            hl.OutlineTransparency = 1
+            hl.OutlineTransparency = 0.3
+            hl.FillTransparency = 0.25
             hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
             hl.Parent = ch
 
@@ -785,6 +786,17 @@ do
     end
     local function highlightAI(model, color, tag)
         if not espEnabled then return end
+
+        -- 0 血 / 死亡实体不高亮
+        local hum = model:FindFirstChildOfClass("Humanoid")
+        if hum and hum.Health <= 0 then
+            -- 已死：清掉可能残留的高亮
+            for _, c in ipairs(model:GetChildren()) do
+                if isOurESPNode(c) then pcall(function() c:Destroy() end) end
+            end
+            return
+        end
+
         if model:FindFirstChild(ESP_HL_NEW) then return end
         local hl = Instance.new("Highlight")
         hl.Name = ESP_HL_NEW; hl.Adornee = model; hl.FillColor = color
@@ -1021,6 +1033,15 @@ do
                     local item = labelRefreshList[i]
                     local m = item.model
                     if not m or not m.Parent or not m:FindFirstChild(ESP_HL_NEW) then
+                        table.remove(labelRefreshList, i)
+                    elseif (function()
+                        local h = m:FindFirstChildOfClass("Humanoid")
+                        return h and h.Health <= 0
+                    end)() then
+                        -- 死亡后移除高亮
+                        for _, c in ipairs(m:GetChildren()) do
+                            if isOurESPNode(c) then pcall(function() c:Destroy() end) end
+                        end
                         table.remove(labelRefreshList, i)
                     else
                         local hum = m:FindFirstChildOfClass("Humanoid")
