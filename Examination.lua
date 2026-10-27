@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.0.1  接入 CDMUI 1.3.2；锁定模式三态切换；其他页整行点击检测更新
+-- Examination v1.0.2  强制爆头与魔法子弹互斥并同步 UI；魔法子弹/雷达排除 BTR-82
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -65,6 +65,15 @@ local hmDurationSec = 1
 local hmSizeIdx = 1
 
 local AI_CONTAINERS = {"Characters", "Reactor1", "Reactor2", "Reactor3", "Reactor4"}
+
+-- 只能被 AT-7 击毁的 BTR 载具：枪械打不到，锁定与雷达都不纳入。
+-- 无人机不在此列，正常参与锁定。
+local VEHICLE_NAMES = {
+    ["BTR-82 (BOSS)"] = true,
+}
+local function isVehicle(m)
+    return m ~= nil and VEHICLE_NAMES[m.Name] == true
+end
 local SHOTGUN_PUMP_IDS = {
     ["115903749552317"]=true,["80315455447277"]=true,["89272072134105"]=true,
     ["96917301511774"]=true,["135326741887023"]=true,["116710355675938"]=true,
@@ -3302,6 +3311,7 @@ end
         if m == lp.Character then return false end
         if _playerChars[m] then return false end
         if m:GetAttribute("FriendlyToFlare") == true then return false end
+        if isVehicle(m) then return false end
         return true
     end
     local function isPointVisible(origin, targetPos, targetModel, excludeBase)
@@ -4492,7 +4502,7 @@ do
                         local hum = model:FindFirstChildOfClass("Humanoid")
                         local hrp = model:FindFirstChild("HumanoidRootPart")
                         if hum and hrp and hum.Health > 0 then
-                            if not _playerChars[model] then
+                            if not _playerChars[model] and not isVehicle(model) then
                                 local n = model.Name
                                 local c
                                 if n == "SIN" or n == "Chimera" or n == "Gilbert"
@@ -4914,6 +4924,27 @@ win.OnToggle = function(key, value)
     if cb then pcall(cb, value) end
 end
 
+-- 互斥功能：模块内部互相关闭时，把 UI 勾选框同步掉
+-- 控件存在各自的 Tab 里，这里遍历所有 Tab 找对应的 key
+local function refreshToggle(key, value)
+    for _, tabObj in ipairs(win.Tabs) do
+        local row = tabObj.Rows and tabObj.Rows[key]
+        if row and row.SetSilent then
+            pcall(row.SetSilent, value)
+            win.State[key] = value
+            return
+        end
+    end
+end
+
+_G._CP_RefreshFns.forceHeadshot = function()
+    refreshToggle("forceHeadshot", false)
+end
+
+_G._CP_RefreshFns.magicBullet = function()
+    refreshToggle("magicBullet", false)
+end
+
 
 local tab
 
@@ -5100,7 +5131,7 @@ tab = win:Tab("其他")
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.0.1"
+local CURRENT_VERSION = "1.0.2"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
