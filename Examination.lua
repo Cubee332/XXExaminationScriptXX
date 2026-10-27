@@ -5021,15 +5021,24 @@ tab:Expand({
         { Kind = "toggle", Key = "mbOnlyWhenLocked", Name = "未锁定不穿透", Default = true, Callback = function(v) CB("mbOnlyWhenLocked", v) end },
     },
 })
+-- 锁定模式（原版是 expandableCycle：三种模式循环切换 + 两个子项）
 tab:Expand({
     Key = "mbTargetMode",
-    Callback = function(v) CB("mbTargetMode", v) end,
     Name = "锁定模式",
-    Desc = "切换目标选择方式",
+    Desc = "切换目标选择方式（点击右侧切换）",
     Default = false,
+    Callback = function(v) CB("mbTargetMode", v) end,
+    Cycle = {
+        Key = "mbTargetMode",
+        Options = { "FOV准星", "FOV最近", "360°" },
+        DefaultIndex = 1,
+        Callback = function(opt, idx) CB("mbTargetMode", idx) end,
+    },
     Children = {
-        { Kind = "toggle", Key = "mbShowRadius", Name = "360°锁定半径锁定显示", Default = false, Callback = function(v) CB("mbShowRadius", v) end },
-        { Kind = "cycle", Key = "radiusMode", Name = "360°锁定半径显示模式", Options = { "线", "面" }, Callback = function(v) CB("radiusMode", v) end },
+        { Kind = "toggle", Key = "mbShowRadius", Name = "360°锁定半径锁定显示", Default = false,
+          Callback = function(v) CB("mbShowRadius", v) end },
+        { Kind = "cycle", Key = "radiusMode", Name = "360°锁定半径显示模式",
+          Options = { "线", "面" }, Callback = function(v) CB("radiusMode", v) end },
     },
 })
 tab:Toggle({ Key = "autoFire", Name = "自动开火", Desc = "锁定后自动开火（需先开魔法子弹+掩体检测）", Default = false,
@@ -5109,11 +5118,13 @@ local hasUpdate = false
 local remoteVer = nil
 
 -- 版本行：整行可点击，点一下就检测更新
-local verRow = tab:ClickableRow({
+local verRow
+verRow = tab:ClickableRow({
     Name = "当前 v" .. CURRENT_VERSION,
     Desc = "点击此行检测最新版本",
     Arrow = true,
     Callback = function()
+        if not verRow then return end
         verRow.SetBusy(true)
         verRow.Set("检测中…", "正在连接 GitHub…")
 
