@@ -1954,222 +1954,117 @@ do
         frEnabled = false; frLoopToken = frLoopToken + 1; frRestore()
     end)
 end
--- ============ 模块 11: 去除枪口遮挡（重写版） ============
--- 改进点：
---   1. 不只在开火时生效 —— 持枪贴墙时持续处理，准心始终不被挡
---   2. 用「变更集」而不是每帧全恢复，避免 CanCollide 反复抖动
---   3. 同时处理 CanCollide 和 LocalTransparencyModifier（视觉遮挡）
---   4. 射线沿「枪口 → 相机」方向采样，覆盖真正的视线阻挡
---   5. 支持所有带 FirePoint / Muzzle 的工具有效
+-- ============ 模块 11: 去除枪口遮挡 ============
 do
-    local muzzleEnabled = false
-    local hbConn = nil
-    local watchConn = nil
+    local muzzleHbConn = nil
+    local muzzleDisabledParts = {}
     local lastTool = nil
-
-    -- 被修改过的部件：part -> { CanCollide = 原值, LTM = 原值 }
-    local modified = {}
-
-    -- 每帧最多检测次数（降低开销）
-    local FRAME_BUDGET = 0.004     -- 秒
-
-    local function isInPart(point, part)
-        local ok, rel = pcall(function() return part.CFrame:PointToObjectSpace(point) end)
+    local watchConn = nil
+    local function findFirePoint()
+        local char = lp.Character
+        if not char then return nil, nil end
+        local tool = char:FindFirstChildWhichIsA("Tool")
+        if not tool then return nil, char end
+        for _, d in ipairs(tool:GetDescendants()) do
+            if d:IsA("Attachment") and d.Name == "FirePoint" then return d, char end
+        end
+        return nil, char
+    end
+    local function isPointInPart(p, part)
+        local ok, rel = pcall(function() return part.CFrame:PointToObjectSpace(p) end)
         if not ok then return false end
         local half = part.Size * 0.5
-        return math.abs(rel.X) <= half.X
-           and math.abs(rel.Y) <= half.Y
-           and math.abs(rel.Z) <= half.Z
+        return math.abs(rel.X) <= half.X and math.abs(rel.Y) <= half.Y and math.abs(rel.Z) <= half.Z
     end
-
-    local function findFirePoint(tool)
-        if not tool then return nil end
-        for _, d in ipairs(tool:GetDescendants()) do
-            if d:IsA("Attachment")
-               and (d.Name == "FirePoint" or d.Name == "Muzzle"
-                    or d.Name == "BarrelPoint" or d.Name == "MuzzlePoint") then
-                return d
-            end
-        end
-        -- 退而求其次：任何 Attachment
-        for _, d in ipairs(tool:GetDescendants()) do
-            if d:IsA("Attachment") then return d end
-        end
+    local function findSupportPart(char, hrp)
+        local rp = RaycastParams.new()
+        rp.FilterDescendantsInstances = { char, Workspace.Terrain }
+        rp.FilterType = Enum.RaycastFilterType.Exclude
+        local r = Workspace:Raycast(hrp.Position, Vector3.new(0, -200, 0), rp)
+        if r then return r.Instance end
         return nil
     end
-
-    local function currentTool()
-        local char = lp.Character
-        return char and char:FindFirstChildWhichIsA("Tool") or nil
-    end
-
-    -- 恢复单个部件
-    local function restorePart(part)
-        local rec = modified[part]
-        if not rec then return end
-        if part and part.Parent then
-            pcall(function()
-                if rec.CanCollide ~= nil then part.CanCollide = rec.CanCollide end
-                if rec.LTM ~= nil then part.LocalTransparencyModifier = rec.LTM end
-            end)
-        end
-        modified[part] = nil
-    end
-
     local function restoreAll()
-        for part in pairs(modified) do
-            restorePart(part)
+        if next(muzzleDisabledParts) == nil then return end
+        for p, orig in pairs(muzzleDisabledParts) do
+            if p and p.Parent then pcall(function() p.CanCollide = orig end) end
         end
-        modified = {}
+        muzzleDisabledParts = {}
     end
-
-    -- 标记一个部件为「需要移除遮挡」
-    local function markPart(part)
-        if not part or not part.Parent then return end
-        if not part:IsA("BasePart") then return end
-        if modified[part] then return end
-        modified[part] = {
-            CanCollide = part.CanCollide,
-            LTM = part.LocalTransparencyModifier,
-        }
-        pcall(function()
-            part.CanCollide = false
-            -- 透明化：让枪口视觉上不被挡（只影响本客户端）
-            if part.Transparency < 0.99 then
-                part.LocalTransparencyModifier = 0.85
-            end
-        end)
-    end
-
-    -- 主检测
     local function step()
-        if not muzzleEnabled then
-            if next(modified) ~= nil then restoreAll() end
-            return
-        end
-
-        local char = lp.Character
-        if not char then restoreAll(); return end
-        local tool = char:FindFirstChildWhichIsA("Tool")
-        if not tool then
-            if next(modified) ~= nil then restoreAll() end
-            return
-        end
-
-        local fp = findFirePoint(tool)
-        if not fp then return end
-
-        local cam = workspace.CurrentCamera
+        if not muzzleEnabled then return end
+        local fp, char = findFirePoint()
+        if not fp or not char then return end
         local hrp = char:FindFirstChild("HumanoidRootPart")
-        if not cam or not hrp then return end
-
+        if not hrp then return end
         local fpPos = fp.WorldPosition
-        local camPos = cam.CFrame.Position
-
-        -- 检测方向：从枪口朝相机，以及从相机朝枪口
-        -- 这两个方向覆盖了「墙挡在枪口前」和「枪口插进墙里」两种情况
-        local baseFilter = { char, workspace.Terrain, tool }
-        local filterList = { char, workspace.Terrain }
-        if cam then table.insert(filterList, cam) end
-
-        local rp = RaycastParams.new()
-        rp.FilterDescendantsInstances = filterList
-        rp.FilterType = Enum.RaycastFilterType.Exclude
-        rp.RespectCanCollide = false
-
-        local hitThisFrame = {}
-        local t0 = os.clock()
-
-        -- A) 枪口 → 相机
-        local dirA = camPos - fpPos
-        if dirA.Magnitude > 0.5 then
-            local r = workspace:Raycast(fpPos, dirA.Unit * math.min(dirA.Magnitude, 15), rp)
-            if r and r.Instance then hitThisFrame[r.Instance] = true end
+        local hrpPos = hrp.Position
+        local supportPart = findSupportPart(char, hrp)
+        local fpBelow = fpPos.Y < hrpPos.Y - 1.0
+        local walls = {}
+        local overlapParams = OverlapParams.new()
+        overlapParams.FilterDescendantsInstances = { char, Workspace.Terrain }
+        overlapParams.FilterType = Enum.RaycastFilterType.Exclude
+        overlapParams.MaxParts = 100
+        local ok1, near = pcall(function() return Workspace:GetPartBoundsInRadius(fpPos, 0.05, overlapParams) end)
+        if ok1 and near then
+            for _, p in ipairs(near) do
+                if p:IsA("BasePart") and p ~= supportPart and isPointInPart(fpPos, p) then walls[p] = true end
+            end
         end
-
-        -- B) 相机 → 枪口（反向，捕捉近距离遮挡）
-        if os.clock() - t0 < FRAME_BUDGET and dirA.Magnitude > 0.5 then
-            local r = workspace:Raycast(camPos, -dirA.Unit * math.min(dirA.Magnitude, 15), rp)
-            if r and r.Instance then hitThisFrame[r.Instance] = true end
-        end
-
-        -- C) 枪口半径内包含它的部件（枪口插进墙）
-        if os.clock() - t0 < FRAME_BUDGET then
-            local op = OverlapParams.new()
-            op.FilterDescendantsInstances = filterList
-            op.FilterType = Enum.RaycastFilterType.Exclude
-            op.MaxParts = 20
-            local ok, parts = pcall(function()
-                return workspace:GetPartBoundsInRadius(fpPos, 0.6, op)
-            end)
-            if ok and parts then
-                for _, pt in ipairs(parts) do
-                    if pt:IsA("BasePart") and isInPart(fpPos, pt) then
-                        hitThisFrame[pt] = true
-                    end
+        if not fpBelow then
+            local rp = RaycastParams.new()
+            rp.FilterDescendantsInstances = { char, Workspace.Terrain }
+            rp.FilterType = Enum.RaycastFilterType.Exclude
+            local dir = hrpPos - fpPos
+            if dir.Magnitude > 0.1 then
+                local r = Workspace:Raycast(fpPos, dir, rp)
+                if r and r.Instance and r.Instance ~= supportPart then walls[r.Instance] = true end
+                local steps = math.min(15, math.max(1, math.floor(dir.Magnitude / 0.5)))
+                for i = 0, steps do
+                    local samplePos = fpPos + dir * (i / steps)
+                    local r2 = Workspace:Raycast(samplePos, dir.Unit * 0.8, rp)
+                    if r2 and r2.Instance and r2.Instance ~= supportPart then walls[r2.Instance] = true end
                 end
             end
         end
-
-        -- 应用：新命中的标记，不再命中的恢复
-        for part in pairs(hitThisFrame) do
-            markPart(part)
-        end
-        for part in pairs(modified) do
-            if not hitThisFrame[part] then
-                restorePart(part)
+        for p in pairs(walls) do
+            if p and p.Parent then
+                muzzleDisabledParts[p] = p.CanCollide
+                pcall(function() p.CanCollide = false end)
             end
         end
     end
-
     local function setup()
-        if hbConn then pcall(function() hbConn:Disconnect() end); hbConn = nil end
-        if watchConn then pcall(function() watchConn:Disconnect() end); watchConn = nil end
-
-        if not muzzleEnabled then
-            restoreAll()
-            lastTool = nil
-            return
-        end
-
-        -- 主循环：每帧检测
-        hbConn = RunService.Heartbeat:Connect(function()
+        if muzzleHbConn then pcall(function() muzzleHbConn:Disconnect() end); muzzleHbConn = nil end
+        if watchConn then watchConn:Disconnect(); watchConn = nil end
+        if not muzzleEnabled then restoreAll(); lastTool = nil; return end
+        muzzleHbConn = RunService.Heartbeat:Connect(function()
             if not muzzleEnabled then return end
-            pcall(step)
+            restoreAll()
+            if UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then pcall(step) end
         end)
-
-        -- 监视换枪 / 卸枪
         watchConn = RunService.Heartbeat:Connect(function()
             if not muzzleEnabled then return end
-            local tool = currentTool()
-            if tool ~= lastTool then
-                lastTool = tool
-                restoreAll()
-            end
+            local char = lp.Character
+            local tool = char and char:FindFirstChildWhichIsA("Tool")
+            if tool ~= lastTool then lastTool = tool; restoreAll() end
         end)
     end
-
     toggleBase("去除枪口遮挡", "muzzle", false, function(v)
-        muzzleEnabled = v
-        setup()
+        muzzleEnabled = v; setup()
     end)
-
     lp.CharacterAdded:Connect(function()
-        task.wait(1)
-        if muzzleEnabled then
-            restoreAll()
-            lastTool = nil
-            setup()
-        end
+        wait(1)
+        if muzzleEnabled then restoreAll(); lastTool = nil; setup() end
     end)
-
     table.insert(cleanupFns, function()
-        muzzleEnabled = false
-        if hbConn then pcall(function() hbConn:Disconnect() end) end
-        if watchConn then pcall(function() watchConn:Disconnect() end) end
+        if muzzleHbConn then pcall(function() muzzleHbConn:Disconnect() end) end
+        if watchConn then watchConn:Disconnect() end
         restoreAll()
     end)
 end
+
 
 -- ============ 模块 12: 无后座 ============
 do
