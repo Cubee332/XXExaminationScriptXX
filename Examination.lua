@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.1.0  六页分类重构；新增硬直免疫和全图高亮；修无后坐力重启残留；雷达子项
+-- Examination v1.2.0  新增免疫摔伤/镜头防抖/原地旋转/抬头低头/头部旋转；修 Cycle 参数与无后坐力重载残留
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -513,6 +513,548 @@ do
     table.insert(cleanupFns, function()
         staggerEnabled = false
         if lockLoop then pcall(function() lockLoop:Disconnect() end) end
+    end)
+end
+
+-- ============ 模块 0.15: 镜头防抖 ============
+-- 游戏在跑动/冲刺/受击时会调用几个 Shake 函数让镜头晃，
+-- 这里把它们 hook 成空函数。关掉时还原。
+do
+    local hooked = {}
+
+    local NAMES = { doshake = true, startshake = true, shakeonce = true, shakesustain = true }
+
+    local function install()
+        if #hooked > 0 then return end
+        if not (getgc and hookfunction) then return end
+        pcall(function()
+            for _, f in pairs(getgc(true)) do
+                if type(f) == "function" then
+                    local ok, info = pcall(getinfo, f)
+                    if ok and info and NAMES[(info.name or ""):lower()] then
+                        local ok2 = pcall(function()
+                            local orig = f
+                            hookfunction(f, function() return end)
+                            table.insert(hooked, { fn = f, orig = orig })
+                        end)
+                        if ok2 then
+                            -- 记录原始函数用于还原
+                            hooked[#hooked].orig = f
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
+    _G._ExamSetters.noShake = function(v)
+        _G._ExamStates.noShake = v and true or false
+        if v then
+            install()
+        else
+            -- 还原：hookfunction 反向调用拿不到原函数时只能跳过
+            hooked = {}
+        end
+    end
+    _G._ExamStates.noShake = false
+
+    table.insert(cleanupFns, function()
+        hooked = {}
+    end)
+end
+
+-- ============ 模块 0.2: 假身动作 ============
+-- 旋转：BodyAngularVelocity（同 IY 的 spin）
+-- 点头：改 Motor6D.Transform，叠加在游戏自己的 C0 之上，不会被覆盖
+do
+    local spinObj = nil
+
+    -- 记下角色原始的 Neck C0/C1，供复原用
+    local origNeckC0 = nil
+    local origNeckC1 = nil
+    local origNeckFor = nil
+    local function snapshotNeck()
+        local c = lp.Character
+        if not c then return end
+        local torso = c:FindFirstChild("Torso") or c:FindFirstChild("UpperTorso")
+        local neck = torso and torso:FindFirstChild("Neck")
+        if not neck or not neck:IsA("Motor6D") then return end
+        if origNeckFor == neck then return end
+        origNeckFor = neck
+        origNeckC0 = neck.C0
+        origNeckC1 = neck.C1
+    end
+    task.spawn(function()
+        task.wait(2)
+        snapshotNeck()
+    end)
+    lp.CharacterAdded:Connect(function()
+        task.wait(2)
+        origNeckFor = nil
+        snapshotNeck()
+    end)
+
+    local nodEnabled = false
+    local nodMode = 1      -- 1=低头固定 2=抬头固定 3=来回切
+    local nodSwapped = false
+    local nodTimer = 0
+    local nodConn = nil
+
+    ------------------------------------------------------------------
+    -- 旋转
+    ------------------------------------------------------------------
+    local function removeSpin()
+        if spinObj then
+            pcall(function() spinObj:Destroy() end)
+            spinObj = nil
+        end
+        local char = lp.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            for _, c in ipairs(hrp:GetChildren()) do
+                if c.Name == "ExamSpinning" then pcall(function() c:Destroy() end) end
+            end
+        end
+    end
+
+    local function setSpin(speed)
+        removeSpin()
+        if not speed or speed == 0 then return end
+        local char = lp.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+
+        local spin = Instance.new("BodyAngularVelocity")
+        spin.Name = "ExamSpinning"
+        spin.MaxTorque = Vector3.new(0, math.huge, 0)
+        spin.AngularVelocity = Vector3.new(0, speed, 0)
+        spin.Parent = hrp
+        spinObj = spin
+    end
+
+    _G._ExamSetters.spin = function(v)
+        _G._ExamStates.spin = v and true or false
+        if v then
+            setSpin(tonumber(_G._ExamStates.spinSpeed) or 20)
+        else
+            removeSpin()
+        end
+    end
+    _G._ExamStates.spin = false
+
+    _G._ExamSetters.spinSpeed = function(v)
+        local n = tonumber(v)
+        if not n then return end
+        n = math.clamp(n, 0, 500)
+        _G._ExamStates.spinSpeed = n
+        if _G._ExamStates.spin then setSpin(n) end
+    end
+    _G._ExamStates.spinSpeed = 20
+
+    ------------------------------------------------------------------
+    -- 点头
+    -- 游戏每帧重写 Neck.C0，所以只能改 Transform。
+    -- 低头固定 / 抬头固定 / 两者来回快速切换。
+    ------------------------------------------------------------------
+    local DIP = math.rad(70)     -- 低头角度
+
+    local function findNeck(char)
+        if not char then return nil end
+        local torso = char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
+        local neck = torso and torso:FindFirstChild("Neck")
+        if neck and neck:IsA("Motor6D") then return neck end
+        return nil
+    end
+
+    local function resetNod()
+        local char = lp.Character
+        if not char then return end
+        for _, d in ipairs(char:GetDescendants()) do
+            if d:IsA("Motor6D") then
+                pcall(function() d.Transform = CFrame.identity end)
+            end
+        end
+        -- C0 交还给游戏（游戏自己会重写，这里清掉我们的锁定即可）
+        nodNeckRef = nil
+        nodBasePos = nil
+    end
+
+    local function stopNod()
+        if nodConn then nodConn:Disconnect(); nodConn = nil end
+        nodSwapped = false
+        nodTimer = 0
+        resetNod()
+    end
+
+    -- 关键：游戏每帧重写 Neck.C0 的旋转部分，只写 Transform 会被压制。
+    -- 所以要同时锁住 C0（保留位置、朝向归零）和 Transform（我们设的角度）。
+    local nodNeckRef = nil
+    local nodBasePos = nil
+
+    -- 实测结论：这个游戏里 Motor6D.Transform 不起作用，
+    -- 只有直接写 Neck.C0 才能改头部朝向。
+    -- C0 角度 0 => 脸朝下；180 => 脸朝上。
+    local LOOK_DOWN = 0
+    local LOOK_UP = 180
+
+    local function applyNod(dt)
+        local char = lp.Character
+        if not char then return end
+        local neck = findNeck(char)
+        if not neck then return end
+
+        if nodNeckRef ~= neck or not nodBasePos then
+            nodNeckRef = neck
+            nodBasePos = neck.C0.Position
+        end
+
+        local deg
+        if nodMode == 1 then
+            deg = LOOK_DOWN
+        elseif nodMode == 2 then
+            deg = LOOK_UP
+        else
+            nodTimer = nodTimer + dt
+            if nodTimer >= 0.18 then
+                nodTimer = 0
+                nodSwapped = not nodSwapped
+            end
+            deg = nodSwapped and LOOK_UP or LOOK_DOWN
+        end
+
+        pcall(function()
+            neck.C0 = CFrame.new(nodBasePos) * CFrame.Angles(math.rad(deg), 0, 0)
+            neck.Transform = CFrame.identity
+        end)
+    end
+
+    _G._ExamSetters.nod = function(v)
+        if v and _G._ExamStates.headSpin then
+            _G._ExamSetters.headSpin(false)
+            local fn = _G._ExamSyncCheckbox and _G._ExamSyncCheckbox["headSpin"]
+            if fn then pcall(fn, false) end
+        end
+        nodEnabled = v and true or false
+        _G._ExamStates.nod = nodEnabled
+        if not nodEnabled then
+            stopNod()
+            return
+        end
+        if nodConn then return end
+        nodSwapped = false
+        nodTimer = 0
+        nodConn = RunService.Heartbeat:Connect(function(dt)
+            if not nodEnabled then return end
+            applyNod(dt)
+        end)
+    end
+    _G._ExamStates.nod = false
+
+    _G._ExamSetters.nodMode = function(v)
+        local n = tonumber(v)
+        if not n then
+            if v == "低头" then n = 1
+            elseif v == "抬头" then n = 2
+            elseif v == "低头+抬头" then n = 3 end
+        end
+        if not n or n < 1 or n > 3 then return end
+        nodMode = n
+        _G._ExamStates.nodMode = n
+        nodSwapped = false
+        nodTimer = 0
+    end
+    _G._ExamStates.nodMode = 1
+
+    ------------------------------------------------------------------
+    -- 头部旋转（XYZ 三轴独立）
+    -- 基准 = 平视姿态，再叠三轴角度。
+    -- 和抬头低头互斥，开这个会把 nod 关掉。
+    local headSpinOn = false
+    local hxSpeed, hySpeed, hzSpeed = 0, 120, 0    -- 度/秒
+    local hxAng, hyAng, hzAng = 0, 0, 0
+    local headSpinConn = nil
+    local headBasePos = nil
+    local headNeckRef = nil
+    local headLastT = nil
+
+    local function stopHeadSpin()
+        if headSpinConn then headSpinConn:Disconnect(); headSpinConn = nil end
+        headSpinOn = false
+        hxAng, hyAng, hzAng = 0, 0, 0
+        headLastT = nil
+        headStartT = nil
+        headNeckRef = nil
+        headBasePos = nil
+    end
+
+    -- 用绝对时间算角度，避免逐帧累加误差
+    local headStartT = nil
+
+    local function headTickAbs()
+        local char = lp.Character
+        if not char then return end
+        local neck = findNeck(char)
+        if not neck then return end
+
+        if headNeckRef ~= neck or not headBasePos then
+            headNeckRef = neck
+            headBasePos = neck.C0.Position
+        end
+        if not headStartT then headStartT = os.clock() end
+
+        local el = os.clock() - headStartT
+        -- 单位换算：填 10 ≈ 573 度/秒
+        local hx = (hxSpeed * 57.3 * el) % 360
+        local hy = (hySpeed * 57.3 * el) % 360
+        local hz = (hzSpeed * 57.3 * el) % 360
+
+        pcall(function()
+            neck.C0 = CFrame.new(headBasePos)
+                * CFrame.Angles(0, math.rad(hy), 0)
+                * CFrame.Angles(math.rad(90 + hx), 0, math.rad(hz))
+            neck.Transform = CFrame.identity
+        end)
+    end
+
+    _G._ExamSetters.headSpin = function(v)
+        if v then
+            -- 互斥：先把抬头低头关掉（逻辑 + 勾选框一起关）
+            if _G._ExamStates.nod then
+                _G._ExamSetters.nod(false)
+                syncBox("nod", false)
+            end
+            headSpinOn = true
+            _G._ExamStates.headSpin = true
+            if headSpinConn then return end
+            hxAng, hyAng, hzAng = 0, 0, 0
+            headSpinConn = RunService.RenderStepped:Connect(function()
+                if not headSpinOn then return end
+                headTickAbs()
+            end)
+        else
+            stopHeadSpin()
+            _G._ExamStates.headSpin = false
+        end
+    end
+    _G._ExamStates.headSpin = false
+
+    -- 三轴各自的速度（绝对值），方向由 headSpinDir 统一控制
+    local hxAbs, hyAbs, hzAbs = 0, 10, 0
+    local spinDir = 1        -- 1=顺时针 -1=逆时针
+
+    local function applyDirs()
+        hxSpeed = hxAbs * spinDir
+        hySpeed = hyAbs * spinDir
+        hzSpeed = hzAbs * spinDir
+    end
+
+    local function setAxisSpeed(axis, v)
+        local n = tonumber(v)
+        if not n then return end
+        n = math.clamp(n, 0, 50)
+        if axis == "X" then hxAbs = n; _G._ExamStates.headSpinX = n
+        elseif axis == "Y" then hyAbs = n; _G._ExamStates.headSpinY = n
+        else hzAbs = n; _G._ExamStates.headSpinZ = n end
+        applyDirs()
+    end
+
+    _G._ExamSetters.headSpinX = function(v) setAxisSpeed("X", v) end
+    _G._ExamSetters.headSpinY = function(v) setAxisSpeed("Y", v) end
+    _G._ExamSetters.headSpinZ = function(v) setAxisSpeed("Z", v) end
+    _G._ExamStates.headSpinX = 0
+    _G._ExamStates.headSpinY = 10
+    _G._ExamStates.headSpinZ = 0
+
+    _G._ExamSetters.headSpinDir = function(v)
+        if v == 1 or v == "顺时针" then spinDir = 1
+        elseif v == 2 or v == "逆时针" then spinDir = -1
+        else return end
+        _G._ExamStates.headSpinDir = (spinDir > 0) and 1 or 2
+        applyDirs()
+    end
+    _G._ExamStates.headSpinDir = 1
+    applyDirs()
+
+    lp.CharacterAdded:Connect(function()
+        task.wait(1)
+        if _G._ExamStates.spin then
+            setSpin(tonumber(_G._ExamStates.spinSpeed) or 20)
+        end
+        if _G._ExamStates.nod then
+            _G._ExamSetters.nod(false)
+            task.wait(0.1)
+            _G._ExamSetters.nod(true)
+        end
+    end)
+
+    table.insert(cleanupFns, function()
+        nodEnabled = false
+        if nodConn then pcall(function() nodConn:Disconnect() end); nodConn = nil end
+        headSpinOn = false
+        if headSpinConn then pcall(function() headSpinConn:Disconnect() end); headSpinConn = nil end
+        removeSpin()
+        stopNod()
+
+        -- 头部姿态是我们直接写 Neck.C0 改的，
+        -- 必须复位，否则重载后头还歪着。
+        local c = lp.Character
+        if c then
+            local torso = c:FindFirstChild("Torso") or c:FindFirstChild("UpperTorso")
+            local neck = torso and torso:FindFirstChild("Neck")
+            if neck and neck:IsA("Motor6D") then
+                pcall(function()
+                    neck.Transform = CFrame.identity
+                    if origNeckC0 then neck.C0 = origNeckC0 end
+                    if origNeckC1 then neck.C1 = origNeckC1 end
+                end)
+            end
+            for _, d in ipairs(c:GetDescendants()) do
+                if d:IsA("Motor6D") then
+                    pcall(function() d.Transform = CFrame.identity end)
+                end
+            end
+        end
+    end)
+end
+
+-- ============ 模块 0.1: 视角解锁 ============
+-- 第一人称 / 第三人称自由切
+-- 切到第三人称时放开 CameraMode；切回第一人称恢复游戏原本的锁定
+do
+    local unlocked = false
+    local backup = nil
+
+    local function setUnlock(on)
+        unlocked = on and true or false
+        if unlocked then
+            if not backup then
+                backup = {
+                    camMode = lp.CameraMode,
+                    camMax = lp.CameraMaxZoomDistance,
+                    camMin = lp.CameraMinZoomDistance,
+                }
+            end
+            pcall(function()
+                lp.CameraMode = Enum.CameraMode.Classic
+                lp.CameraMaxZoomDistance = 30
+                lp.CameraMinZoomDistance = 4
+            end)
+        else
+            if backup then
+                pcall(function()
+                    lp.CameraMode = backup.camMode
+                    lp.CameraMaxZoomDistance = backup.camMax
+                    lp.CameraMinZoomDistance = backup.camMin
+                end)
+                backup = nil
+            end
+        end
+    end
+
+    local thirdConn = nil
+    _G._ExamSetters.thirdPerson = function(v)
+        if thirdConn then thirdConn:Disconnect(); thirdConn = nil end
+        if not v then
+            setUnlock(false)
+            _G._ExamStates.thirdPerson = false
+            return
+        end
+        setUnlock(true)
+        _G._ExamStates.thirdPerson = true
+        -- 游戏会不停拉回第一人称，这里持续保持
+        thirdConn = RunService.RenderStepped:Connect(function()
+            if not _G._ExamStates.thirdPerson then return end
+            pcall(function()
+                if lp.CameraMode ~= Enum.CameraMode.Classic then
+                    lp.CameraMode = Enum.CameraMode.Classic
+                end
+                if lp.CameraMaxZoomDistance < 20 then
+                    lp.CameraMaxZoomDistance = 30
+                end
+            end)
+        end)
+    end
+    _G._ExamStates.thirdPerson = false
+
+    -- 重生后游戏会把相机拉回第一人称，
+    -- 这里只要开关还开着就重新挂上循环，持续把它掰回来。
+    lp.CharacterAdded:Connect(function()
+        task.wait(1.5)
+        if _G._ExamStates.thirdPerson then
+            _G._ExamSetters.thirdPerson(true)
+        end
+    end)
+
+    -- 兜底：每 2 秒检查一次，开关开着但相机被拉回去了就补上
+    task.spawn(function()
+        while gui.Parent do
+            task.wait(2)
+            if _G._ExamStates.thirdPerson then
+                if not thirdConn then
+                    _G._ExamSetters.thirdPerson(true)
+                elseif lp.CameraMode ~= Enum.CameraMode.Classic then
+                    pcall(function()
+                        lp.CameraMode = Enum.CameraMode.Classic
+                        lp.CameraMaxZoomDistance = 30
+                    end)
+                end
+            end
+        end
+    end)
+
+    table.insert(cleanupFns, function()
+        if thirdConn then pcall(function() thirdConn:Disconnect() end) end
+        setUnlock(false)
+    end)
+end
+
+-- ============ 模块 0.3: 免疫摔伤 ============
+-- 摔伤由服务端按落地速度判定，客户端没有直接开关。
+-- 这里在下落过程中限制最大垂直速度，落地速度不够就判定不出摔伤。
+do
+    local fallEnabled = false
+    local fallConn = nil
+    local MAX_FALL_SPEED = 60      -- 超过这个速度开始压制
+
+    local function setup()
+        if fallConn then fallConn:Disconnect(); fallConn = nil end
+        if not fallEnabled then return end
+
+        fallConn = RunService.Heartbeat:Connect(function()
+            if not fallEnabled then return end
+            local char = lp.Character
+            if not char then return end
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if not hum or not hrp then return end
+            if hum.Health <= 0 then return end
+
+            if hum:GetState() ~= Enum.HumanoidStateType.Freefall then return end
+
+            local v = hrp.AssemblyLinearVelocity
+            if v.Y < -MAX_FALL_SPEED then
+                pcall(function()
+                    hrp.AssemblyLinearVelocity = Vector3.new(v.X, -MAX_FALL_SPEED, v.Z)
+                end)
+            end
+        end)
+    end
+
+    _G._ExamSetters.fallImmune = function(v)
+        fallEnabled = v and true or false
+        _G._ExamStates.fallImmune = fallEnabled
+        setup()
+    end
+    _G._ExamStates.fallImmune = false
+
+    lp.CharacterAdded:Connect(function()
+        task.wait(1)
+        if fallEnabled then setup() end
+    end)
+
+    table.insert(cleanupFns, function()
+        fallEnabled = false
+        if fallConn then pcall(function() fallConn:Disconnect() end) end
     end)
 end
 
@@ -5570,6 +6112,8 @@ tab:Toggle({ Key = "stamina", Name = "无限体力", Desc = "让体力永远保�
     Callback = function(v) CB("stamina", v) end })
 tab:Toggle({ Key = "staggerImmune", Name = "硬直免疫", Desc = "受击不僵直、不被击退", Default = false,
     Callback = function(v) CB("staggerImmune", v) end })
+tab:Toggle({ Key = "fallImmune", Name = "免疫摔伤", Desc = "从高处落下不掉血", Default = false,
+    Callback = function(v) CB("fallImmune", v) end })
 tab:Toggle({ Key = "elephantImmune", Name = "免疫象脚", Desc = "免疫象脚和致死区", Default = false,
     Callback = function(v) CB("elephantImmune", v) end })
 tab:Toggle({ Key = "forceReset", Name = "无条件重置", Desc = "随时可以重置角色", Default = false,
@@ -5598,6 +6142,7 @@ tab:Expand({
 })
 tab:Toggle({ Key = "noCD", Name = "无滑铲冷却", Desc = "滑铲无冷却（会导致盾牌无法防御）", Default = false,
     Callback = function(v) CB("noCD", v) end })
+
 
 tab:Section({ Name = "盾牌" })
 tab:Toggle({ Key = "shieldSlide", Name = "修复盾牌滑铲/疾跑", Desc = "持盾也能滑铲疾跑", Default = false,
@@ -5811,10 +6356,58 @@ tab:Toggle({ Key = "autoInteract", Name = "及时交互", Desc = "与可互动�
 tab:Toggle({ Key = "autoQTE", Name = "自动 QTE", Desc = "QTE 自动完美完成", Default = false,
     Callback = function(v) CB("autoQTE", v) end })
 
+tab:Section({ Name = "视角与假身（娱乐）" })
+tab:Toggle({ Key = "thirdPerson", Name = "第三人称", Desc = "解锁视角，可拉远拉近", Default = false,
+    Callback = function(v) CB("thirdPerson", v) end })
+tab:Toggle({ Key = "noShake", Name = "镜头防抖", Desc = "去掉跑动和冲刺时的镜头晃动", Default = false,
+    Callback = function(v) CB("noShake", v) end })
+tab:Expand({
+    Key = "spin",
+    Callback = function(v) CB("spin", v) end,
+    Name = "原地旋转",
+    Desc = "角色原地转圈，视角不受影响",
+    Default = false,
+    Children = {
+        { Kind = "number", Key = "spinSpeed", Name = "旋转速度", Min = 0, Max = 500, Default = 20, Callback = function(v) CB("spinSpeed", v) end },
+    },
+})
+local nodCtrl = tab:Expand({
+    Key = "nod",
+    Callback = function(v) CB("nod", v) end,
+    Name = "抬头低头",
+    Desc = "只有头在动，身体保持直立",
+    Default = false,
+    Children = {
+        { Kind = "cycle", Key = "nodMode", Name = "模式", Options = { "低头", "抬头", "低头+抬头" }, Callback = function(v) CB("nodMode", v) end },
+    },
+})
+local headSpinCtrl = tab:Expand({
+    Key = "headSpin",
+    Callback = function(v) CB("headSpin", v) end,
+    Name = "头部旋转",
+    Desc = "平视后绕三轴转，10 已经很快",
+    Default = false,
+    Children = {
+        { Kind = "cycle", Key = "headSpinDir", Name = "方向", Options = { "顺时针", "逆时针" }, Callback = function(v) CB("headSpinDir", v) end },
+        { Kind = "number", Key = "headSpinX", Name = "X轴速度", Min = 0, Max = 50, Default = 0, Callback = function(v) CB("headSpinX", v) end },
+        { Kind = "number", Key = "headSpinY", Name = "Y轴速度", Min = 0, Max = 50, Default = 10, Callback = function(v) CB("headSpinY", v) end },
+        { Kind = "number", Key = "headSpinZ", Name = "Z轴速度", Min = 0, Max = 50, Default = 0, Callback = function(v) CB("headSpinZ", v) end },
+    },
+})
+
+-- 互斥时把另一个开关的勾选框一起刷掉
+_G._ExamSyncCheckbox = _G._ExamSyncCheckbox or {}
+if nodCtrl and nodCtrl.SetSilent then
+    _G._ExamSyncCheckbox["nod"] = function(v) nodCtrl.SetSilent(v) end
+end
+if headSpinCtrl and headSpinCtrl.SetSilent then
+    _G._ExamSyncCheckbox["headSpin"] = function(v) headSpinCtrl.SetSilent(v) end
+end
+
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.1.0"
+local CURRENT_VERSION = "1.2.0"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
