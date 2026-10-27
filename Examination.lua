@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.2.0  新增免疫摔伤/镜头防抖/原地旋转/抬头低头/头部旋转；修 Cycle 参数与无后坐力重载残留
+-- Examination v1.2.1  适配 CDMUI v1.4.0 的横向滚动 Tab 栏
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -6407,7 +6407,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.2.0"
+local CURRENT_VERSION = "1.2.1"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
