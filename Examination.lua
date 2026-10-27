@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.0.2  强制爆头与魔法子弹互斥并同步 UI；魔法子弹/雷达排除 BTR-82
+-- Examination v1.0.3  透视改名人物角色透视并加低负载；新增武器箱透视；魔法子弹加低负载
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -594,6 +594,7 @@ do
     local C_DRONE = Color3.fromRGB(255, 80, 200)
     local showESPName = true
     local showESPHealth = true
+    local espLowLoad = false        -- 透视低负载模式
     local labelRefreshList = {}
 
     -- 玩家透视（默认关闭，需显式开启）
@@ -1111,7 +1112,7 @@ do
 
     spawn(function()
         while gui.Parent do
-            task.wait(0.3)
+            task.wait(espLowLoad and 1.0 or 0.3)
             if espEnabled then
                 for i = #labelRefreshList, 1, -1 do
                     local item = labelRefreshList[i]
@@ -1158,7 +1159,382 @@ do
         end
     end)
 
-    toggleBase("透视功能", "esp", false, function(v)
+    -- ============================================================
+    -- 箱子透视：只标记能交互的箱子（带 ProximityPrompt）。
+    -- 地图上纯装饰的同名模型没有交互，自动排除。
+    -- ============================================================
+    local crateEnabled = false
+    local C_WEAPON = Color3.fromRGB(120, 220, 255)
+    local CRATE_HL = "CrateESP_HL"
+    local CRATE_BB = "CrateESP_BB"
+    local crateLinks = {}      -- [prompt] = { hl=, bb=, tl=, kind=, model= }
+    local crateOwnerUsed = {}  -- [model] = prompt，避免同一模型挂多份
+    local crateDecoList = nil  -- 预先收集的无 prompt 箱子外观模型
+
+    -- 判定：只认带交互提示的箱子
+    -- 只透视武器箱（能开、能拿枪的那种）。
+    -- 弹药箱是补子弹的，标记意义不大，去掉了。
+    local function crateKindOf(pp)
+        if not pp then return nil end
+        if pp.ObjectText == "Weapons Crate" then return "weapon" end
+        return nil
+    end
+
+    -- 从 prompt 往上找该挂高亮的模型。
+    -- 有的箱子 prompt 挂在里面的小部件上，直接挂会在模型上只亮一小块，
+    -- 所以逐层往上比，取「部件数量最多、且增长不明显」的那一层。
+    local function countParts(m)
+        local n = 0
+        for _, d in ipairs(m:GetDescendants()) do
+            if d:IsA("BasePart") then n = n + 1 end
+        end
+        return n
+    end
+
+    -- 箱子模型的特征：名字比较"像箱子"，或者部件数在一个合理区间
+    -- LootBox / LootCrate / Case / AmmoBox / AmmoBoxGiver 等
+    -- 只收「箱子本体」的名字；LootBox / LootCrate 是外层容器，不算
+    local CRATE_NAME_HINT = {
+        case = true,
+        ammobox = true,
+        ammoboxgiver = true,
+    }
+    local function looksLikeCrate(name)
+        local n = string.lower(name)
+        return CRATE_NAME_HINT[n] == true
+    end
+
+    -- 有些箱子的 prompt 挂在一个只有 1 个部件的隐藏触发点上，
+    -- 真正的箱子模型是它的「同父级同名兄弟」，需要找出来。
+    local function findRealBox(owner)
+        if not owner or not owner.Parent then return nil end
+        local parent = owner.Parent
+        local best = nil
+        local bestParts = 0
+        for _, s in ipairs(parent:GetChildren()) do
+            if s ~= owner and s:IsA("Model") and s.Name == owner.Name then
+                local n = countParts(s)
+                if n > bestParts then
+                    bestParts = n
+                    best = s
+                end
+            end
+        end
+        return best, bestParts
+    end
+
+    local function crateOwner(pp)
+        local candidates = {}
+        local cur = pp.Parent
+        while cur and cur ~= Workspace do
+            if cur:IsA("Model") then
+                candidates[#candidates + 1] = cur
+            end
+            cur = cur.Parent
+        end
+        if #candidates == 0 then return nil end
+
+        -- 从内往外找第一个「像箱子」的层。
+        -- 有些箱子的 prompt 挂在一个 0.1 格的隐藏触发点上，
+        -- 那种不能满足，要往外找到真正的模型。
+        for i = 1, #candidates do
+            local m = candidates[i]
+            local n = countParts(m)
+            local bigEnough = (n >= 8)            -- 至少 8 个部件才算一个箱子
+            if bigEnough and looksLikeCrate(m.Name) then
+                return m
+            end
+        end
+
+        -- 名字都不匹配时按部件数挑，10~130 之间最靠内的一层
+        local best = nil
+        for i = 1, #candidates do
+            local n = countParts(candidates[i])
+            if n >= 10 and n <= 130 then
+                best = candidates[i]
+                break
+            end
+        end
+        if best then return best end
+
+        -- 走到这里说明候选都不够大。
+        -- 只有当「当前层太小（<10 部件）」时，才去同父级找同名的大模型，
+        -- 否则会把本来就合格的 AmmoBox:20 替换成 AmmoBox:1。
+        local first = candidates[1]
+        if countParts(first) < 10 then
+            local real, parts = findRealBox(first)
+            if real and parts >= 10 then
+                return real
+            end
+        end
+
+        -- 兜底：往外取第一个部件数够的
+        for i = 1, #candidates do
+            if countParts(candidates[i]) >= 10 then
+                return candidates[i]
+            end
+        end
+
+        return nil
+    end
+
+    local function removeCrate(pp)
+        local info = crateLinks[pp]
+        if not info then return end
+        if info.hl then pcall(function() info.hl:Destroy() end) end
+        if info.bb then pcall(function() info.bb:Destroy() end) end
+        if info.extraHLs then
+            for _, e in ipairs(info.extraHLs) do
+                pcall(function() e:Destroy() end)
+            end
+        end
+        if info.model then crateOwnerUsed[info.model] = nil end
+        crateLinks[pp] = nil
+    end
+
+    local function cleanAllCrates()
+        for pp in pairs(crateLinks) do removeCrate(pp) end
+        crateLinks = {}
+        crateOwnerUsed = {}
+        -- 兜底：把地图上所有残留的节点也清掉（上次运行可能留下）
+        pcall(function()
+            for _, d in ipairs(Workspace:GetDescendants()) do
+                if d.Name == CRATE_HL or d.Name == CRATE_BB then
+                    d:Destroy()
+                end
+            end
+        end)
+    end
+
+    local function addCrate(pp, kind)
+        if crateLinks[pp] then return end
+        local node = crateOwner(pp)
+        if not node then return end
+
+        -- 不去重：每个交互点都独立标记。
+        -- 曾经按模型去重，结果多个 trigger 指向同一模型时只剩一个，
+        -- 玩家附近的那个反而被跳过。
+
+        local color = C_WEAPON
+
+        -- 这个游戏不少箱子是「触发器 + 独立外观模型」分开做的，
+        -- 外观模型没有 prompt。这里在预先收集好的列表里按距离匹配，
+        -- 避免每个箱子都遍历一次整张地图。
+        local extraModels = {}
+        local basePart
+        for _, k in ipairs(node:GetDescendants()) do
+            if k:IsA("BasePart") and k.Name ~= "Ammo" then basePart = k break end
+        end
+        if basePart and crateDecoList then
+            local pos = basePart.Position
+            for _, entry in ipairs(crateDecoList) do
+                if not entry.used and (entry.pos - pos).Magnitude <= 6 then
+                    entry.used = true
+                    extraModels[#extraModels + 1] = entry.model
+                end
+            end
+        end
+
+        local hl = Instance.new("Highlight")
+        hl.Name = CRATE_HL
+        hl.Adornee = node
+        hl.FillColor = color
+        hl.OutlineColor = color
+        hl.FillTransparency = 0.6
+        hl.OutlineTransparency = 0.1
+        hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        hl.Parent = node
+
+        -- 找该模型最高的部件当作标签锚点
+        local topPart, topY = nil, -math.huge
+        for _, d in ipairs(node:GetDescendants()) do
+            if d:IsA("BasePart") and d.Position.Y > topY then
+                topY = d.Position.Y
+                topPart = d
+            end
+        end
+
+        local bb = Instance.new("BillboardGui")
+        bb.Name = CRATE_BB
+        bb.Adornee = topPart or node
+        bb.Size = UDim2.new(0, 160, 0, 20)
+        bb.StudsOffset = Vector3.new(0, 2.0, 0)
+        bb.AlwaysOnTop = true
+        bb.MaxDistance = 800
+        bb.LightInfluence = 0
+        bb.Parent = node
+
+        local tl = Instance.new("TextLabel")
+        tl.Parent = bb
+        tl.Size = UDim2.new(1, 0, 1, 0)
+        tl.BackgroundTransparency = 1
+        tl.TextColor3 = color
+        tl.TextStrokeColor3 = Color3.new(0, 0, 0)
+        tl.TextStrokeTransparency = 0.35
+        tl.TextSize = 13           -- 固定字号，不会随距离变大变小
+        tl.TextScaled = false
+        tl.RichText = false
+        tl.Font = Enum.Font.SourceSansBold
+        tl.Text = "[武器箱]"
+
+        -- 额外模型也挂上（只挂 Highlight，不挂标签）
+        local extraHLs = {}
+        for _, d in ipairs(extraModels) do
+            if not d:FindFirstChild(CRATE_HL) then
+                local ehl = Instance.new("Highlight")
+                ehl.Name = CRATE_HL
+                ehl.Adornee = d
+                ehl.FillColor = color
+                ehl.OutlineColor = color
+                ehl.FillTransparency = 0.6
+                ehl.OutlineTransparency = 0.1
+                ehl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                ehl.Parent = d
+                extraHLs[#extraHLs + 1] = ehl
+            end
+        end
+
+        crateLinks[pp] = { hl = hl, bb = bb, tl = tl, kind = kind, model = node, extraHLs = extraHLs }
+    end
+
+    -- 地图静态，只扫一次；之后不再遍历 Workspace
+    local crateScanned = false
+    local function scanCratesOnce()
+        if crateScanned then return end
+        crateScanned = true
+        local found = 0
+        pcall(function()
+            for _, d in ipairs(Workspace:GetDescendants()) do
+                if d:IsA("ProximityPrompt") then
+                    local kind = crateKindOf(d)
+                    if kind then
+                        addCrate(d, kind)
+                        found = found + 1
+                    end
+                end
+            end
+        end)
+        return found
+    end
+
+    -- 刷新策略：箱子不会动，没必要定时轮询。
+    -- 改成「一次建好 → 只在 prompt 的 Enabled 变化时更新那一个」。
+    local crateSignals = {}    -- [prompt] = connection
+
+    local function bindPrompt(pp, info)
+        if crateSignals[pp] then return end
+        crateSignals[pp] = pp:GetPropertyChangedSignal("Enabled"):Connect(function()
+            local cur = crateLinks[pp]
+            if not cur then return end
+            local kind = crateKindOf(pp)
+            if not kind then
+                removeCrate(pp)
+                return
+            end
+            local baseColor = C_WEAPON
+            if pp.Enabled == false then
+                cur.tl.Text = "[武器箱] 已开启"
+                cur.tl.TextColor3 = Color3.fromRGB(150, 150, 150)
+                if cur.hl then
+                    cur.hl.FillColor = Color3.fromRGB(120, 120, 120)
+                    cur.hl.OutlineColor = Color3.fromRGB(120, 120, 120)
+                end
+            else
+                cur.tl.Text = "[武器箱] 未开启"
+                cur.tl.TextColor3 = baseColor
+                if cur.hl then
+                    cur.hl.FillColor = baseColor
+                    cur.hl.OutlineColor = baseColor
+                end
+            end
+        end)
+    end
+
+    local function unbindPrompt(pp)
+        local c = crateSignals[pp]
+        if c then pcall(function() c:Disconnect() end) end
+        crateSignals[pp] = nil
+    end
+
+    -- 建立：扫一遍地图（只做一次），给每个箱子挂高亮并绑定状态信号
+    local crateBuilt = false
+    local function buildCrates()
+        if crateBuilt then return end
+        crateBuilt = true
+        pcall(function()
+            -- 先一次性收集外观模型，后面按距离匹配用
+            crateDecoList = {}
+            for _, d in ipairs(Workspace:GetDescendants()) do
+                if d:IsA("Model") then
+                    local n = d.Name
+                    if n == "BigCrateOpen" or n == "Big Crate" or n == "LootCrate" or n == "LootBox" then
+                        if not d:FindFirstChildWhichIsA("ProximityPrompt", true) then
+                            local part
+                            for _, k in ipairs(d:GetDescendants()) do
+                                if k:IsA("BasePart") then part = k break end
+                            end
+                            if part then
+                                crateDecoList[#crateDecoList + 1] = {
+                                    model = d, pos = part.Position, used = false,
+                                }
+                            end
+                        end
+                    end
+                end
+            end
+
+            for _, d in ipairs(Workspace:GetDescendants()) do
+                if d:IsA("ProximityPrompt") then
+                    local kind = crateKindOf(d)
+                    if kind then
+                        addCrate(d, kind)
+                        local info = crateLinks[d]
+                        if info then
+                            -- 初始状态
+                            local baseColor = C_WEAPON
+                            if d.Enabled == false then
+                                info.tl.Text = "[武器箱] 已开启"
+                                info.tl.TextColor3 = Color3.fromRGB(150, 150, 150)
+                                if info.hl then
+                                    info.hl.FillColor = Color3.fromRGB(120, 120, 120)
+                                    info.hl.OutlineColor = Color3.fromRGB(120, 120, 120)
+                                end
+                            else
+                                info.tl.Text = "[武器箱] 未开启"
+                                info.tl.TextColor3 = baseColor
+                            end
+                            bindPrompt(d, info)
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
+    local function destroyCrates()
+        for pp in pairs(crateSignals) do unbindPrompt(pp) end
+        crateSignals = {}
+        cleanAllCrates()
+        crateBuilt = false
+    end
+
+    -- 开/关
+    _G._ExamSetters.crateESP = function(v)
+        crateEnabled = v and true or false
+        if crateEnabled then
+            buildCrates()
+        else
+            destroyCrates()
+        end
+    end
+
+    -- 清理时也要断开
+    table.insert(cleanupFns, function()
+        for pp in pairs(crateSignals) do unbindPrompt(pp) end
+        crateSignals = {}
+    end)
+
+    toggleBase("人物角色透视", "esp", false, function(v)
         espEnabled = v
         if v then
             setupESP()
@@ -1167,6 +1543,14 @@ do
             clearESP()
         end
     end)
+
+    -- 低负载：拉长标签刷新间隔
+    _G._ExamSetters.espLowLoad = function(v)
+        espLowLoad = v and true or false
+    end
+    _G._ExamStates.espLowLoad = false
+
+    _G._ExamStates.crateESP = false
     local nameBtn = Instance.new("TextButton", basePage)
     nameBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
     nameBtn.Text = "显示名称: 开"
@@ -2893,6 +3277,7 @@ end
     local mbStudsOffsetY = 0.8
     local mbShowBox = true
     local mbRequireVisible = true
+    local mbLowLoad = false         -- 低负载模式
     local mbShowFovCircle = true
     local mbOnlyWhenLocked = true
     local autoFireEnabled = false
@@ -3407,8 +3792,11 @@ end
     local findLastReason = "init"
     local function findTarget()
         local now = tick()
-        if now - lastFindTick < 0.05 then return cachedTarget end
+        -- 低负载模式把刷新间隔拉长，扫描开销直接降到原来的一成多
+        local interval = mbLowLoad and 0.35 or 0.05
+        if now - lastFindTick < interval then return cachedTarget end
         lastFindTick = now
+
         local myChar = lp.Character
         local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
         if not myHrp then cachedTarget = nil; findLastReason = "no-hrp"; return nil end
@@ -3492,6 +3880,7 @@ end
         cachedTarget = best
         return best
     end
+
     local function destroyRadiusRing()
         for _, p in ipairs(radiusRingParts) do
             if p and p.Parent then pcall(function() p:Destroy() end) end
@@ -3972,6 +4361,17 @@ end
         end
     end, UDim2.new(0, 140, 0, 28)))
     _G._ExamSetters.mbRequireVisible = _b; _G._ExamStates.mbRequireVisible = true
+
+    -- 低负载模式：降低扫描频率，缓存更久，关掉持续刷新
+    _G._ExamSetters.mbLowLoad = function(v)
+        mbLowLoad = v and true or false
+        cachedTarget = nil
+        lastFindTick = 0          -- 切换后立刻重新扫一次
+        if mbLowLoad then
+            destroyLockBB()       -- 低负载下不挂 3D 头框
+        end
+    end
+    _G._ExamStates.mbLowLoad = false
 
     local _c = select(2, toggleMagic("穿透盾牌", UDim2.new(0, 15, 0, 68), true, function(v)
         pierceShieldEnabled = v
@@ -4955,7 +5355,7 @@ tab:Toggle({ Key = "stamina", Name = "无限体力", Desc = "让体力永远保�
 tab:Expand({
     Key = "esp",
     Callback = function(v) CB("esp", v) end,
-    Name = "透视功能",
+    Name = "人物角色透视",
     Desc = "高亮 AI 实体，可开启玩家透视",
     Default = false,
     Children = {
@@ -4964,7 +5364,15 @@ tab:Expand({
         { Kind = "toggle", Key = "hlPlayers", Name = "高亮玩家", Default = false, Callback = function(v) CB("hlPlayers", v) end },
         { Kind = "toggle", Key = "hlPlayerName", Name = "显示玩家名称", Default = false, Callback = function(v) CB("hlPlayerName", v) end },
         { Kind = "toggle", Key = "hlPlayerHP", Name = "显示玩家血量", Default = false, Callback = function(v) CB("hlPlayerHP", v) end },
+        { Kind = "toggle", Key = "espLowLoad", Name = "低负载模式", Desc = "降低透视刷新频率，人多时开启", Default = false, Callback = function(v) CB("espLowLoad", v) end },
     },
+})
+tab:Toggle({
+    Key = "crateESP",
+    Name = "武器箱透视",
+    Desc = "透视可开启的武器箱，并显示是否已开启",
+    Default = false,
+    Callback = function(v) CB("crateESP", v) end,
 })
 tab:Expand({
     Key = "headHitbox",
@@ -5076,6 +5484,8 @@ tab:Expand({
           Options = { "线", "面" }, Callback = function(v) CB("radiusMode", v) end },
     },
 })
+tab:Toggle({ Key = "mbLowLoad", Name = "低负载模式", Desc = "降低魔法子弹扫描频率，人多或卡顿时开启", Default = false,
+    Callback = function(v) CB("mbLowLoad", v) end })
 tab:Toggle({ Key = "autoFire", Name = "自动开火", Desc = "锁定后自动开火（需先开魔法子弹+掩体检测）", Default = false,
     Callback = function(v) CB("autoFire", v) end })
 tab:Expand({
@@ -5131,7 +5541,7 @@ tab = win:Tab("其他")
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.0.2"
+local CURRENT_VERSION = "1.0.3"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
