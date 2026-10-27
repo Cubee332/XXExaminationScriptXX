@@ -422,6 +422,9 @@ cdLabel.Parent = _hiddenDock
 -- ============================================================
 local Callbacks = {}
 
+-- UI 状态同步钩子（win 创建后指向 CB，保证 UI 与模块状态一致）
+local CALLBACK_SINK = nil
+
 local function mkToggleRegistrar(group)
     return function(text, posSpec, default, callback, sizeSpec)
         local key = (type(posSpec) == "string") and posSpec or text
@@ -431,6 +434,9 @@ local function mkToggleRegistrar(group)
         _G._ExamSetters[key] = function(nv)
             if state == nv then return end
             state = nv
+            -- 同步状态表，供 win:Get() 等读取
+            _G._ExamStates[key] = state
+            if CALLBACK_SINK then pcall(CALLBACK_SINK, key, state) end
             if callback then pcall(callback, state) end
         end
         _G._ExamStates[key] = state
@@ -574,6 +580,15 @@ do
     local showPlayerHealth = false
     local playerESPNodes = {}   -- [player] = { hl = Highlight, bb = BillboardGui, tl = TextLabel }
 
+    -- ESP 节点判定（要在 applyPlayerESP 之前定义）
+    local function isOurESPNode(c)
+        if not c then return false end
+        local n = c.Name
+        return (c:IsA("Highlight") and (n == "AI_Highlight" or n == ESP_HL_NEW))
+            or (c:IsA("BillboardGui") and (n == "AI_HealthUI" or n == ESP_HB_NEW))
+    end
+
+
     local C_PLAYER = Color3.fromRGB(0, 200, 255)
 
     local function clearPlayerESP()
@@ -596,12 +611,25 @@ do
                     math.floor(hum.Health), math.floor(hum.MaxHealth)))
             end
         end
-        if #parts == 0 then return pl.Name end
+        -- 名称和血量都没开时返回空串（不回退名字）
+        if #parts == 0 then return "" end
         return table.concat(parts, " | ")
     end
 
     local function applyPlayerESP(pl)
         local node = playerESPNodes[pl]
+
+        -- 彻底清除该玩家角色上的所有 ESP 节点（含失控残留）
+        local function purgePlayer(ch)
+            if not ch then return end
+            local kill = {}
+            for _, c in ipairs(ch:GetChildren()) do
+                if isOurESPNode(c) then table.insert(kill, c) end
+            end
+            for _, c in ipairs(kill) do
+                pcall(function() c:Destroy() end)
+            end
+        end
 
         local function removeNode()
             if node then
@@ -609,6 +637,7 @@ do
                 if node.bb then pcall(function() node.bb:Destroy() end) end
                 playerESPNodes[pl] = nil
             end
+            node = nil
         end
 
         if not showPlayers or pl == Players.LocalPlayer then
@@ -623,13 +652,19 @@ do
             return
         end
 
-        -- 角色换了（重生）：清掉旧的重新建
-        if node and node.hl and node.hl.Parent ~= ch then
+        -- 角色换了（重生）或节点已失效：清掉重建
+        if node and ((not node.hl) or node.hl.Parent ~= ch or (node.bb and node.bb.Parent ~= ch)) then
             removeNode()
-            node = nil
         end
-        local node = playerESPNodes[pl]
+
         if not node then
+            -- 建之前先扫一遍，防止历史残留堆叠
+            purgePlayer(ch)
+
+            local empty = {}
+            playerESPNodes[pl] = empty
+            node = empty
+
             local hl = Instance.new("Highlight")
             hl.Name = ESP_HL_NEW
             hl.Adornee = ch
@@ -638,6 +673,7 @@ do
             hl.OutlineTransparency = 0
             hl.FillTransparency = 0.5
             hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+            node.hl = hl
             hl.Parent = ch
 
             local bb = Instance.new("BillboardGui")
@@ -648,6 +684,8 @@ do
             bb.AlwaysOnTop = true
             bb.MaxDistance = 800
             bb.LightInfluence = 0
+            bb.Enabled = false
+            node.bb = bb
             bb.Parent = ch
 
             local tl = Instance.new("TextLabel")
@@ -658,31 +696,35 @@ do
             tl.TextStrokeTransparency = 0
             tl.TextScaled = true
             tl.Font = Enum.Font.SourceSansBold
-
-            node = { hl = hl, bb = bb, tl = tl }
-            playerESPNodes[pl] = node
-        else
-            -- 角色重生时重新绑定
-            if node.hl and node.hl.Parent ~= ch then
-                pcall(function() node.hl:Destroy() end)
-                pcall(function() node.bb:Destroy() end)
-                playerESPNodes[pl] = nil
-                return applyPlayerESP(pl)
-            end
+            node.tl = tl
         end
-        node.tl.Text = playerLabelText(pl)
+
+        -- 更新文本（名称/血量 都由子开关控制）
+        if node and node.tl and node.bb then
+            local txt = playerLabelText(pl)
+            node.tl.Text = txt
+            node.bb.Enabled = (txt ~= "")
+        end
     end
 
     local function refreshPlayerESP()
+        _G._ExamDebug = _G._ExamDebug or {}
+        _G._ExamDebug.refreshCalls = (_G._ExamDebug.refreshCalls or 0) + 1
+        _G._ExamDebug.lastShowPlayers = showPlayers
+
         if not showPlayers then
             clearPlayerESP()
             return
         end
         for _, pl in ipairs(Players:GetPlayers()) do
             if pl ~= Players.LocalPlayer then
-                pcall(applyPlayerESP, pl)
+                local ok, err = pcall(applyPlayerESP, pl)
+                if not ok then
+                    _G._ExamDebug.lastErr = tostring(err)
+                end
             end
         end
+        _G._ExamDebug.lastNilCheck = next(playerESPNodes) ~= nil
     end
     local function isAICharacter(m)
         if not m or not m:IsA("Model") then return false end
@@ -711,12 +753,6 @@ do
         end
         return false
     end
-    local function isOurESPNode(c)
-        if not c then return false end
-        local n = c.Name
-        return (c:IsA("Highlight") and (n == "AI_Highlight" or n == ESP_HL_NEW))
-            or (c:IsA("BillboardGui") and (n == "AI_HealthUI" or n == ESP_HB_NEW))
-    end
     local function classify(m)
         local n = m.Name
         if BIG[n] then return C_BIG, "BOSS" end
@@ -734,9 +770,13 @@ do
         if showESPHealth and hum then
             table.insert(parts, string.format("%d / %d", math.floor(hum.Health), math.floor(hum.MaxHealth)))
         end
-        -- 名称和血量都关掉时，整个标签不显示（连 [BOSS] 前缀也不要）
+        -- 名称和血量都关掉时，整个标签不显示
         if #parts == 0 then return "" end
-        return pre .. table.concat(parts, " | ")
+        -- [BOSS] 前缀跟随「显示名称」开关
+        if showESPName then
+            return pre .. table.concat(parts, " | ")
+        end
+        return table.concat(parts, " | ")
     end
     local function refreshAllLabels()
         local function refreshIn(obj)
@@ -884,7 +924,10 @@ do
             if showESPName then table.insert(parts, "BTR-82") end
             if showESPHealth and cur then table.insert(parts, tostring(math.floor(cur))) end
             if #parts == 0 then return "" end
-            return "[BOSS] " .. table.concat(parts, " | ")
+            if showESPName then
+                return "[BOSS] " .. table.concat(parts, " | ")
+            end
+            return table.concat(parts, " | ")
         end
         tl.Text = btrText(hp)
         table.insert(labelRefreshList, {
@@ -4828,6 +4871,13 @@ local win = CDMUI.Create({
     Title = "控制面板",
     TopbarText = "控制面板",
 })
+
+-- 让模块 setter 能反向同步 UI 状态
+CALLBACK_SINK = function(key, value)
+    if win and win.State then
+        win.State[key] = value
+    end
+end
 
 -- 让模块的 `gui.Parent` 判断绑定到真实面板
 gui = win.Panel or win.Gui or _hiddenDock
