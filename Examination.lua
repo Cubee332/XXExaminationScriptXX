@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.0.4  玩家透视字号调小与怪物一致；聚焦武器箱透视
+-- Examination v1.1.0  六页分类重构；新增硬直免疫和全图高亮；修无后坐力重启残留；雷达子项
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -18,6 +18,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SoundService = game:GetService("SoundService")
 local Debris = game:GetService("Debris")
 local TweenService = game:GetService("TweenService")
+local Lighting = game:GetService("Lighting")
 local lp = Players.LocalPlayer
 
 if _G._ExamLastCleanup then pcall(_G._ExamLastCleanup); _G._ExamLastCleanup = nil end
@@ -443,7 +444,6 @@ local function mkToggleRegistrar(group)
         _G._ExamSetters[key] = function(nv)
             if state == nv then return end
             state = nv
-            -- 同步状态表，供 win:Get() 等读取
             _G._ExamStates[key] = state
             if CALLBACK_SINK then pcall(CALLBACK_SINK, key, state) end
             if callback then pcall(callback, state) end
@@ -465,6 +465,127 @@ local toggleBase  = mkToggleRegistrar("base")
 local toggleMagic = mkToggleRegistrar("magic")
 local toggleRadar = mkToggleRegistrar("radar")
 
+
+-- ============ 模块 0: 硬直免疫 ============
+do
+    local staggerEnabled = false
+    local lockLoop = nil
+
+    -- 把 StaggerImmune 一直保持在 true
+    -- 这个属性客户端可改，实测有效：受击不僵直、不被击退
+    local function tick()
+        if not staggerEnabled then return end
+        local char = lp.Character
+        if not char then return end
+        pcall(function()
+            if char:GetAttribute("StaggerImmune") ~= true then
+                char:SetAttribute("StaggerImmune", true)
+            end
+        end)
+    end
+
+    local function setup()
+        if lockLoop then lockLoop:Disconnect(); lockLoop = nil end
+        if not staggerEnabled then
+            local char = lp.Character
+            if char then pcall(function() char:SetAttribute("StaggerImmune", false) end) end
+            return
+        end
+        tick()
+        lockLoop = RunService.Heartbeat:Connect(function()
+            if not staggerEnabled then return end
+            tick()
+        end)
+    end
+
+    _G._ExamSetters.staggerImmune = function(v)
+        staggerEnabled = v and true or false
+        _G._ExamStates.staggerImmune = staggerEnabled
+        setup()
+    end
+    _G._ExamStates.staggerImmune = false
+
+    lp.CharacterAdded:Connect(function()
+        task.wait(1)
+        if staggerEnabled then setup() end
+    end)
+
+    table.insert(cleanupFns, function()
+        staggerEnabled = false
+        if lockLoop then pcall(function() lockLoop:Disconnect() end) end
+    end)
+end
+
+-- ============ 模块 0.5: 全图高亮（全亮）============
+-- 和 IY 的 loopfb 一样：只改 Lighting 的几个值，每帧重写一遍，
+-- 不碰任何后期特效（受伤模糊、夜视滤镜之类的照常工作）。
+do
+    local brightEnabled = false
+    local loopConn = nil
+    local backup = nil
+
+    local function apply()
+        Lighting.Brightness = 2
+        Lighting.ClockTime = 14
+        Lighting.FogEnd = 100000
+        Lighting.GlobalShadows = false
+        Lighting.OutdoorAmbient = Color3.fromRGB(128, 128, 128)
+    end
+
+    local function setup()
+        if loopConn then loopConn:Disconnect(); loopConn = nil end
+
+        if not brightEnabled then
+            if backup then
+                pcall(function()
+                    Lighting.Brightness = backup.Brightness
+                    Lighting.ClockTime = backup.ClockTime
+                    Lighting.FogEnd = backup.FogEnd
+                    Lighting.GlobalShadows = backup.GlobalShadows
+                    Lighting.OutdoorAmbient = backup.OutdoorAmbient
+                end)
+                backup = nil
+            end
+            return
+        end
+
+        if not backup then
+            backup = {
+                Brightness = Lighting.Brightness,
+                ClockTime = Lighting.ClockTime,
+                FogEnd = Lighting.FogEnd,
+                GlobalShadows = Lighting.GlobalShadows,
+                OutdoorAmbient = Lighting.OutdoorAmbient,
+            }
+        end
+
+        apply()
+        loopConn = RunService.RenderStepped:Connect(function()
+            if brightEnabled then apply() end
+        end)
+    end
+
+    _G._ExamSetters.worldESP = function(v)
+        brightEnabled = v and true or false
+        _G._ExamStates.worldESP = brightEnabled
+        setup()
+    end
+    _G._ExamStates.worldESP = false
+
+    table.insert(cleanupFns, function()
+        brightEnabled = false
+        if loopConn then pcall(function() loopConn:Disconnect() end) end
+        if backup then
+            pcall(function()
+                Lighting.Brightness = backup.Brightness
+                Lighting.ClockTime = backup.ClockTime
+                Lighting.FogEnd = backup.FogEnd
+                Lighting.GlobalShadows = backup.GlobalShadows
+                Lighting.OutdoorAmbient = backup.OutdoorAmbient
+            end)
+        end
+    end)
+end
 
 -- ============ 模块 1: 无限体力（v66.1: 一步恢复，不延迟/不循环） ============
 do
@@ -1649,100 +1770,140 @@ end
 
 -- ============ 模块 3: 头部 Hitbox ============
 do
-    local hitboxConnections = {}
-    local hitboxModified = {}
-    local function restoreHeadHitbox()
-        for p, orig in pairs(hitboxModified) do
-            pcall(function()
-                p.Size = orig.Size; p.CanCollide = orig.CanCollide; p.Transparency = orig.Transparency
-            end)
-        end
-        table.clear(hitboxModified)
+    -- 头部 Hitbox 放大
+    -- 直接改 Head 的 Size（和原版一样），这样服务端能认到同一个部件，
+    -- 命中判定才有效。之前用附加球的做法只有客户端有，打不中。
+    -- 为了避免物理卡住，额外把 Head 的 CanCollide 设为 false。
+    local hitboxConns = {}
+    local hitboxModified = {}   -- [part] = { Size, CanCollide, Transparency, Massless }
+
+    local function restoreOne(part)
+        local orig = hitboxModified[part]
+        if not orig then return end
+        pcall(function()
+            part.Size = orig.Size
+            part.CanCollide = orig.CanCollide
+            part.Transparency = orig.Transparency
+            part.Massless = orig.Massless
+        end)
+        hitboxModified[part] = nil
     end
+
+    local function restoreAll()
+        for part in pairs(hitboxModified) do restoreOne(part) end
+    end
+
     local function isDead(model)
         if not model then return true end
         local hum = model:FindFirstChildOfClass("Humanoid")
         if not hum then return true end
-        if hum.Health <= 0 then return true end
-        return false
+        return hum.Health <= 0
     end
-    local function restoreOne(p)
-        local orig = hitboxModified[p]
-        if not orig then return end
-        pcall(function() p.Size = orig.Size; p.CanCollide = orig.CanCollide; p.Transparency = orig.Transparency end)
-        hitboxModified[p] = nil
-    end
+
     local function applyHead(part)
         if not headHitboxEnabled then return end
         if not part or not part:IsA("BasePart") then return end
         if part.Name ~= "Head" then return end
+
         local model = part.Parent
         if not model or not model:IsA("Model") then return end
         if Players:GetPlayerFromCharacter(model) then return end
+
         if isDead(model) then
             if hitboxModified[part] then restoreOne(part) end
             return
         end
+
         if not hitboxModified[part] then
-            hitboxModified[part] = { Size = part.Size, CanCollide = part.CanCollide, Transparency = part.Transparency }
+            hitboxModified[part] = {
+                Size = part.Size,
+                CanCollide = part.CanCollide,
+                Transparency = part.Transparency,
+                Massless = part.Massless,
+            }
         end
+
         pcall(function()
             part.Size = Vector3.new(headSize, headSize, headSize)
-            part.CanCollide = false; part.Transparency = 0.5
+            -- 关键：关碰撞，避免放大后的头部把 AI 卡在墙里
+            part.CanCollide = false
+            part.Massless = true
+            part.Transparency = 0.5
         end)
     end
+
     local function setup()
-        for _, conn in ipairs(hitboxConnections) do pcall(function() conn:Disconnect() end) end
-        hitboxConnections = {}
-        if not headHitboxEnabled then restoreHeadHitbox(); return end
-        batchScan(Workspace:GetDescendants(), applyHead, 200)
-        table.insert(hitboxConnections, Workspace.DescendantAdded:Connect(applyHead))
-        spawn(function()
-            while headHitboxEnabled and gui.Parent do
-                for p in pairs(hitboxModified) do
-                    if not p or not p.Parent then hitboxModified[p] = nil
-                    elseif isDead(p.Parent) then restoreOne(p) end
+        for _, c in ipairs(hitboxConns) do pcall(function() c:Disconnect() end) end
+        hitboxConns = {}
+
+        if not headHitboxEnabled then
+            restoreAll()
+            return
+        end
+
+        for _, fn in ipairs(AI_CONTAINERS) do
+            local folder = Workspace:FindFirstChild(fn)
+            if folder then
+                for _, m in ipairs(folder:GetChildren()) do
+                    if m:IsA("Model") then
+                        local h = m:FindFirstChild("Head")
+                        if h then applyHead(h) end
+                    end
                 end
-                wait(0.5)
             end
-        end)
+        end
+
+        for _, fn in ipairs(AI_CONTAINERS) do
+            local folder = Workspace:FindFirstChild(fn)
+            if folder then
+                table.insert(hitboxConns, folder.ChildAdded:Connect(function(m)
+                    task.wait(0.3)
+                    if not headHitboxEnabled then return end
+                    local h = m:FindFirstChild("Head")
+                    if h then applyHead(h) end
+                end))
+            end
+        end
+
+        table.insert(hitboxConns, RunService.Heartbeat:Connect(function()
+            if not headHitboxEnabled then return end
+            for part in pairs(hitboxModified) do
+                local model = part.Parent
+                if not model or isDead(model) then
+                    restoreOne(part)
+                else
+                    local want = Vector3.new(headSize, headSize, headSize)
+                    if (part.Size - want).Magnitude > 0.1 then
+                        pcall(function()
+                            part.Size = want
+                            part.CanCollide = false
+                        end)
+                    end
+                end
+            end
+        end))
     end
+
     toggleBase("头部Hitbox扩大", "headHitbox", false, function(v)
-        headHitboxEnabled = v; setup()
+        headHitboxEnabled = v
+        setup()
     end)
-    local sizeLabel = Instance.new("TextLabel", basePage)
-    sizeLabel.BackgroundTransparency = 1
-    sizeLabel.Text = "头部:"
-    sizeLabel.TextColor3 = Color3.new(0.9, 0.9, 0.9)
-    sizeLabel.Font = Enum.Font.Gotham; sizeLabel.TextSize = 11
-    sizeLabel.TextXAlignment = Enum.TextXAlignment.Left
-    sizeLabel.Visible = false
-    reg(sizeLabel, "headSizeLabel")
-    local sizeInput = Instance.new("TextBox", basePage)
-    sizeInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-    sizeInput.TextColor3 = Color3.new(1, 1, 1)
-    sizeInput.Text = tostring(headSize)
-    sizeInput.Font = Enum.Font.Gotham; sizeInput.TextSize = 11; sizeInput.BorderSizePixel = 0
-    sizeInput.Visible = false
-    Instance.new("UICorner", sizeInput).CornerRadius = UDim.new(0, 4)
-    reg(sizeInput, "headSizeInput")
-    sizeInput.FocusLost:Connect(function()
-        local val = tonumber(sizeInput.Text)
-        if val and val >= 1 and val <= 20 then
-            headSize = val; sizeInput.Text = tostring(headSize)
-            if headHitboxEnabled then setup() end
-        else sizeInput.Text = tostring(headSize) end
-    end)
+
     _G._ExamSetters.headSizeVal = function(v)
         if type(v) == "number" and v >= 1 and v <= 20 then
-            headSize = v; sizeInput.Text = tostring(v)
-            if headHitboxEnabled then setup() end
+            headSize = v
+            for part in pairs(hitboxModified) do
+                pcall(function()
+                    part.Size = Vector3.new(headSize, headSize, headSize)
+                end)
+            end
         end
     end
     _G._ExamStates.headSizeVal = headSize
+
     table.insert(cleanupFns, function()
-        for _, conn in ipairs(hitboxConnections) do pcall(function() conn:Disconnect() end) end
-        restoreHeadHitbox()
+        for _, c in ipairs(hitboxConns) do pcall(function() c:Disconnect() end) end
+        restoreAll()
     end)
 end
 
@@ -2005,8 +2166,15 @@ do
     end)
     refreshModeText()
     _G._ExamSetters.slideSteerMode = function(v)
-        if v == 1 then slideSteerMode = "camera"
-        elseif v == 2 then slideSteerMode = "move" end
+        -- CDMUI 的 Cycle 传的是选项文字，原版按钮传的是 1/2，两种都得认
+        if v == 1 or v == "视角控制" then
+            slideSteerMode = "camera"
+        elseif v == 2 or v == "移动控制" then
+            slideSteerMode = "move"
+        elseif v == "camera" or v == "move" then
+            slideSteerMode = v
+        end
+        _G._ExamStates.slideSteerMode = (slideSteerMode == "camera") and 1 or 2
         refreshModeText()
     end
     _G._ExamStates.slideSteerMode = 1
@@ -2569,6 +2737,8 @@ do
     end
     local recoilSpringModule = nil
     local recoilSpring2Module = nil
+    local recoilSpringOrigNew = nil
+    local recoilSpring2OrigNew = nil
     local function hookModule(path, label)
         local p = ReplicatedStorage
         for _, seg in ipairs(path) do p = p and p:FindFirstChild(seg) end
@@ -2582,14 +2752,16 @@ do
             if type(sp) == "table" then container = sp; newFn = rawget(sp, "new") end
         end
         if type(newFn) ~= "function" then return end
+        local orig = newFn
         if label == "Spring" then
             if recoilSpringModule then return end
             recoilSpringModule = m
+            recoilSpringOrigNew = orig
         else
             if recoilSpring2Module then return end
             recoilSpring2Module = m
+            recoilSpring2OrigNew = orig
         end
-        local orig = newFn
         local mt = getmetatable(container)
         if mt then pcall(function() setmetatable(container, nil) end) end
         pcall(function()
@@ -2621,12 +2793,41 @@ do
         hookModule({"Assets","Modules","Spring2"}, "Spring2")
         rescan(); startZeroLoop()
     end
+    -- 还原被改过的 Spring 模块和实例
+    local function restoreAll()
+        -- Spring / Spring2 的 new 改回去
+        if recoilSpringModule and recoilSpringOrigNew then
+            pcall(function() rawset(recoilSpringModule, "new", recoilSpringOrigNew) end)
+        end
+        if recoilSpring2Module and recoilSpring2OrigNew then
+            pcall(function() rawset(recoilSpring2Module, "new", recoilSpring2OrigNew) end)
+        end
+        -- 被 patch 的实例恢复原方法
+        pcall(function()
+            for inst, orig in pairs(recoilPatchedInsts or {}) do
+                if inst then
+                    if orig.Accelerate then pcall(function() rawset(inst, "Accelerate", orig.Accelerate) end) end
+                    if orig._positionVelocity then pcall(function() rawset(inst, "_positionVelocity", orig._positionVelocity) end) end
+                end
+            end
+        end)
+        recoilPatchedInsts = setmetatable({}, { __mode = "k" })
+        recoilPatchedMTs = {}
+        recoilSpringModule = nil
+        recoilSpring2Module = nil
+        recoilSpringOrigNew = nil
+        recoilSpring2OrigNew = nil
+    end
+
     toggleBase("无后坐力", "recoil", false, function(v)
-        recoilEnabled = v; setup()
+        recoilEnabled = v
+        if v then setup() else restoreAll() end
     end)
     lp.CharacterAdded:Connect(function() wait(1); if recoilEnabled then rescan() end end)
     table.insert(cleanupFns, function()
-        recoilEnabled = false; stopZeroLoop()
+        recoilEnabled = false
+        stopZeroLoop()
+        restoreAll()
     end)
 end
 
@@ -4431,8 +4632,17 @@ end
     end)
     refreshModeBtnText()
     _G._ExamSetters.mbTargetMode = function(v)
-        if type(v) ~= "number" or v < 1 or v > 3 then return end
-        mbTargetMode = v
+        -- 索引、中文标签、英文键都认
+        local n = v
+        if type(v) == "string" then
+            if v == "FOV内准星最近" then n = 1
+            elseif v == "FOV内距离最近" then n = 2
+            elseif v == "360°全向锁定" then n = 3
+            else n = tonumber(v) end
+        end
+        if type(n) ~= "number" or n < 1 or n > 3 then return end
+        mbTargetMode = n
+        _G._ExamStates.mbTargetMode = n
         cachedTarget = nil; lastFindTick = 0
         destroyLockBB(); refreshModeBtnText(); updateFov(); wasTooLarge = false
     end
@@ -5350,9 +5560,87 @@ end
 local tab
 
 -- ── 基础 ──
-tab = win:Tab("基础")
+-- ============================================================
+-- 人物
+-- ============================================================
+tab = win:Tab("人物")
+
+tab:Section({ Name = "生存" })
 tab:Toggle({ Key = "stamina", Name = "无限体力", Desc = "让体力永远保持满状态", Default = false,
     Callback = function(v) CB("stamina", v) end })
+tab:Toggle({ Key = "staggerImmune", Name = "硬直免疫", Desc = "受击不僵直、不被击退", Default = false,
+    Callback = function(v) CB("staggerImmune", v) end })
+tab:Toggle({ Key = "elephantImmune", Name = "免疫象脚", Desc = "免疫象脚和致死区", Default = false,
+    Callback = function(v) CB("elephantImmune", v) end })
+tab:Toggle({ Key = "forceReset", Name = "无条件重置", Desc = "随时可以重置角色", Default = false,
+    Callback = function(v) CB("forceReset", v) end })
+
+tab:Section({ Name = "移动" })
+tab:Expand({
+    Key = "slide",
+    Callback = function(v) CB("slide", v) end,
+    Name = "滑铲距离修改",
+    Desc = "调整滑铲距离倍率",
+    Default = false,
+    Children = {
+        { Kind = "number", Key = "slideDistanceMult", Name = "滑铲距离倍率", Min = 1, Max = 10, Default = 1, Callback = function(v) CB("slideDistanceMult", v) end },
+    },
+})
+tab:Expand({
+    Key = "slideSteer",
+    Callback = function(v) CB("slideSteer", v) end,
+    Name = "滑铲变向",
+    Desc = "滑铲时根据方向变向",
+    Default = false,
+    Children = {
+        { Kind = "cycle", Key = "slideSteerMode", Name = "变向模式", Options = { "视角控制", "移动控制" }, Callback = function(v) CB("slideSteerMode", v) end },
+    },
+})
+tab:Toggle({ Key = "noCD", Name = "无滑铲冷却", Desc = "滑铲无冷却（会导致盾牌无法防御）", Default = false,
+    Callback = function(v) CB("noCD", v) end })
+
+tab:Section({ Name = "盾牌" })
+tab:Toggle({ Key = "shieldSlide", Name = "修复盾牌滑铲/疾跑", Desc = "持盾也能滑铲疾跑", Default = false,
+    Callback = function(v) CB("shieldSlide", v) end })
+tab:Expand({
+    Key = "shieldVM",
+    Callback = function(v) CB("shieldVM", v) end,
+    Name = "第一人称盾牌半透明",
+    Desc = "第一人称盾牌半透明显示",
+    Default = false,
+    Children = {
+        { Kind = "slider", Key = "shieldVMAlpha", Name = "盾牌透明度", Min = 0, Max = 0.99, Step = 0.05, Default = 0.9, Callback = function(v) CB("shieldVMAlpha", v) end },
+    },
+})
+
+tab:Section({ Name = "装备" })
+tab:Toggle({ Key = "nvg", Name = "无限电量夜视仪", Desc = "夜视仪电量无限", Default = false,
+    Callback = function(v) CB("nvg", v) end })
+
+-- ============================================================
+-- 枪械
+-- ============================================================
+tab = win:Tab("枪械")
+
+tab:Section({ Name = "射击" })
+tab:Toggle({ Key = "recoil", Name = "无后坐力", Desc = "消除枪械后坐力", Default = false,
+    Callback = function(v) CB("recoil", v) end })
+tab:Toggle({ Key = "muzzle", Name = "去除枪口遮挡", Desc = "贴墙时不会挡住枪口", Default = false,
+    Callback = function(v) CB("muzzle", v) end })
+tab:Toggle({ Key = "shotgunNoPump", Name = "霰弹枪连发", Desc = "霰弹枪免拉栓动画", Default = false,
+    Callback = function(v) CB("shotgunNoPump", v) end })
+
+tab:Section({ Name = "换弹" })
+tab:Toggle({ Key = "fastReload", Name = "快速换弹", Desc = "换弹速度 2 倍", Default = false,
+    Callback = function(v) CB("fastReload", v) end })
+
+
+-- ============================================================
+-- 视觉
+-- ============================================================
+tab = win:Tab("视觉")
+
+tab:Section({ Name = "透视" })
 tab:Expand({
     Key = "esp",
     Callback = function(v) CB("esp", v) end,
@@ -5375,75 +5663,21 @@ tab:Toggle({
     Default = false,
     Callback = function(v) CB("crateESP", v) end,
 })
-tab:Expand({
-    Key = "headHitbox",
-    Callback = function(v) CB("headHitbox", v) end,
-    Name = "头部 Hitbox 放大",
-    Desc = "自定义头部碰撞体积大小",
-    Default = false,
-    Children = {
-        { Kind = "number", Key = "headSizeVal", Name = "头部大小", Min = 1, Max = 20, Default = 1, Callback = function(v) CB("headSizeVal", v) end },
-    },
-})
-tab:Toggle({ Key = "autoInteract", Name = "及时交互", Desc = "与可互动的物体进行秒交互", Default = false,
-    Callback = function(v) CB("autoInteract", v) end })
-tab:Toggle({ Key = "forceReset", Name = "无条件重置", Desc = "随时可以重置角色", Default = false,
-    Callback = function(v) CB("forceReset", v) end })
-tab:Expand({
-    Key = "slide",
-    Callback = function(v) CB("slide", v) end,
-    Name = "滑铲距离修改",
-    Desc = "调整滑铲距离倍率",
-    Default = false,
-    Children = {
-        { Kind = "number", Key = "slideDistanceMult", Name = "滑铲距离倍率", Min = 1, Max = 10, Default = 1, Callback = function(v) CB("slideDistanceMult", v) end },
-    },
-})
-tab:Expand({
-    Key = "slideSteer",
-    Callback = function(v) CB("slideSteer", v) end,
-    Name = "滑铲变向",
-    Desc = "滑铲时根据方向变向",
-    Default = false,
-    Children = {
-        { Kind = "cycle", Key = "slideSteerMode", Name = "变向模式", Options = { "视角控制", "移动控制" }, Callback = function(v) CB("slideSteerMode", v) end },
-    },
-})
-tab:Toggle({ Key = "nvg", Name = "无限电量夜视仪", Desc = "夜视仪电量无限", Default = false,
-    Callback = function(v) CB("nvg", v) end })
-tab:Toggle({ Key = "elephantImmune", Name = "免疫象脚", Desc = "免疫象脚和致死区", Default = false,
-    Callback = function(v) CB("elephantImmune", v) end })
-tab:Toggle({ Key = "muzzle", Name = "去除枪口遮挡", Desc = "贴墙时不会挡住枪口", Default = false,
-    Callback = function(v) CB("muzzle", v) end })
-tab:Toggle({ Key = "recoil", Name = "无后坐力", Desc = "消除枪械后坐力", Default = false,
-    Callback = function(v) CB("recoil", v) end })
+
+tab:Section({ Name = "画面" })
+tab:Toggle({ Key = "worldESP", Name = "全图高亮", Desc = "全图变亮", Default = false,
+    Callback = function(v) CB("worldESP", v) end })
+
+tab:Section({ Name = "界面" })
 tab:Toggle({ Key = "chatForce", Name = "聊天框强制显示", Desc = "始终显示聊天窗口", Default = false,
     Callback = function(v) CB("chatForce", v) end })
-tab:Toggle({ Key = "forceHeadshot", Name = "强制爆头", Desc = "命中四肢/身体判定为爆头/不能和魔法子弹同时开启", Default = false,
-    Callback = function(v) CB("forceHeadshot", v) end })
-tab:Toggle({ Key = "autoQTE", Name = "自动 QTE", Desc = "QTE 自动完美完成", Default = false,
-    Callback = function(v) CB("autoQTE", v) end })
-tab:Toggle({ Key = "shotgunNoPump", Name = "霰弹枪连发", Desc = "霰弹枪免拉栓动画", Default = false,
-    Callback = function(v) CB("shotgunNoPump", v) end })
-tab:Toggle({ Key = "shieldSlide", Name = "修复盾牌滑铲/疾跑", Desc = "持盾也能滑铲疾跑", Default = false,
-    Callback = function(v) CB("shieldSlide", v) end })
-tab:Expand({
-    Key = "shieldVM",
-    Callback = function(v) CB("shieldVM", v) end,
-    Name = "第一人称盾牌半透明",
-    Desc = "第一人称盾牌半透明显示",
-    Default = false,
-    Children = {
-        { Kind = "slider", Key = "shieldVMAlpha", Name = "盾牌透明度", Min = 0, Max = 0.99, Step = 0.05, Default = 0.9, Callback = function(v) CB("shieldVMAlpha", v) end },
-    },
-})
-tab:Toggle({ Key = "noCD", Name = "无滑铲冷却", Desc = "滑铲无冷却（有 bug）", Default = false,
-    Callback = function(v) CB("noCD", v) end })
-tab:Toggle({ Key = "fastReload", Name = "快速换弹", Desc = "换弹速度 2 倍", Default = false,
-    Callback = function(v) CB("fastReload", v) end })
 
--- ── 魔法子弹 ──
-tab = win:Tab("魔法子弹")
+-- ============================================================
+-- 战斗
+-- ============================================================
+tab = win:Tab("战斗")
+
+tab:Section({ Name = "瞄准" })
 tab:Expand({
     Key = "magicBullet",
     Callback = function(v) CB("magicBullet", v) end,
@@ -5461,7 +5695,6 @@ tab:Expand({
         { Kind = "toggle", Key = "mbOnlyWhenLocked", Name = "未锁定不穿透", Default = true, Callback = function(v) CB("mbOnlyWhenLocked", v) end },
     },
 })
--- 锁定模式（原版是 expandableCycle：三种模式循环切换 + 两个子项）
 tab:Expand({
     Key = "mbTargetMode",
     Name = "锁定模式",
@@ -5485,26 +5718,6 @@ tab:Expand({
           Options = { "线", "面" }, Callback = function(v) CB("radiusMode", v) end },
     },
 })
-tab:Toggle({ Key = "mbLowLoad", Name = "低负载模式", Desc = "降低魔法子弹扫描频率，人多或卡顿时开启", Default = false,
-    Callback = function(v) CB("mbLowLoad", v) end })
-tab:Toggle({ Key = "autoFire", Name = "自动开火", Desc = "锁定后自动开火（需先开魔法子弹+掩体检测）", Default = false,
-    Callback = function(v) CB("autoFire", v) end })
-tab:Expand({
-    Key = "shootVisual",
-    Callback = function(v) CB("shootVisual", v) end,
-    Name = "射击视觉效果",
-    Desc = "命中时显示追踪线 / 命中标记",
-    Default = false,
-    Children = {
-        { Kind = "toggle", Key = "tracerOn", Name = "子弹追踪", Default = true, Callback = function(v) CB("tracerOn", v) end },
-        { Kind = "cycle", Key = "tracerColor", Name = "追踪线颜色", Options = { "红", "绿", "蓝", "彩虹" }, Callback = function(v) CB("tracerColor", v) end },
-        { Kind = "cycle", Key = "tracerDuration", Name = "追踪线时长", Options = { "1秒", "2秒", "3秒", "5秒" }, Callback = function(v) CB("tracerDuration", v) end },
-        { Kind = "toggle", Key = "hitMarkerOn", Name = "命中标记", Default = true, Callback = function(v) CB("hitMarkerOn", v) end },
-        { Kind = "cycle", Key = "hmColor", Name = "命中标记颜色", Options = { "白", "红", "青", "彩虹" }, Callback = function(v) CB("hmColor", v) end },
-        { Kind = "cycle", Key = "hmDuration", Name = "命中标记时长", Options = { "1秒", "2秒", "3秒", "5秒" }, Callback = function(v) CB("hmDuration", v) end },
-        { Kind = "cycle", Key = "hmSize", Name = "命中标记大小", Options = { "小", "中", "大" }, Callback = function(v) CB("hmSize", v) end },
-    },
-})
 tab:Input({ Key = "mbParams", Name = "FOV锁定半径", Desc = "FOV=锁定半径（像素）", Default = "200",
     Callback = function(v) CB("mbParams", v) end })
 tab:Input({ Key = "mbWorldDistMax", Name = "最大锁定距离", Desc = "锁定目标的最远距离（studs）", Default = "200",
@@ -5525,24 +5738,83 @@ tab:Body2D({
     },
 })
 
--- ── 雷达 ──
+tab:Section({ Name = "开火" })
+tab:Toggle({ Key = "autoFire", Name = "自动开火", Desc = "锁定后自动开火（需先开魔法子弹+掩体检测）", Default = false,
+    Callback = function(v) CB("autoFire", v) end })
+tab:Toggle({ Key = "forceHeadshot", Name = "强制爆头", Desc = "命中四肢/身体判定为爆头/不能和魔法子弹同时开启", Default = false,
+    Callback = function(v) CB("forceHeadshot", v) end })
+
+tab:Section({ Name = "判定" })
+tab:Expand({
+    Key = "headHitbox",
+    Callback = function(v) CB("headHitbox", v) end,
+    Name = "头部 Hitbox 放大",
+    Desc = "放大头部判定范围，不影响敌人移动",
+    Default = false,
+    Children = {
+        { Kind = "number", Key = "headSizeVal", Name = "头部大小", Min = 1, Max = 20, Default = 1, Callback = function(v) CB("headSizeVal", v) end },
+    },
+})
+
+tab:Section({ Name = "性能" })
+tab:Toggle({ Key = "mbLowLoad", Name = "低负载模式", Desc = "降低扫描频率，人多或卡顿时开启", Default = false,
+    Callback = function(v) CB("mbLowLoad", v) end })
+
+tab:Section({ Name = "射击效果" })
+tab:Expand({
+    Key = "shootVisual",
+    Callback = function(v) CB("shootVisual", v) end,
+    Name = "射击视觉效果",
+    Desc = "命中时显示追踪线 / 命中标记",
+    Default = false,
+    Children = {
+        { Kind = "toggle", Key = "tracerOn", Name = "子弹追踪", Default = true, Callback = function(v) CB("tracerOn", v) end },
+        { Kind = "cycle", Key = "tracerColor", Name = "追踪线颜色", Options = { "红", "绿", "蓝", "彩虹" }, Callback = function(v) CB("tracerColor", v) end },
+        { Kind = "cycle", Key = "tracerDuration", Name = "追踪线时长", Options = { "1秒", "2秒", "3秒", "5秒" }, Callback = function(v) CB("tracerDuration", v) end },
+        { Kind = "toggle", Key = "hitMarkerOn", Name = "命中标记", Default = true, Callback = function(v) CB("hitMarkerOn", v) end },
+        { Kind = "cycle", Key = "hmColor", Name = "命中标记颜色", Options = { "白", "红", "青", "彩虹" }, Callback = function(v) CB("hmColor", v) end },
+        { Kind = "cycle", Key = "hmDuration", Name = "命中标记时长", Options = { "1秒", "2秒", "3秒", "5秒" }, Callback = function(v) CB("hmDuration", v) end },
+        { Kind = "cycle", Key = "hmSize", Name = "命中标记大小", Options = { "小", "中", "大" }, Callback = function(v) CB("hmSize", v) end },
+    },
+})
+
+-- ============================================================
+-- 雷达
+-- ============================================================
 tab = win:Tab("雷达")
-tab:Toggle({ Key = "radar", Name = "雷达探敌", Desc = "小地图上显示所有敌人", Default = false,
-    Callback = function(v) CB("radar", v) end })
-tab:Toggle({ Key = "radarFast", Name = "高刷新率", Desc = "雷达刷新更频繁（耗性能）", Default = true,
-    Callback = function(v) CB("radarFast", v) end })
-tab:Toggle({ Key = "radarArrow", Name = "朝向箭头", Desc = "显示敌人的朝向", Default = true,
-    Callback = function(v) CB("radarArrow", v) end })
+
+tab:Section({ Name = "显示" })
+tab:Expand({
+    Key = "radar",
+    Callback = function(v) CB("radar", v) end,
+    Name = "雷达探敌",
+    Desc = "小地图上显示所有敌人",
+    Default = false,
+    Children = {
+        { Kind = "toggle", Key = "radarFast", Name = "高刷新率", Desc = "刷新更频繁，会吃点性能", Default = false, Callback = function(v) CB("radarFast", v) end },
+        { Kind = "toggle", Key = "radarArrow", Name = "朝向箭头", Default = true, Callback = function(v) CB("radarArrow", v) end },
+    },
+})
+
+tab:Section({ Name = "信号" })
 tab:Toggle({ Key = "radarBoost", Name = "信号增幅器", Desc = "去除无信号区域干扰", Default = false,
     Callback = function(v) CB("radarBoost", v) end })
 
--- ── 其他 ──
+-- ============================================================
+-- 其他
+-- ============================================================
 tab = win:Tab("其他")
+
+tab:Section({ Name = "辅助" })
+tab:Toggle({ Key = "autoInteract", Name = "及时交互", Desc = "与可互动的物体进行秒交互", Default = false,
+    Callback = function(v) CB("autoInteract", v) end })
+tab:Toggle({ Key = "autoQTE", Name = "自动 QTE", Desc = "QTE 自动完美完成", Default = false,
+    Callback = function(v) CB("autoQTE", v) end })
 
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.0.4"
+local CURRENT_VERSION = "1.1.0"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
@@ -5562,6 +5834,8 @@ end
 local statusLabel
 local hasUpdate = false
 local remoteVer = nil
+
+tab:Section({ Name = "关于脚本" })
 
 -- 版本行：整行可点击，点一下就检测更新
 local verRow
