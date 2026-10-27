@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.2.3  移除疾跑开火（游戏层拦截无法绕过）
+-- Examination v1.2.4  新增自动肘击(预判+范围显示)；修 toggle key 映射与 Cycle 中文标签
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -435,14 +435,35 @@ local Callbacks = {}
 -- UI 状态同步钩子（win 创建后指向 CB，保证 UI 与模块状态一致）
 local CALLBACK_SINK = nil
 
+-- 中文 label -> 正确状态 key 的映射
+-- toggleMagic / toggleRadar 的调用签名里第二参是 UDim2 而不是 key，
+-- 会导致状态被写进中文 label 里，这里统一映射回来
+local TOGGLE_KEY_MAP = {
+    ["启用魔法子弹"] = "magicBullet",
+    ["显示 3D 头框"] = "mbShowBox",
+    ["掩体检测"] = "mbRequireVisible",
+    ["穿透盾牌"] = "pierceShield",
+    ["穿透SIN头盔"] = "pierceHelmet",
+    ["穿透队友"] = "pierceTeammate",
+    ["穿透尸体"] = "pierceCorpse",
+    ["显示FOV圈"] = "mbShowFovCircle",
+    ["未锁定不穿透"] = "mbOnlyWhenLocked",
+    ["启用（雷达探敌）"] = "radar",
+    ["高刷新率（可能会造成卡顿）"] = "radarFast",
+    ["显示敌人朝向箭头"] = "radarArrow",
+    ["雷达信号增幅器"] = "radarBoost",
+}
+
 local function mkToggleRegistrar(group)
     return function(text, posSpec, default, callback, sizeSpec)
-        local key = (type(posSpec) == "string") and posSpec or text
+        local key = (type(posSpec) == "string") and posSpec or (TOGGLE_KEY_MAP[text] or text)
         Callbacks[key] = callback
 
         local state = default and true or false
         _G._ExamSetters[key] = function(nv)
-            if state == nv then return end
+            nv = nv and true or false
+            -- 不要因为状态相同就跳过：外部把 _ExamStates 改成和内部 state 不一致时，
+            -- 再点一次必须能真正跑一遍 setup，否则开关会卡死
             state = nv
             _G._ExamStates[key] = state
             if CALLBACK_SINK then pcall(CALLBACK_SINK, key, state) end
@@ -2227,6 +2248,7 @@ do
     -- 开/关
     _G._ExamSetters.crateESP = function(v)
         crateEnabled = v and true or false
+        _G._ExamStates.crateESP = crateEnabled
         if crateEnabled then
             buildCrates()
             startCrateLoop()
@@ -3418,7 +3440,414 @@ do
         stopZeroLoop()
         restoreAll()
     end)
+end-- ============ 模块 12.6: 自动肘击 ============
+-- 靠近怪物时自动按 G 键肘击。
+-- 只模拟按键，不碰游戏函数。
+do
+    local autoBashEnabled = false
+    local loopToken = 0
+    local RANGE = 8             -- 触发距离
+    local INTERVAL = 0.22       -- 两次肘击最小间隔
+    local lastBash = 0
+
+    local function isInfected(model)
+        if not model or not model:IsA("Model") then return false end
+        -- 排除玩家
+        if Players:GetPlayerFromCharacter(model) then return false end
+
+        local hum = model:FindFirstChildOfClass("Humanoid")
+        -- 必须活着：血量为 0 或已死亡状态都跳过，避免鞭尸
+        if not hum or hum.Health <= 0 then return false end
+        local st = hum:GetState()
+        if st == Enum.HumanoidStateType.Dead then return false end
+        -- 有些尸体模型血还是正的，额外看 Humanoid 是否还能动
+        if hum.WalkSpeed <= 0 and hum.Health <= 0 then return false end
+
+        if model:GetAttribute("IsInfectedAI") == true then return true end
+        return false
+    end
+
+    -- 检测范围要比肘击范围大，才能提前预判
+    local SCAN_RANGE = 22
+    -- 怪物进到这个距离就一定按，不等它贴脸（可由 UI 调）
+    local PANIC_RANGE = 9
+    _G._ExamSetters.bashRange = function(v)
+        local n = tonumber(v)
+        if not n then return end
+        PANIC_RANGE = math.clamp(n, 4, 20)
+        _G._ExamStates.bashRange = PANIC_RANGE
+        -- 半径变了，让范围圈下帧重算尺寸
+        lastRingRadius = nil
+    end
+    _G._ExamStates.bashRange = 9
+
+    ------------------------------------------------------------------
+    -- 肘击范围显示（和 360° 半径显示同一套做法）
+    ------------------------------------------------------------------
+    local SEGMENTS = 48
+    local ringParts = {}
+    local ringModel = nil
+    local facePart = nil
+    local showRange = false
+    local bashRangeMode = "line"
+    local lastRingRadius = nil
+
+    local function destroyRingImpl()
+        for _, q in ipairs(ringParts) do
+            if q and q.Parent then pcall(function() q:Destroy() end) end
+        end
+        ringParts = {}
+        if ringModel and ringModel.Parent then pcall(function() ringModel:Destroy() end) end
+        ringModel = nil
+        lastRingRadius = nil        -- 环重建了，尺寸要重算
+    end
+
+    local function destroyFaceImpl()
+        if facePart and facePart.Parent then pcall(function() facePart:Destroy() end) end
+        facePart = nil
+    end
+
+    local destroyRing = destroyRingImpl
+
+    local destroyFace = destroyFaceImpl
+
+    local function ensureRing()
+        if #ringParts == SEGMENTS and ringParts[1] and ringParts[1].Parent then
+            return ringParts
+        end
+        destroyRing()
+        -- 用一个 Model 包住，整体移动只调一次 PivotTo
+        local m = Instance.new("Model")
+        m.Name = "ExamBashRingModel"
+        m.Parent = Workspace
+        ringModel = m
+        for i = 1, SEGMENTS do
+            local q = Instance.new("Part")
+            q.Name = "ExamBashRing"
+            q.Size = Vector3.new(0.4, 0.05, 1)
+            q.Material = Enum.Material.SmoothPlastic
+            q.Color = Color3.fromRGB(255, 190, 60)
+            q.Transparency = 1
+            q.CanCollide = false; q.CanQuery = false; q.CanTouch = false
+            q.Anchored = true; q.CastShadow = false
+            q.Parent = m
+            local sg = Instance.new("SurfaceGui")
+            sg.Name = "Line"; sg.Face = Enum.NormalId.Top
+            sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+            sg.PixelsPerStud = 40
+            sg.AlwaysOnTop = false        -- 会被物体遮挡，符合真实透视
+            sg.LightInfluence = 0; sg.Adornee = q; sg.Parent = q
+            local f = Instance.new("Frame")
+            f.Size = UDim2.new(1, 0, 1, 0)
+            f.BackgroundColor3 = Color3.fromRGB(255, 190, 60)
+            f.BackgroundTransparency = 0.15
+            f.BorderSizePixel = 0
+            f.Parent = sg
+            table.insert(ringParts, q)
+
+            -- 建好就按当前半径摆一次，避免尺寸一直是默认的 1
+            local rr = PANIC_RANGE
+            local ang = (i - 1) / SEGMENTS * math.pi * 2
+            local segLen = 2 * rr * math.sin(math.pi / SEGMENTS) + 0.05
+            q.Size = Vector3.new(0.4, 0.05, segLen)
+            q.CFrame = CFrame.new(math.cos(ang) * rr, 0, math.sin(ang) * rr)
+                * CFrame.Angles(0, -ang, 0)
+        end
+        lastRingRadius = PANIC_RANGE
+        return ringParts
+    end
+
+    local function updateRing()
+        local char = lp.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if not hrp then destroyRing(); destroyFace(); return end
+        if not showRange then destroyRing(); destroyFace(); return end
+        if not autoBashEnabled then destroyRing(); destroyFace(); return end
+
+        -- 向下射线找地面，下蹲/滑铲都不影响
+        local groundY = hrp.Position.Y - 2.3
+        do
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.FilterDescendantsInstances = {char}
+            local origin = Vector3.new(hrp.Position.X, hrp.Position.Y + 2, hrp.Position.Z)
+            local hit = Workspace:Raycast(origin, Vector3.new(0, -20, 0), params)
+            if hit then groundY = hit.Position.Y end
+        end
+        local base = Vector3.new(hrp.Position.X, groundY + 0.7, hrp.Position.Z)
+        local r = PANIC_RANGE
+
+        if bashRangeMode == "line" then
+            if facePart then destroyFace() end
+            local parts = ensureRing()
+
+            -- 尺寸只在半径变了才重设
+            if lastRingRadius ~= r then
+                lastRingRadius = r
+                local segLen = 2 * r * math.sin(math.pi / SEGMENTS) + 0.05
+                for i, q in ipairs(parts) do
+                    local ang = (i - 1) / SEGMENTS * math.pi * 2
+                    q.Size = Vector3.new(0.4, 0.05, segLen)
+                    -- 以原点为圆心摆好，之后整体移动就行
+                    q.CFrame = CFrame.new(math.cos(ang) * r, 0, math.sin(ang) * r)
+                        * CFrame.Angles(0, -ang, 0)
+                end
+            end
+            -- 整个 Model 跟着角色走，只动一次
+            if ringModel and ringModel.Parent then
+                pcall(function() ringModel:PivotTo(CFrame.new(base)) end)
+            end
+        else
+            if #ringParts > 0 then destroyRing() end
+            if not facePart or not facePart.Parent then
+                local q = Instance.new("Part")
+                q.Name = "ExamBashFace"
+                q.Shape = Enum.PartType.Cylinder
+                q.Material = Enum.Material.SmoothPlastic
+                q.Color = Color3.fromRGB(255, 190, 60)
+                q.Transparency = 1          -- 本体不渲染，靠 SurfaceGui 画
+                q.CanCollide = false; q.CanQuery = false; q.CanTouch = false
+                q.Anchored = true; q.CastShadow = false
+                q.Parent = Workspace
+                -- 圆面用顶面 SurfaceGui 画，AlwaysOnTop 保证穿透显示
+                local sg = Instance.new("SurfaceGui")
+                sg.Name = "Face"; sg.Face = Enum.NormalId.Top
+                sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+                sg.PixelsPerStud = 8
+                sg.AlwaysOnTop = false     -- 会被遮挡
+                sg.LightInfluence = 0
+                sg.Adornee = q
+                sg.Parent = q
+                local f = Instance.new("Frame")
+                f.Name = "Fill"
+                f.Size = UDim2.new(1, 0, 1, 0)
+                f.BackgroundColor3 = Color3.fromRGB(255, 190, 60)
+                f.BackgroundTransparency = 0.82
+                f.BorderSizePixel = 0
+                f.Parent = sg
+                facePart = q
+            end
+            local d = r * 2
+            facePart.Size = Vector3.new(0.1, d, d)
+            facePart.CFrame = CFrame.new(base) * CFrame.Angles(0, 0, math.rad(90))
+        end
+    end
+
+    -- 肘击循环里顺带刷新范围圈
+    local rangeConn = nil
+    local function startRangeLoop()
+        if rangeConn then return end
+        rangeConn = RunService.RenderStepped:Connect(function()
+            if not showRange or not autoBashEnabled then return end
+            pcall(updateRing)
+        end)
+    end
+    local function stopRangeLoop()
+        if rangeConn then pcall(function() rangeConn:Disconnect() end); rangeConn = nil end
+        destroyRing(); destroyFace()
+    end
+
+    _G._ExamSetters.bashShowRange = function(v)
+        showRange = v and true or false
+        _G._ExamStates.bashShowRange = showRange
+        -- 主功能没开就不显示
+        if showRange and autoBashEnabled then
+            startRangeLoop()
+        else
+            stopRangeLoop()
+        end
+    end
+    _G._ExamStates.bashShowRange = false
+
+    _G._ExamSetters.bashRangeMode = function(v)
+        -- 兼容数字索引和中文标签
+        if v == 1 or v == "线状" then bashRangeMode = "line"
+        elseif v == 2 or v == "面状" then bashRangeMode = "face"
+        else return end
+        _G._ExamStates.bashRangeMode = (bashRangeMode == "line") and 1 or 2
+        destroyRing(); destroyFace()
+    end
+    _G._ExamStates.bashRangeMode = 1
+
+    local function nearestTarget()
+        local char = lp.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if not hrp then return nil end
+
+        local best, bestD = nil, math.huge
+        local chars = Workspace:FindFirstChild("Characters")
+        local containers = {}
+        if chars then containers[#containers + 1] = chars end
+        local ais = Workspace:FindFirstChild("AI")
+        if ais then containers[#containers + 1] = ais end
+
+        for _, c in ipairs(containers) do
+            for _, m in ipairs(c:GetChildren()) do
+                if isInfected(m) then
+                    local thrp = m:FindFirstChild("HumanoidRootPart")
+                    if thrp then
+                        local d = (thrp.Position - hrp.Position).Magnitude
+                        if d < bestD then bestD = d; best = m end
+                    end
+                end
+            end
+        end
+        return best, bestD
+    end
+
+    -- 判断该不该现在出手：
+    --   距离很近 -> 立刻打
+    --   还有点距离 -> 按「相对接近速度」提前打
+    --   相对速度同时考虑：怪物冲过来 + 我自己冲过去
+    local function shouldBashNow(target, dist)
+        if not target then return false end
+        if dist <= PANIC_RANGE then return true end
+        if dist > SCAN_RANGE then return false end
+
+        local char = lp.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        local thrp = target:FindFirstChild("HumanoidRootPart")
+        local thum = target:FindFirstChildOfClass("Humanoid")
+        if not hrp or not thrp or not thum then return false end
+
+        -- 单位方向
+        local fromMonsterToMe = (hrp.Position - thrp.Position).Unit
+        local fromMeToMonster = -fromMonsterToMe
+
+        -- 怪物朝我靠近的速度
+        local monsterApproach = thrp.AssemblyLinearVelocity:Dot(fromMonsterToMe)
+        if monsterApproach < 0 then monsterApproach = 0 end
+
+        -- 我自己朝怪物冲过去的速度
+        local myApproach = hrp.AssemblyLinearVelocity:Dot(fromMeToMonster)
+        if myApproach < 0 then myApproach = 0 end
+
+        -- 相对接近速度
+        local approach = monsterApproach + myApproach
+
+        if approach < 1 then
+            -- 双方都没在靠近，等它近一点再说
+            return dist <= PANIC_RANGE + 3
+        end
+
+        -- 自己冲得越快，预判窗口要越长，否则会撞上才出手
+        local lead = 0.28 + math.min(myApproach / 40, 0.22)
+
+        -- 预测 lead 秒后会不会进入危险距离
+        local eta = dist - approach * lead
+        return eta <= PANIC_RANGE
+    end
+
+    -- 手机 / PC 都能用：
+    --   手机端优先走 MobileControls 的 Bash 按钮（游戏自己绑定的）
+    --   PC 端走 G 键
+    local IS_MOBILE = false
+    pcall(function()
+        IS_MOBILE = game:GetService("UserInputService").TouchEnabled
+            and not game:GetService("UserInputService").KeyboardEnabled
+    end)
+
+    local function fireBashButton()
+        local pg = lp:FindFirstChild("PlayerGui")
+        local mc = pg and pg:FindFirstChild("MobileControls")
+        local root = mc and mc:FindFirstChild("Root")
+        local btn = root and root:FindFirstChild("Bash")
+        if not btn then return false end
+
+        -- 优先 firesignal（直接触发游戏自己的监听）
+        if firesignal and getconnections then
+            local ok = pcall(function()
+                local conns = getconnections(btn.InputBegan)
+                if conns and #conns > 0 then
+                    firesignal(btn.InputBegan, {
+                        UserInputType = Enum.UserInputType.MouseButton1,
+                        Position = Vector3.new(0, 0, 0),
+                        KeyCode = Enum.KeyCode.Unknown,
+                        UserInputState = Enum.UserInputState.Begin,
+                    })
+                    return true
+                end
+            end)
+            if ok then return true end
+        end
+
+        -- 退路：VIM 点按钮位置
+        if btn.Visible then
+            local ok2 = pcall(function()
+                local VIM = game:GetService("VirtualInputManager")
+                local p2, s2 = btn.AbsolutePosition, btn.AbsoluteSize
+                local cx, cy = p2.X + s2.X / 2, p2.Y + s2.Y / 2
+                VIM:SendMouseButtonEvent(cx, cy, 0, true, lp, 1)
+                task.wait(0.02)
+                VIM:SendMouseButtonEvent(cx, cy, 0, false, lp, 1)
+            end)
+            return ok2
+        end
+        return false
+    end
+
+    local function pressBash()
+        if IS_MOBILE then
+            if fireBashButton() then return end
+        end
+        -- PC / 兜底：模拟 G 键
+        local ok = pcall(function()
+            local VIM = game:GetService("VirtualInputManager")
+            VIM:SendKeyEvent(true, Enum.KeyCode.G, false, game)
+            task.wait(0.02)
+            VIM:SendKeyEvent(false, Enum.KeyCode.G, false, game)
+        end)
+        if not ok and not IS_MOBILE then
+            fireBashButton()
+        end
+    end
+
+    local function start()
+        if loopToken > 0 then return end
+        loopToken = (loopToken or 0) + 1
+        local my = loopToken
+        task.spawn(function()
+            while autoBashEnabled and gui.Parent and loopToken == my do
+                local target, dist = nearestTarget()
+                if target and os.clock() - lastBash >= INTERVAL
+                   and shouldBashNow(target, dist) then
+                    lastBash = os.clock()
+                    pressBash()
+                end
+                -- 扫得勤一点，反应才跟得上
+                task.wait(0.05)
+            end
+            if loopToken == my then loopToken = 0 end
+        end)
+    end
+
+    local function stop()
+        autoBashEnabled = false
+        loopToken = 0
+    end
+
+    _G._ExamSetters.autoBash = function(v)
+        autoBashEnabled = v and true or false
+        _G._ExamStates.autoBash = autoBashEnabled
+        if autoBashEnabled then
+            start()
+            if showRange then startRangeLoop() end
+        else
+            stop()
+            stopRangeLoop()     -- 主功能关了，范围圈也收掉
+        end
+    end
+    _G._ExamStates.autoBash = false
+
+    table.insert(cleanupFns, function()
+        stop()
+        stopRangeLoop()
+        destroyRingImpl()
+        destroyFaceImpl()
+    end)
 end
+
+
 -- ============ 模块 13: 聊天框强制显示 ============
 do
     local TextChatService = game:GetService("TextChatService")
@@ -4082,7 +4511,7 @@ end
     local mbShowRadiusCircle = false
     local radiusMode = "line"
     local RADIUS_LIMIT = 500
-    local RING_SEGMENTS = 24
+    local RING_SEGMENTS = 48
     local radiusRingParts = {}
     local radiusFacePart = nil
     local wasTooLarge = false
@@ -4271,15 +4700,60 @@ end
         if _G._ExamMB and _G._ExamMB.recheckHookFn then pcall(_G._ExamMB.recheckHookFn) end
     end
     _G._ExamStates.hitMarkerOn = true
-    _G._ExamSetters.tracerColor = function(v) tracerColorIdx = v end
+    _G._ExamSetters.tracerColor = function(v)
+        local n = tonumber(v)
+        if not n then
+            if v == "红" then n = 1 elseif v == "绿" then n = 2
+            elseif v == "蓝" then n = 3 elseif v == "彩虹" then n = 4 end
+        end
+        if not n then return end
+        tracerColorIdx = n
+        _G._ExamStates.tracerColor = n
+    end
     _G._ExamStates.tracerColor = 3
-    _G._ExamSetters.tracerDuration = function(v) tracerDurationSec = ({1,2,3,5})[v] or 1 end
+    _G._ExamSetters.tracerDuration = function(v)
+        local n = tonumber(v)
+        if not n then
+            if v == "1秒" then n = 1 elseif v == "2秒" then n = 2
+            elseif v == "3秒" then n = 3 elseif v == "5秒" then n = 4 end
+        end
+        if not n then return end
+        tracerDurationSec = ({1,2,3,5})[n] or 1
+        _G._ExamStates.tracerDuration = n
+    end
     _G._ExamStates.tracerDuration = 1
-    _G._ExamSetters.hmColor = function(v) hmColorIdx = v end
+    _G._ExamSetters.hmColor = function(v)
+        local n = tonumber(v)
+        if not n then
+            if v == "白" then n = 1 elseif v == "红" then n = 2
+            elseif v == "青" then n = 3 elseif v == "彩虹" then n = 4 end
+        end
+        if not n then return end
+        hmColorIdx = n
+        _G._ExamStates.hmColor = n
+    end
     _G._ExamStates.hmColor = 3
-    _G._ExamSetters.hmDuration = function(v) hmDurationSec = ({1,2,3,5})[v] or 1 end
+    _G._ExamSetters.hmDuration = function(v)
+        local n = tonumber(v)
+        if not n then
+            if v == "1秒" then n = 1 elseif v == "2秒" then n = 2
+            elseif v == "3秒" then n = 3 elseif v == "5秒" then n = 4 end
+        end
+        if not n then return end
+        hmDurationSec = ({1,2,3,5})[n] or 1
+        _G._ExamStates.hmDuration = n
+    end
     _G._ExamStates.hmDuration = 1
-    _G._ExamSetters.hmSize = function(v) hmSizeIdx = v end
+    _G._ExamSetters.hmSize = function(v)
+        local n = tonumber(v)
+        if not n then
+            if v == "小" then n = 1 elseif v == "中" then n = 2
+            elseif v == "大" then n = 3 end
+        end
+        if not n then return end
+        hmSizeIdx = n
+        _G._ExamStates.hmSize = n
+    end
     _G._ExamStates.hmSize = 1
 
     startTracerLoop()
@@ -4676,17 +5150,40 @@ end
             if p and p.Parent then pcall(function() p:Destroy() end) end
         end
         radiusRingParts = {}
+        if radiusRingModel and radiusRingModel.Parent then pcall(function() radiusRingModel:Destroy() end) end
+        radiusRingModel = nil
+        radiusLastR = nil
+        -- 兜底：清掉同名残留 Model，避免叠加
+        pcall(function()
+            for _, d in ipairs(Workspace:GetChildren()) do
+                if d.Name == "ExamRadiusRingModel" then pcall(function() d:Destroy() end) end
+            end
+        end)
     end
     local function destroyRadiusFace()
         if radiusFacePart and radiusFacePart.Parent then pcall(function() radiusFacePart:Destroy() end) end
         radiusFacePart = nil
+        if radiusFaceModel and radiusFaceModel.Parent then pcall(function() radiusFaceModel:Destroy() end) end
+        radiusFaceModel = nil
+        pcall(function()
+            for _, d in ipairs(Workspace:GetChildren()) do
+                if d.Name == "ExamRadiusFaceModel" then pcall(function() d:Destroy() end) end
+            end
+        end)
     end
     local function destroyAllRadius() destroyRadiusRing(); destroyRadiusFace() end
+    local radiusRingModel = nil
+    local radiusLastR = nil
+
     local function ensureRadiusRing()
         if #radiusRingParts == RING_SEGMENTS and radiusRingParts[1] and radiusRingParts[1].Parent then
             return radiusRingParts
         end
         destroyRadiusRing()
+        local m = Instance.new("Model")
+        m.Name = "ExamRadiusRingModel"
+        m.Parent = Workspace
+        radiusRingModel = m
         for i = 1, RING_SEGMENTS do
             local p = Instance.new("Part")
             p.Name = "ExamRadiusRing"
@@ -4696,36 +5193,73 @@ end
             p.Transparency = 1
             p.CanCollide = false; p.CanQuery = false; p.CanTouch = false
             p.Anchored = true; p.CastShadow = false
-            p.Parent = Workspace
+            p.Parent = m
             local sg = Instance.new("SurfaceGui")
             sg.Name = "Line"; sg.Face = Enum.NormalId.Top
             sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
-            sg.PixelsPerStud = 40; sg.AlwaysOnTop = true
+            sg.PixelsPerStud = 40
+            sg.AlwaysOnTop = false        -- 会被墙壁/地面遮挡
             sg.LightInfluence = 0; sg.Adornee = p; sg.Parent = p
             local f = Instance.new("Frame")
             f.Size = UDim2.new(1, 0, 1, 0)
             f.BackgroundColor3 = Color3.fromRGB(120, 255, 120)
-            f.BackgroundTransparency = 0.25; f.BorderSizePixel = 0
+            f.BackgroundTransparency = 0.15
+            f.BorderSizePixel = 0
             f.Parent = sg
             table.insert(radiusRingParts, p)
         end
         return radiusRingParts
     end
+    local radiusFaceModel = nil
+
+    local radiusFaceModel = nil
+
+    -- 面模式：和自动肘击范围完全一样的做法（薄圆盘 + 顶面 SurfaceGui）
     local function ensureRadiusFace()
         if radiusFacePart and radiusFacePart.Parent then return radiusFacePart end
-        local p = Instance.new("Part")
-        p.Name = "ExamRadiusFace"
-        p.Shape = Enum.PartType.Cylinder
-        p.Size = Vector3.new(0.05, 1, 1)
-        p.Material = Enum.Material.Neon
-        p.Color = Color3.fromRGB(120, 255, 120)
-        p.Transparency = 0.9
-        p.CanCollide = false; p.CanQuery = false; p.CanTouch = false
-        p.Anchored = true; p.CastShadow = false
-        p.Parent = Workspace
-        radiusFacePart = p
-        return p
+
+        local q = Instance.new("Part")
+        q.Name = "ExamRadiusFace"
+        q.Shape = Enum.PartType.Cylinder
+        q.Material = Enum.Material.SmoothPlastic
+        q.Color = Color3.fromRGB(120, 255, 120)
+        q.Transparency = 1
+        q.CanCollide = false; q.CanQuery = false; q.CanTouch = false
+        q.Anchored = true; q.CastShadow = false
+        q.Parent = Workspace
+
+        -- Cylinder 的轴是 X，端面是 Right/Left（圆形），侧壁是曲面
+        -- 用 Right 端面画，才是完整的圆
+        local sg = Instance.new("SurfaceGui")
+        sg.Name = "Face"; sg.Face = Enum.NormalId.Right
+        sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+        sg.PixelsPerStud = 8
+        sg.AlwaysOnTop = false
+        sg.LightInfluence = 0
+        sg.Adornee = q
+        sg.Parent = q
+        local f = Instance.new("Frame")
+        f.Name = "Fill"
+        f.Size = UDim2.new(1, 0, 1, 0)
+        f.BackgroundColor3 = Color3.fromRGB(120, 255, 120)
+        f.BackgroundTransparency = 0.65
+        f.BorderSizePixel = 0
+        f.Parent = sg
+        -- 圆形：UICorner 半径 50% 就是一个正圆
+        local corner2 = Instance.new("UICorner")
+        corner2.CornerRadius = UDim.new(0.5, 0)
+        corner2.Parent = f
+        -- 外圈描边，边缘更明显
+        local edge = Instance.new("UIStroke")
+        edge.Color = Color3.fromRGB(120, 255, 120)
+        edge.Thickness = 5
+        edge.Transparency = 0
+        edge.Parent = f
+
+        radiusFacePart = q
+        return q
     end
+
     local function updateRadiusDisplay()
         if not magicBulletEnabled then destroyAllRadius(); wasTooLarge = false; return end
         if not mbShowRadiusCircle or mbTargetMode ~= 3 then
@@ -4748,24 +5282,44 @@ end
         local myHrp = myChar:FindFirstChild("HumanoidRootPart")
         if not myHrp then destroyAllRadius(); return end
         local r = mbWorldDistMax
-        local basePos = myHrp.Position - Vector3.new(0, 2.5, 0)
+        -- 用向下射线找真实地面，下蹲/滑铲都不会影响
+        local groundY = myHrp.Position.Y - 2.3
+        do
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.FilterDescendantsInstances = {myChar}
+            local origin = Vector3.new(myHrp.Position.X, myHrp.Position.Y + 2, myHrp.Position.Z)
+            local hit = Workspace:Raycast(origin, Vector3.new(0, -20, 0), params)
+            if hit then groundY = hit.Position.Y end
+        end
+        local basePos = Vector3.new(myHrp.Position.X, groundY + 0.7, myHrp.Position.Z)
         if radiusMode == "line" then
             destroyRadiusFace()
             local parts = ensureRadiusRing()
-            local segLen = 2 * r * math.sin(math.pi / RING_SEGMENTS) + 0.05
-            for i, p in ipairs(parts) do
-                local angle = (i - 1) / RING_SEGMENTS * math.pi * 2
-                local x = math.cos(angle) * r
-                local z = math.sin(angle) * r
-                p.Size = Vector3.new(0.4, 0.05, segLen)
-                p.CFrame = CFrame.new(basePos + Vector3.new(x, 0, z)) * CFrame.Angles(0, -angle, 0)
+
+            -- 尺寸只在半径变化时重算
+            if radiusLastR ~= r then
+                radiusLastR = r
+                local segLen = 2 * r * math.sin(math.pi / RING_SEGMENTS) + 0.05
+                for i, p in ipairs(parts) do
+                    local angle = (i - 1) / RING_SEGMENTS * math.pi * 2
+                    p.Size = Vector3.new(0.4, 0.05, segLen)
+                    p.CFrame = CFrame.new(math.cos(angle) * r, 0, math.sin(angle) * r)
+                        * CFrame.Angles(0, -angle, 0)
+                end
+            end
+            -- 整个 Model 跟随角色，一次操作
+            if radiusRingModel and radiusRingModel.Parent then
+                pcall(function() radiusRingModel:PivotTo(CFrame.new(basePos)) end)
             end
         else
             destroyRadiusRing()
             local p = ensureRadiusFace()
             local d = r * 2
-            p.Size = Vector3.new(0.05, d, d)
-            p.CFrame = CFrame.new(basePos) * CFrame.Angles(0, 0, math.rad(90))
+            p.Size = Vector3.new(0.1, d, d)
+            -- 和自动肘击同高，不再额外抬高
+            p.CFrame = CFrame.new(basePos)
+                * CFrame.Angles(0, 0, math.rad(90))
         end
     end
     local lockBB = nil
@@ -5114,12 +5668,14 @@ end
     end
     local mbBtn, mbSetState = toggleMagic("启用魔法子弹", UDim2.new(0, 15, 0, 4), false, function(v)
         magicBulletEnabled = v
+        getgenv()._mbDiag = (getgenv()._mbDiag or "") .. "|cb(" .. tostring(v) .. ")->" .. tostring(magicBulletEnabled)
         if v then
             if _G._ExamFH and _G._ExamFH.forceOffFn then pcall(_G._ExamFH.forceOffFn) end
         end
         mbSetup()
     end, UDim2.new(0, 290, 0, 28))
     _G._ExamMB.magicOffFn = function()
+        getgenv()._mbDiag = (getgenv()._mbDiag or "") .. "|magicOffFn调用"
         if mbSetState then pcall(function() mbSetState(false) end) end
         _G._ExamStates.magicBullet = false
         if _G._CP_RefreshFns and _G._CP_RefreshFns.magicBullet then
@@ -5284,7 +5840,8 @@ end
         if not mbShowRadiusCircle then destroyAllRadius() end
     end)
     _G._ExamSetters.mbShowRadius = function(v)
-        mbShowRadiusCircle = v
+        mbShowRadiusCircle = v and true or false
+        _G._ExamStates.mbShowRadius = mbShowRadiusCircle
         radiusBtn.Text = v and "半径显示: 开" or "半径显示: 关"
         radiusBtn.BackgroundColor3 = v and Color3.fromRGB(0, 130, 0) or Color3.fromRGB(70, 70, 70)
         if not v then destroyAllRadius() end
@@ -5312,7 +5869,15 @@ end
         destroyAllRadius()
     end)
     _G._ExamSetters.radiusMode = function(v)
-        radiusMode = (v == 1) and "line" or "face"
+        -- 兼容数字索引和中文标签
+        if v == 1 or v == "线" or v == "line" then
+            radiusMode = "line"
+        elseif v == 2 or v == "面" or v == "face" then
+            radiusMode = "face"
+        else
+            return
+        end
+        _G._ExamStates.radiusMode = (radiusMode == "line") and 1 or 2
         if radiusMode == "line" then
             radiusModeBtn.Text = "半径模式: 线"
             radiusModeBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 100)
@@ -5378,8 +5943,11 @@ end
         cachedTarget = nil; lastFindTick = 0
     end)
     _G._ExamSetters.mbWorldDistMax = function(v)
-        if type(v) == "number" and v >= 10 and v <= 50000 then
-            mbWorldDistMax = v; distIn.Text = tostring(v)
+        local n = tonumber(v)
+        if n and n >= 10 and n <= 50000 then
+            mbWorldDistMax = n
+            _G._ExamStates.mbWorldDistMax = n
+            distIn.Text = tostring(n)
             cachedTarget = nil; lastFindTick = 0
         end
     end
@@ -5602,8 +6170,10 @@ end
     RunService.RenderStepped:Connect(function()
         if not gui.Parent then return end
         lockBBFrame = lockBBFrame + 1
+        -- 半径圈每帧跟，锁框每 3 帧刷一次
+        updateRadiusDisplay()
         if lockBBFrame % 3 ~= 0 then return end
-        updateLockBB(); updateRadiusDisplay()
+        updateLockBB()
     end)
     lp.CharacterAdded:Connect(function() destroyAllRadius(); wasTooLarge = false end)
     table.insert(cleanupFns, function()
@@ -6087,16 +6657,16 @@ end
 -- ============================================================
 -- 统一回调入口
 local function CB(key, value)
-    _G._ExamStates[key] = value
-
-    -- 1) 优先走模块自己注册的 setter（子项如 espName / hlPlayers 都在这）
+    -- 先不要直接写 _ExamStates：
+    -- cycle 控件传的是中文标签，直接写会把 setter 写入的数字覆盖掉
     local setter = _G._ExamSetters and _G._ExamSetters[key]
     if setter then
-        pcall(setter, value)
-        return
+        local ok = pcall(setter, value)
+        if ok then return end
     end
 
-    -- 2) 再查主开关注册表
+    -- 没有 setter，或 setter 执行失败：直接写状态并调回调
+    _G._ExamStates[key] = value
     local cb = Callbacks[key]
     if cb then pcall(cb, value) end
 end
@@ -6118,6 +6688,12 @@ gui = win.Panel or win.Gui or _hiddenDock
 
 -- 所有控件回调统一走这里
 win.OnToggle = function(key, value)
+    -- 先让模块 setter 处理（它会把中文标签转成内部值再写状态）
+    local setter = _G._ExamSetters and _G._ExamSetters[key]
+    if setter then
+        local ok = pcall(setter, value)
+        if ok then return end
+    end
     _G._ExamStates[key] = value
     local cb = Callbacks[key]
     if cb then pcall(cb, value) end
@@ -6300,7 +6876,7 @@ tab:Expand({
             "360°全向锁定",
         },
         DefaultIndex = 1,
-        Callback = function(opt, idx) CB("mbTargetMode", idx) end,
+        Callback = function(idx) CB("mbTargetMode", idx) end,
     },
     Children = {
         { Kind = "toggle", Key = "mbShowRadius", Name = "360°锁定半径锁定显示", Default = false,
@@ -6318,7 +6894,7 @@ tab:Body2D({
     Name = "锁定部位",
     Desc = "点击小人选择锁定的身体部位",
     Default = 1,
-    Callback = function(idx, label) CB("mbAimPart", idx) end,
+    Callback = function(idx) CB("mbAimPart", idx) end,
     Parts = {
         { Key = 1, Name = "头部" },
         { Key = 2, Name = "躯干" },
@@ -6334,6 +6910,20 @@ tab:Toggle({ Key = "autoFire", Name = "自动开火", Desc = "锁定后自动开
     Callback = function(v) CB("autoFire", v) end })
 tab:Toggle({ Key = "forceHeadshot", Name = "强制爆头", Desc = "命中四肢/身体判定为爆头/不能和魔法子弹同时开启", Default = false,
     Callback = function(v) CB("forceHeadshot", v) end })
+
+tab:Section({ Name = "近战" })
+tab:Expand({
+    Key = "autoBash",
+    Callback = function(v) CB("autoBash", v) end,
+    Name = "自动肘击",
+    Desc = "提前预判怪物靠近，先手肘击不吃伤害",
+    Default = false,
+    Children = {
+        { Kind = "number", Key = "bashRange", Name = "触发距离", Min = 4, Max = 20, Default = 9, Callback = function(v) CB("bashRange", v) end },
+        { Kind = "toggle", Key = "bashShowRange", Name = "显示范围", Callback = function(v) CB("bashShowRange", v) end },
+        { Kind = "cycle", Key = "bashRangeMode", Name = "范围样式", Options = { "线状", "面状" }, Callback = function(v) CB("bashRangeMode", v) end },
+    },
+})
 
 tab:Section({ Name = "判定" })
 tab:Expand({
@@ -6453,7 +7043,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.2.3"
+local CURRENT_VERSION = "1.2.4"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
@@ -6531,5 +7121,60 @@ tab:Label({ Name = "敬请期待", Desc = "此页面功能正在开发中" })
 -- 这里不要再调，否则会把刚注册的 _G._ExamSetters / _G._ExamStates 清空
 
 getgenv().ExaminationWin = win
+
+-- 卸载按钮
+local unloadRow
+unloadRow = tab:ClickableRow({
+    Name = "卸载脚本",
+    Desc = "停止所有功能并关闭面板",
+    Arrow = true,
+    Callback = function()
+        if unloadRow then
+            unloadRow.SetBusy(true)
+            unloadRow.Set("正在卸载…", "正在清理功能…")
+        end
+        task.delay(0.1, function()
+            pcall(function()
+                if _G._ExamLastCleanup then
+                    _G._ExamLastCleanup()
+                    _G._ExamLastCleanup = nil
+                end
+            end)
+            pcall(function()
+                if _G._CDMUILastCleanup then
+                    _G._CDMUILastCleanup()
+                    _G._CDMUILastCleanup = nil
+                end
+            end)
+            pcall(function()
+                local cg2 = game:GetService("CoreGui")
+                local pg2 = lp:FindFirstChild("PlayerGui")
+                for _, root in ipairs({cg2, pg2}) do
+                    for _, d in ipairs(root:GetDescendants()) do
+                        if d.Name == "ControlPanelUI" or d.Name == "CDMUIGuide"
+                           or d.Name == "CDMUIWidget" or d.Name == "ControlPanelBtn" then
+                            pcall(function() d:Destroy() end)
+                        end
+                    end
+                end
+            end)
+            pcall(function()
+                local tb = lp:FindFirstChild("PlayerGui")
+                tb = tb and tb:FindFirstChild("TopbarStandard")
+                local h = tb and tb:FindFirstChild("Holders")
+                local l = h and h:FindFirstChild("Left")
+                if l then
+                    for _, n in ipairs({"ControlPanelBtn", "TrialBtn"}) do
+                        local o = l:FindFirstChild(n)
+                        if o then pcall(function() o:Destroy() end) end
+                    end
+                end
+            end)
+            pcall(function() getgenv().ExaminationUILoaded = nil end)
+            pcall(function() getgenv().ExaminationWin = nil end)
+        end)
+    end,
+})
+
 getgenv().ExaminationUILoaded = true
 print("[Examination] 已加载 · CDMUI v" .. tostring(CDMUI.Version))
