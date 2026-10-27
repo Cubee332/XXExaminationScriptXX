@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.2.4  新增自动肘击(预判+范围显示)；修 toggle key 映射与 Cycle 中文标签
+-- Examination v1.2.5  卸载脚本加退出动画；自动肘击范围；圆环改用射线贴地
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -7043,7 +7043,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.2.4"
+local CURRENT_VERSION = "1.2.5"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
@@ -7133,43 +7133,111 @@ unloadRow = tab:ClickableRow({
             unloadRow.SetBusy(true)
             unloadRow.Set("正在卸载…", "正在清理功能…")
         end
-        task.delay(0.1, function()
-            pcall(function()
-                if _G._ExamLastCleanup then
-                    _G._ExamLastCleanup()
-                    _G._ExamLastCleanup = nil
+
+        -- 1) 先播放面板 + 顶栏按钮的退出动画（不阻塞）
+        pcall(function()
+            if CDMUI and CDMUI.PlayExitAnim then
+                CDMUI.PlayExitAnim(0.24)
+            else
+                -- 退路：手动播
+                local panel = win and win.Panel
+                local sc = win and win.Scale
+                if panel and panel.Parent then
+                    local basePos = panel.Position
+                    TweenService:Create(panel, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+                        BackgroundTransparency = 1,
+                    }):Play()
+                    TweenService:Create(panel, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+                        Position = UDim2.new(basePos.X.Scale, basePos.X.Offset,
+                                              basePos.Y.Scale, basePos.Y.Offset - 20),
+                    }):Play()
+                    if sc then
+                        TweenService:Create(sc, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
+                            Scale = 0.85,
+                        }):Play()
+                    end
+                    local fadeT = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+                    for _, d in ipairs(panel:GetDescendants()) do
+                        pcall(function()
+                            if d:IsA("Frame") or d:IsA("ScrollingFrame") then
+                                TweenService:Create(d, fadeT, { BackgroundTransparency = 1 }):Play()
+                                if d:IsA("ScrollingFrame") then
+                                    pcall(function()
+                                        d.ScrollBarImageTransparency = 1
+                                    end)
+                                end
+                            elseif d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox") then
+                                TweenService:Create(d, fadeT, {
+                                    TextTransparency = 1,
+                                    BackgroundTransparency = 1,
+                                }):Play()
+                            elseif d:IsA("ImageLabel") or d:IsA("ImageButton") then
+                                TweenService:Create(d, fadeT, {
+                                    ImageTransparency = 1,
+                                    BackgroundTransparency = 1,
+                                }):Play()
+                            elseif d:IsA("UIStroke") then
+                                TweenService:Create(d, fadeT, { Transparency = 1 }):Play()
+                            end
+                        end)
+                    end
                 end
-            end)
-            pcall(function()
-                if _G._CDMUILastCleanup then
-                    _G._CDMUILastCleanup()
-                    _G._CDMUILastCleanup = nil
+                -- 顶栏按钮
+                local pgx = lp:FindFirstChild("PlayerGui")
+                local tbx = pgx and pgx:FindFirstChild("TopbarStandard")
+                local hx = tbx and tbx:FindFirstChild("Holders")
+                local lx = hx and hx:FindFirstChild("Left")
+                if lx then
+                    for _, n in ipairs({"ControlPanelBtn", "TrialBtn"}) do
+                        local o = lx:FindFirstChild(n)
+                        if o then
+                            pcall(function()
+                                TweenService:Create(o, TweenInfo.new(0.18), {
+                                    BackgroundTransparency = 1,
+                                    TextTransparency = 1,
+                                }):Play()
+                            end)
+                        end
+                    end
                 end
+            end
+        end)
+
+        -- 2) 等动画真正播完再清理
+        task.delay(0.32, function()
+            -- 先停功能（可能耗时，放前面）
+            pcall(function()
+                if _G._ExamLastCleanup then _G._ExamLastCleanup() end
             end)
+
+            -- 再销毁所有 UI 实例（一次性，不留给后续）
             pcall(function()
                 local cg2 = game:GetService("CoreGui")
                 local pg2 = lp:FindFirstChild("PlayerGui")
                 for _, root in ipairs({cg2, pg2}) do
-                    for _, d in ipairs(root:GetDescendants()) do
-                        if d.Name == "ControlPanelUI" or d.Name == "CDMUIGuide"
-                           or d.Name == "CDMUIWidget" or d.Name == "ControlPanelBtn" then
-                            pcall(function() d:Destroy() end)
+                    if root then
+                        for _, d in ipairs(root:GetDescendants()) do
+                            if d.Name == "ControlPanelUI" or d.Name == "CDMUIGuide"
+                               or d.Name == "CDMUIWidget" or d.Name == "ControlPanelBtn" then
+                                pcall(function() d:Destroy() end)
+                            end
                         end
                     end
                 end
-            end)
-            pcall(function()
-                local tb = lp:FindFirstChild("PlayerGui")
-                tb = tb and tb:FindFirstChild("TopbarStandard")
-                local h = tb and tb:FindFirstChild("Holders")
-                local l = h and h:FindFirstChild("Left")
-                if l then
+                -- 顶栏按钮
+                local tb3 = pg2 and pg2:FindFirstChild("TopbarStandard")
+                local h3 = tb3 and tb3:FindFirstChild("Holders")
+                local l3 = h3 and h3:FindFirstChild("Left")
+                if l3 then
                     for _, n in ipairs({"ControlPanelBtn", "TrialBtn"}) do
-                        local o = l:FindFirstChild(n)
+                        local o = l3:FindFirstChild(n)
                         if o then pcall(function() o:Destroy() end) end
                     end
                 end
             end)
+
+            pcall(function() _G._ExamLastCleanup = nil end)
+            pcall(function() _G._CDMUILastCleanup = nil end)
             pcall(function() getgenv().ExaminationUILoaded = nil end)
             pcall(function() getgenv().ExaminationWin = nil end)
         end)
