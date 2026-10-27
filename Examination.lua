@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.2.2  武器箱透视改定时补扫（3秒），优化扫描与清理性能
+-- Examination v1.2.3  移除疾跑开火（游戏层拦截无法绕过）
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -3419,7 +3419,6 @@ do
         restoreAll()
     end)
 end
-
 -- ============ 模块 13: 聊天框强制显示 ============
 do
     local TextChatService = game:GetService("TextChatService")
@@ -6454,7 +6453,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.2.2"
+local CURRENT_VERSION = "1.2.3"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
