@@ -391,6 +391,10 @@ local magicPage = _hiddenDock
 local radarPage = _hiddenDock
 local main      = _hiddenDock
 
+-- 模块里到处用 `if not gui.Parent then return end` 判断界面是否存活，
+-- 在 win 创建后指向 CDMUI 面板
+local gui = _hiddenDock
+
 local function reg(g, key) --[[ 兼容旧 UI 的位置登记接口，新 UI 不需要 ]] return g end
 
 _G._ExamFH = _G._ExamFH or {}
@@ -1148,6 +1152,13 @@ do
         if espEnabled and showPlayers then refreshPlayerESP() end
     end
     _G._ExamStates.hlPlayerHP = false
+
+    -- 锁定部位（1=头部 2=身体 ...，与原版 AIM_PARTS 表对应）
+    _G._ExamSetters.mbAimPart = function(v)
+        local idx = tonumber(v)
+        if idx then mbAimPartIndex = idx end
+    end
+    _G._ExamStates.mbAimPart = 1
 
     -- 玩家血量/名称需要持续刷新（血量会变）
     spawn(function()
@@ -4794,6 +4805,9 @@ local win = CDMUI.Create({
     TopbarText = "控制面板",
 })
 
+-- 让模块的 `gui.Parent` 判断绑定到真实面板
+gui = win.Panel or win.Gui or _hiddenDock
+
 -- 所有控件回调统一走这里
 win.OnToggle = function(key, value)
     _G._ExamStates[key] = value
@@ -4815,11 +4829,11 @@ tab:Expand({
     Desc = "高亮 AI 实体，可开启玩家透视",
     Default = false,
     Children = {
-        { Kind = "toggle", Key = "espName", Name = "显示名称", Default = true },
-        { Kind = "toggle", Key = "espHP", Name = "显示血量", Default = true },
-        { Kind = "toggle", Key = "hlPlayers", Name = "高亮玩家", Default = false },
-        { Kind = "toggle", Key = "hlPlayerName", Name = "显示玩家名称", Default = false },
-        { Kind = "toggle", Key = "hlPlayerHP", Name = "显示玩家血量", Default = false },
+        { Kind = "toggle", Key = "espName", Name = "显示名称", Default = true, Callback = function(v) CB("espName", v) end },
+        { Kind = "toggle", Key = "espHP", Name = "显示血量", Default = true, Callback = function(v) CB("espHP", v) end },
+        { Kind = "toggle", Key = "hlPlayers", Name = "高亮玩家", Default = false, Callback = function(v) CB("hlPlayers", v) end },
+        { Kind = "toggle", Key = "hlPlayerName", Name = "显示玩家名称", Default = false, Callback = function(v) CB("hlPlayerName", v) end },
+        { Kind = "toggle", Key = "hlPlayerHP", Name = "显示玩家血量", Default = false, Callback = function(v) CB("hlPlayerHP", v) end },
     },
 })
 tab:Expand({
@@ -4829,7 +4843,7 @@ tab:Expand({
     Desc = "自定义头部碰撞体积大小",
     Default = false,
     Children = {
-        { Kind = "number", Key = "headSizeVal", Name = "头部大小", Min = 1, Max = 20, Default = 1 },
+        { Kind = "number", Key = "headSizeVal", Name = "头部大小", Min = 1, Max = 20, Default = 1, Callback = function(v) CB("headSizeVal", v) end },
     },
 })
 tab:Toggle({ Key = "autoInteract", Name = "及时交互", Desc = "与可互动的物体进行秒交互", Default = false,
@@ -4843,7 +4857,7 @@ tab:Expand({
     Desc = "调整滑铲距离倍率",
     Default = false,
     Children = {
-        { Kind = "number", Key = "slideDistanceMult", Name = "滑铲距离倍率", Min = 1, Max = 10, Default = 1 },
+        { Kind = "number", Key = "slideDistanceMult", Name = "滑铲距离倍率", Min = 1, Max = 10, Default = 1, Callback = function(v) CB("slideDistanceMult", v) end },
     },
 })
 tab:Expand({
@@ -4853,7 +4867,7 @@ tab:Expand({
     Desc = "滑铲时根据方向变向",
     Default = false,
     Children = {
-        { Kind = "cycle", Key = "slideSteerMode", Name = "变向模式", Options = { "视角控制", "移动控制" } },
+        { Kind = "cycle", Key = "slideSteerMode", Name = "变向模式", Options = { "视角控制", "移动控制" }, Callback = function(v) CB("slideSteerMode", v) end },
     },
 })
 tab:Toggle({ Key = "nvg", Name = "无限电量夜视仪", Desc = "夜视仪电量无限", Default = false,
@@ -4881,7 +4895,7 @@ tab:Expand({
     Desc = "第一人称盾牌半透明显示",
     Default = false,
     Children = {
-        { Kind = "slider", Key = "shieldVMAlpha", Name = "盾牌透明度", Min = 0, Max = 0.99, Step = 0.05, Default = 0.9 },
+        { Kind = "slider", Key = "shieldVMAlpha", Name = "盾牌透明度", Min = 0, Max = 0.99, Step = 0.05, Default = 0.9, Callback = function(v) CB("shieldVMAlpha", v) end },
     },
 })
 tab:Toggle({ Key = "noCD", Name = "无滑铲冷却", Desc = "滑铲无冷却（有 bug）", Default = false,
@@ -4898,14 +4912,14 @@ tab:Expand({
     Desc = "自动锁定准星内最近的敌人",
     Default = false,
     Children = {
-        { Kind = "toggle", Key = "mbShowBox", Name = "显示 3D 头框", Default = true },
-        { Kind = "toggle", Key = "mbRequireVisible", Name = "掩体检测", Default = true },
-        { Kind = "toggle", Key = "pierceShield", Name = "穿透盾牌", Default = true },
-        { Kind = "toggle", Key = "pierceHelmet", Name = "穿透 SIN 头盔", Default = true },
-        { Kind = "toggle", Key = "pierceTeammate", Name = "穿透队友", Default = true },
-        { Kind = "toggle", Key = "pierceCorpse", Name = "穿透尸体", Default = true },
-        { Kind = "toggle", Key = "mbShowFovCircle", Name = "显示 FOV 圈", Default = true },
-        { Kind = "toggle", Key = "mbOnlyWhenLocked", Name = "未锁定不穿透", Default = true },
+        { Kind = "toggle", Key = "mbShowBox", Name = "显示 3D 头框", Default = true, Callback = function(v) CB("mbShowBox", v) end },
+        { Kind = "toggle", Key = "mbRequireVisible", Name = "掩体检测", Default = true, Callback = function(v) CB("mbRequireVisible", v) end },
+        { Kind = "toggle", Key = "pierceShield", Name = "穿透盾牌", Default = true, Callback = function(v) CB("pierceShield", v) end },
+        { Kind = "toggle", Key = "pierceHelmet", Name = "穿透 SIN 头盔", Default = true, Callback = function(v) CB("pierceHelmet", v) end },
+        { Kind = "toggle", Key = "pierceTeammate", Name = "穿透队友", Default = true, Callback = function(v) CB("pierceTeammate", v) end },
+        { Kind = "toggle", Key = "pierceCorpse", Name = "穿透尸体", Default = true, Callback = function(v) CB("pierceCorpse", v) end },
+        { Kind = "toggle", Key = "mbShowFovCircle", Name = "显示 FOV 圈", Default = true, Callback = function(v) CB("mbShowFovCircle", v) end },
+        { Kind = "toggle", Key = "mbOnlyWhenLocked", Name = "未锁定不穿透", Default = true, Callback = function(v) CB("mbOnlyWhenLocked", v) end },
     },
 })
 tab:Expand({
@@ -4915,8 +4929,8 @@ tab:Expand({
     Desc = "切换目标选择方式",
     Default = false,
     Children = {
-        { Kind = "toggle", Key = "mbShowRadius", Name = "360°锁定半径锁定显示", Default = false },
-        { Kind = "cycle", Key = "radiusMode", Name = "360°锁定半径显示模式", Options = { "线", "面" } },
+        { Kind = "toggle", Key = "mbShowRadius", Name = "360°锁定半径锁定显示", Default = false, Callback = function(v) CB("mbShowRadius", v) end },
+        { Kind = "cycle", Key = "radiusMode", Name = "360°锁定半径显示模式", Options = { "线", "面" }, Callback = function(v) CB("radiusMode", v) end },
     },
 })
 tab:Toggle({ Key = "autoFire", Name = "自动开火", Desc = "锁定后自动开火（需先开魔法子弹+掩体检测）", Default = false,
@@ -4928,13 +4942,13 @@ tab:Expand({
     Desc = "命中时显示追踪线 / 命中标记",
     Default = false,
     Children = {
-        { Kind = "toggle", Key = "tracerOn", Name = "子弹追踪", Default = true },
-        { Kind = "cycle", Key = "tracerColor", Name = "追踪线颜色", Options = { "红", "绿", "蓝", "彩虹" } },
-        { Kind = "cycle", Key = "tracerDuration", Name = "追踪线时长", Options = { "1秒", "2秒", "3秒", "5秒" } },
-        { Kind = "toggle", Key = "hitMarkerOn", Name = "命中标记", Default = true },
-        { Kind = "cycle", Key = "hmColor", Name = "命中标记颜色", Options = { "白", "红", "青", "彩虹" } },
-        { Kind = "cycle", Key = "hmDuration", Name = "命中标记时长", Options = { "1秒", "2秒", "3秒", "5秒" } },
-        { Kind = "cycle", Key = "hmSize", Name = "命中标记大小", Options = { "小", "中", "大" } },
+        { Kind = "toggle", Key = "tracerOn", Name = "子弹追踪", Default = true, Callback = function(v) CB("tracerOn", v) end },
+        { Kind = "cycle", Key = "tracerColor", Name = "追踪线颜色", Options = { "红", "绿", "蓝", "彩虹" }, Callback = function(v) CB("tracerColor", v) end },
+        { Kind = "cycle", Key = "tracerDuration", Name = "追踪线时长", Options = { "1秒", "2秒", "3秒", "5秒" }, Callback = function(v) CB("tracerDuration", v) end },
+        { Kind = "toggle", Key = "hitMarkerOn", Name = "命中标记", Default = true, Callback = function(v) CB("hitMarkerOn", v) end },
+        { Kind = "cycle", Key = "hmColor", Name = "命中标记颜色", Options = { "白", "红", "青", "彩虹" }, Callback = function(v) CB("hmColor", v) end },
+        { Kind = "cycle", Key = "hmDuration", Name = "命中标记时长", Options = { "1秒", "2秒", "3秒", "5秒" }, Callback = function(v) CB("hmDuration", v) end },
+        { Kind = "cycle", Key = "hmSize", Name = "命中标记大小", Options = { "小", "中", "大" }, Callback = function(v) CB("hmSize", v) end },
     },
 })
 tab:Input({ Key = "mbParams", Name = "FOV锁定半径", Desc = "FOV=锁定半径（像素）", Default = "200",
