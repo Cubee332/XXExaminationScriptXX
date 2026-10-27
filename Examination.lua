@@ -5108,16 +5108,14 @@ local statusLabel
 local hasUpdate = false
 local remoteVer = nil
 
--- 版本行：标题/描述在左，检测按钮在右
-local verRow = tab:RowButton({
+-- 版本行：整行可点击，点一下就检测更新
+local verRow = tab:ClickableRow({
     Name = "当前 v" .. CURRENT_VERSION,
-    Desc = "点击右侧按钮检测最新版本",
-    Text = "检测更新",
-    Variant = "secondary",
-    Width = 76,
-    Callback = function(btn)
-        if verRow then verRow.SetBusy(true) end
-        if verRow then verRow.Set("当前 v" .. CURRENT_VERSION, "正在连接 GitHub…") end
+    Desc = "点击此行检测最新版本",
+    Arrow = true,
+    Callback = function()
+        verRow.SetBusy(true)
+        verRow.Set("检测中…", "正在连接 GitHub…")
 
         task.spawn(function()
             local ok, result = pcall(function()
@@ -5125,12 +5123,10 @@ local verRow = tab:RowButton({
                 return src:match("%-%-%s*Examination%s+v([%d%.]+)")
             end)
 
-            if verRow then verRow.SetBusy(false) end
+            verRow.SetBusy(false)
 
             if not ok or not result then
-                if verRow then
-                    verRow.Set("检测失败", "无法连接 GitHub，请检查网络")
-                end
+                verRow.Set("检测失败", "无法连接 GitHub，请检查网络")
                 return
             end
 
@@ -5139,27 +5135,21 @@ local verRow = tab:RowButton({
             local rem = parseVersion(result)
 
             if not rem then
-                if verRow then verRow.Set("检测失败", "版本号解析失败") end
+                verRow.Set("检测失败", "版本号解析失败")
                 return
             end
 
             if rem > cur then
                 hasUpdate = true
-                if verRow then
-                    verRow.Set("发现新版本 v" .. result,
-                        "当前 v" .. CURRENT_VERSION .. "，请更新")
-                end
+                verRow.Set("发现新版本 v" .. result,
+                    "当前 v" .. CURRENT_VERSION .. "，请更新")
             elseif rem == cur then
                 hasUpdate = false
-                if verRow then
-                    verRow.Set("已是最新版本", "当前 v" .. CURRENT_VERSION)
-                end
+                verRow.Set("已是最新版本", "当前 v" .. CURRENT_VERSION)
             else
                 hasUpdate = false
-                if verRow then
-                    verRow.Set("本地版本较新",
-                        "当前 v" .. CURRENT_VERSION .. " / 线上 v" .. result)
-                end
+                verRow.Set("本地版本较新",
+                    "当前 v" .. CURRENT_VERSION .. " / 线上 v" .. result)
             end
         end)
     end,
