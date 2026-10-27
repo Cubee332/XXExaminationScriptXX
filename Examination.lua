@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.0.0  首个正式版：接入 CDMUI 1.3.0，18 个功能模块，其他页支持版本检测
+-- Examination v1.0.1  接入 CDMUI 1.3.2；锁定模式三态切换；其他页整行点击检测更新
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -5030,7 +5030,11 @@ tab:Expand({
     Callback = function(v) CB("mbTargetMode", v) end,
     Cycle = {
         Key = "mbTargetMode",
-        Options = { "FOV准星", "FOV最近", "360°" },
+        Options = {
+            "FOV内准星最近",
+            "FOV内距离最近",
+            "360°全向锁定",
+        },
         DefaultIndex = 1,
         Callback = function(opt, idx) CB("mbTargetMode", idx) end,
     },
@@ -5096,7 +5100,7 @@ tab = win:Tab("其他")
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.0.0"
+local CURRENT_VERSION = "1.0.1"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
