@@ -347,32 +347,39 @@ end
 -- ============================================================
 local CDMUI
 do
-    local urls = {
-        "https://raw.githubusercontent.com/Cubee332/CDMUI/main/CDMUI.lua",
-        "https://cdn.jsdelivr.net/gh/Cubee332/CDMUI@main/CDMUI.lua",
-    }
     local errs = {}
-    for _, url in ipairs(urls) do
-        local ok, res = pcall(function()
-            local src = game:HttpGet(url)
-            local chunk = loadstring(src)
-            if not chunk then error("loadstring failed") end
-            return chunk()
-        end)
-        if ok and type(res) == "table" and res.Create then
-            CDMUI = res
-            break
-        end
-        table.insert(errs, tostring(res))
+
+    -- 1) 优先读本地 CDMUI.lua（调试时改完立刻生效，不受 CDN 缓存影响）
+    local ok1, res1 = pcall(function()
+        local src = readfile("CDMUI.lua")
+        return loadstring(src)()
+    end)
+    if ok1 and type(res1) == "table" and res1.Create then
+        CDMUI = res1
+    else
+        table.insert(errs, "local: " .. tostring(res1))
     end
+
+    -- 2) 本地没有则走网络
     if not CDMUI then
-        -- 最后尝试本地缓存
-        local ok, res = pcall(function()
-            local src = readfile("CDMUI.lua")
-            return loadstring(src)()
-        end)
-        if ok then CDMUI = res end
+        local urls = {
+            "https://raw.githubusercontent.com/Cubee332/CDMUI/main/CDMUI.lua",
+            "https://cdn.jsdelivr.net/gh/Cubee332/CDMUI@main/CDMUI.lua",
+        }
+        for _, url in ipairs(urls) do
+            local ok, res = pcall(function()
+                local chunk = loadstring(game:HttpGet(url))
+                if not chunk then error("loadstring failed") end
+                return chunk()
+            end)
+            if ok and type(res) == "table" and res.Create then
+                CDMUI = res
+                break
+            end
+            table.insert(errs, url .. " -> " .. tostring(res))
+        end
     end
+
     if not CDMUI then
         error("[Examination] CDMUI 加载失败: " .. table.concat(errs, " | "))
     end
@@ -579,7 +586,8 @@ do
 
     local function playerLabelText(pl)
         local parts = {}
-        if showPlayerName then table.insert(parts, pl.DisplayName) end
+        -- 显示用户名（Name），不是昵称（DisplayName）
+        if showPlayerName then table.insert(parts, pl.Name) end
         if showPlayerHealth then
             local ch = pl.Character
             local hum = ch and ch:FindFirstChildOfClass("Humanoid")
@@ -588,7 +596,7 @@ do
                     math.floor(hum.Health), math.floor(hum.MaxHealth)))
             end
         end
-        if #parts == 0 then return pl.DisplayName end
+        if #parts == 0 then return pl.Name end
         return table.concat(parts, " | ")
     end
 
@@ -628,17 +636,18 @@ do
             hl.FillColor = C_PLAYER
             hl.OutlineColor = C_PLAYER
             hl.OutlineTransparency = 0
-            hl.FillTransparency = 0.75
+            hl.FillTransparency = 0.5
             hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
             hl.Parent = ch
 
             local bb = Instance.new("BillboardGui")
             bb.Name = ESP_HB_NEW
             bb.Adornee = ch
-            bb.Size = UDim2.new(0, 220, 0, 25)
-            bb.StudsOffset = Vector3.new(0, 4, 0)
+            bb.Size = UDim2.new(0, 260, 0, 30)
+            bb.StudsOffset = Vector3.new(0, 4.5, 0)
             bb.AlwaysOnTop = true
-            bb.MaxDistance = 400
+            bb.MaxDistance = 800
+            bb.LightInfluence = 0
             bb.Parent = ch
 
             local tl = Instance.new("TextLabel")
@@ -4796,6 +4805,15 @@ end
 -- 统一回调入口
 local function CB(key, value)
     _G._ExamStates[key] = value
+
+    -- 1) 优先走模块自己注册的 setter（子项如 espName / hlPlayers 都在这）
+    local setter = _G._ExamSetters and _G._ExamSetters[key]
+    if setter then
+        pcall(setter, value)
+        return
+    end
+
+    -- 2) 再查主开关注册表
     local cb = Callbacks[key]
     if cb then pcall(cb, value) end
 end
