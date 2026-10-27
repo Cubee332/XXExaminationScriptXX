@@ -5,9 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.0.0 正式版
--- 更新记录：
---   v1.0.0  首个正式版：接入 CDMUI 1.3.0，18 个功能模块，其他页支持版本检测
+-- Examination v1.0.0  首个正式版：接入 CDMUI 1.3.0，18 个功能模块，其他页支持版本检测
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
