@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.0.3  透视改名人物角色透视并加低负载；新增武器箱透视；魔法子弹加低负载
+-- Examination v1.0.4  玩家透视字号调小与怪物一致；聚焦武器箱透视
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -702,8 +702,9 @@ do
             local bb = Instance.new("BillboardGui")
             bb.Name = ESP_HB_NEW
             bb.Adornee = ch
-            bb.Size = UDim2.new(0, 260, 0, 30)
-            bb.StudsOffset = Vector3.new(0, 4.5, 0)
+            -- 和 AI 透视保持一致：220x25
+            bb.Size = UDim2.new(0, 220, 0, 25)
+            bb.StudsOffset = Vector3.new(0, 4, 0)
             bb.AlwaysOnTop = true
             bb.MaxDistance = 800
             bb.LightInfluence = 0
@@ -5541,7 +5542,7 @@ tab = win:Tab("其他")
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.0.3"
+local CURRENT_VERSION = "1.0.4"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
