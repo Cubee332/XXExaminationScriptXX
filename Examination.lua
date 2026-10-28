@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.7.1  卸载时 HUD 播退场动画；小人图切页恢复
+-- Examination v1.7.2  人体图部位点击加音效
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -7335,6 +7335,8 @@ local function BodyPartPicker(tab, cfg)
 
             for idx, entry in pairs(buttons) do
                 entry.btn.Activated:Connect(function()
+                    -- 和库内其他控件一样播点击音效
+                    if CD and CD.PlayClick then pcall(CD.PlayClick) end
                     selected = idx
                     render()
                     if cfg.Callback then pcall(cfg.Callback, idx) end
@@ -8764,7 +8766,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.7.1"
+local CURRENT_VERSION = "1.7.2"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
