@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.8.4  处决穿透覆盖其他玩家参与的情况
+-- Examination v1.8.5  自动肘击遇处决停手（自己/队友/目标）
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -3766,6 +3766,72 @@ do
         return true, "ok"
     end
 
+    -- 判断我们自己当前是否在处决流程里（处决者或被处决者）
+    --   在处决动画期间，任何肘击都不该触发：
+    --     · 肘击会打断处决动画
+    --     · 处决期间角色被 PlatformStand，按键无效反而浪费
+    local function iAmInExecution()
+        local char = lp.Character
+        if not char then return false end
+        local h = char:FindFirstChildOfClass("Humanoid")
+        if h then
+            if h.PlatformStand == true then return true end
+            local ok, st = pcall(function() return h:GetState() end)
+            if ok and st == Enum.HumanoidStateType.PlatformStanding then return true end
+        end
+        if char:FindFirstChild("BeingExecuted") ~= nil then return true end
+        if char:FindFirstChild("IsBeingExecuted") ~= nil then return true end
+        if char:FindFirstChild("Executing") ~= nil then return true end
+        if char:FindFirstChild("IsExecuting") ~= nil then return true end
+        if char:GetAttribute("BeingExecuted") == true then return true end
+        if char:GetAttribute("IsBeingExecuted") == true then return true end
+        if char:GetAttribute("IsExecuting") == true then return true end
+        return false
+    end
+
+    -- 判断某个模型是否有其他玩家在处决它（或它在处决别人）
+    --   避免我们去抢队友的处决目标
+    local function otherPlayerInvolved(model)
+        if not model then return false end
+        local mHrp = model:FindFirstChild("HumanoidRootPart")
+        for _, pl in ipairs(Players:GetPlayers()) do
+            if pl ~= lp then
+                local pc = pl.Character
+                if pc then
+                    -- 玩家自己在处决流程里
+                    local ph = pc:FindFirstChildOfClass("Humanoid")
+                    local pExec = false
+                    if ph then
+                        if ph.PlatformStand == true then pExec = true end
+                        if not pExec then
+                            local ok, st = pcall(function() return ph:GetState() end)
+                            if ok and st == Enum.HumanoidStateType.PlatformStanding then pExec = true end
+                        end
+                    end
+                    if not pExec then
+                        if pc:FindFirstChild("BeingExecuted") ~= nil then pExec = true end
+                        if pc:GetAttribute("IsExecuting") == true then pExec = true end
+                        if pc:GetAttribute("BeingExecuted") == true then pExec = true end
+                    end
+
+                    if pExec then
+                        -- 玩家和这个模型靠得很近（处决必须贴身）
+                        local pHrp = pc:FindFirstChild("HumanoidRootPart")
+                        if pHrp and mHrp then
+                            if (pHrp.Position - mHrp.Position).Magnitude <= 8 then
+                                return true
+                            end
+                        end
+                        -- 或者模型上有指向该玩家的标记
+                        if model:GetAttribute("ExecutedBy") == pl.Name then return true end
+                        if model:GetAttribute("Executor") == pl.Name then return true end
+                    end
+                end
+            end
+        end
+        return false
+    end
+
     -- 免处决的怪打了不会有效果，记录一下供上层决策
     local function isImmuneToExecution(model)
         local imm = model:FindFirstChild("ImmuneToExecution")
@@ -4096,6 +4162,8 @@ do
                     local can, why = bashableState(m, hum)
                     -- 反伤类：默认避开，除非用户自己打开
                     local reflectOK = bashReflectBoss or not isReflectRisk(m)
+                    -- 队友正在处决这个目标 → 别去抢
+                    if can and otherPlayerInvolved(m) then can = false end
                     if can and reflectOK then
                     local thrp = m:FindFirstChild("HumanoidRootPart")
                     if thrp then
@@ -4270,15 +4338,21 @@ do
         local my = loopToken
         task.spawn(function()
             while autoBashEnabled and gui.Parent and loopToken == my do
-                local target, dist = nearestTarget()
+                -- 我们自己在处决流程里 → 完全停止肘击
+                --   处决动画期间按 G 会打断处决，而且 PlatformStand 下按键无效
+                if iAmInExecution() then
+                    task.wait(0.1)
+                else
+                    local target, dist = nearestTarget()
 
-                if target and os.clock() - lastBash >= INTERVAL
-                   and shouldBashNow(target, dist) then
-                    lastBash = os.clock()
-                    pressBash()
+                    if target and os.clock() - lastBash >= INTERVAL
+                       and shouldBashNow(target, dist) then
+                        lastBash = os.clock()
+                        pressBash()
+                    end
+                    -- 扫得勤一点，反应才跟得上
+                    task.wait(0.05)
                 end
-                -- 扫得勤一点，反应才跟得上
-                task.wait(0.05)
             end
             if loopToken == my then loopToken = 0 end
         end)
@@ -9169,7 +9243,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.8.4"
+local CURRENT_VERSION = "1.8.5"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
