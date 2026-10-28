@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.7.2  人体图部位点击加音效
+-- Examination v1.7.3  HUD 等主 UI 入场动画结束后才启动
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -8339,8 +8339,7 @@ do
 
     _G._ExamStates.hudOn = true
 
-    -- 默认开启：等面板完全构建完成后再启动 HUD
-    --   之前只等 CDMUI 加载，但面板还在构建中，HUD 会撞上半成品状态
+    -- 默认开启：等主 UI 入场动画彻底结束后再启动 HUD
     task.spawn(function()
         -- 1. 等 CDMUI 就绪
         for _ = 1, 100 do
@@ -8348,7 +8347,7 @@ do
             task.wait(0.05)
         end
 
-        -- 2. 等面板窗口真正建完（ExaminationWin 存在 + Panel 有尺寸）
+        -- 2. 等面板窗口真正建完
         local win = getgenv().ExaminationWin
         for _ = 1, 200 do
             win = getgenv().ExaminationWin
@@ -8356,10 +8355,19 @@ do
             task.wait(0.05)
         end
 
-        -- 3. 再等一帧，让布局算完
+        -- 3. 等入场动画彻底结束（关键：之前只等尺寸，动画还在跑）
+        win = getgenv().ExaminationWin
+        if win and type(win.WaitForIntro) == "function" then
+            pcall(win.WaitForIntro, win, 6)
+        else
+            -- 老版本没有这个 API，按经验等够时间
+            task.wait(1.5)
+        end
+
+        -- 4. 再等一帧，让布局算完
         task.wait(0.1)
 
-        -- 4. 现在启动 HUD
+        -- 5. 现在启动 HUD
         if HUD and HUD.SetHUDAll then
             for _ = 1, 3 do
                 pcall(HUD.SetHUDAll, hudOn, hudOn, hudOn)
@@ -8766,7 +8774,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.7.2"
+local CURRENT_VERSION = "1.7.3"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
