@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.7.3  HUD 等主 UI 入场动画结束后才启动
+-- Examination v1.7.4  重载时旧 HUD 先播退场动画，不再叠加
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -21,7 +21,37 @@ local TweenService = game:GetService("TweenService")
 local Lighting = game:GetService("Lighting")
 local lp = Players.LocalPlayer
 
-if _G._ExamLastCleanup then pcall(_G._ExamLastCleanup); _G._ExamLastCleanup = nil end
+-- 重载时的清理
+--   旧 HUD 要先播退场动画再销毁，否则会和新 HUD 叠在一起
+do
+    local oldHudCleaned = false
+    -- 1) 先让旧 HUD 播退场动画
+    local oldHUD = getgenv().__ExamHUDModule
+    if oldHUD and oldHUD.DestroyHUDWithAnim then
+        pcall(function()
+            oldHUD.DestroyHUDWithAnim(function() oldHudCleaned = true end)
+        end)
+    end
+    -- 2) 再跑完整清理（里面会兜底销毁 HUD）
+    if _G._ExamLastCleanup then
+        pcall(_G._ExamLastCleanup)
+        _G._ExamLastCleanup = nil
+    end
+    -- 3) 兜底：手动清掉可能残留的 HUD 实例
+    pcall(function()
+        local pgv = lp and lp:FindFirstChild("PlayerGui")
+        for _, root in ipairs({game:GetService("CoreGui"), pgv}) do
+            if root then
+                for _, d in ipairs(root:GetChildren()) do
+                    if d.Name == "CDMUI_HUD" then
+                        pcall(function() d:Destroy() end)
+                    end
+                end
+            end
+        end
+    end)
+end
+getgenv().__ExamHUDModule = nil
 _G._ExamSetters = {}
 _G._ExamStates = {}
 
@@ -8303,6 +8333,9 @@ do
     end
 end
 
+-- 注册到全局：下次重载时可以拿到它播退场动画
+getgenv().__ExamHUDModule = HUD
+
 
 do
     -- 三项永远一起显示（已合并成一个总开关）
@@ -8774,7 +8807,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.7.3"
+local CURRENT_VERSION = "1.7.4"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
