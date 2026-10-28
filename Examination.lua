@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.6.0  HUD 内置（不再依赖 CDMUI）
+-- Examination v1.6.1  HUD 标签右对齐，数值左对齐
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -7674,7 +7674,7 @@ do
 
             local label = Instance.new("TextLabel")
             label.Name = "Label"
-            label.Size = UDim2.new(0, LABEL_W, 1, 0)
+            label.Size = UDim2.new(0, LABEL_W - 8, 1, 0)
             label.Position = UDim2.fromOffset(0, 0)
             label.BackgroundTransparency = 1
             -- 夜视仪同款标签字体
@@ -7687,7 +7687,7 @@ do
             label.TextColor3 = Color3.fromRGB(255, 255, 255)
             label.TextTransparency = 0.25
             label.TextStrokeTransparency = 0.6
-            label.TextXAlignment = Enum.TextXAlignment.Left
+            label.TextXAlignment = Enum.TextXAlignment.Right
             label.TextYAlignment = Enum.TextYAlignment.Center
             label.Text = labelText
             label.Active = false
@@ -8604,7 +8604,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.6.0"
+local CURRENT_VERSION = "1.6.1"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
