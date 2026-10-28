@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.4.3  肘击范围圈单圆盘方案，修复不显示与掉帧
+-- Examination v1.4.4  删除自适应預判模块，肘击范围固定
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -3770,57 +3770,6 @@ do
     end
     _G._ExamStates.bashRange = 9
 
-    ------------------------------------------------------------------
-    -- 自适应模式
-    --   固定模式：用固定的预判系数
-    --   自适应：实测「从按下到真的命中」的耗时，动态调预判量
-    ------------------------------------------------------------------
-    local bashAdaptive = true           -- 默认开启自适应
-    local bashAdaptSens = 3             -- 灵敏度 1-5，越大越提前
-    local measuredLatency = 0.28        -- 实测延迟（初始值）
-    local latencySamples = {}           -- 最近几次采样，取中位数抗抖动
-    local MAX_SAMPLES = 8
-
-    -- 记录一次「按下 -> 生效」的耗时
-    local function recordLatency(dt)
-        if dt < 0.02 or dt > 1.2 then return end    -- 异常值丢弃
-        table.insert(latencySamples, dt)
-        if #latencySamples > MAX_SAMPLES then
-            table.remove(latencySamples, 1)
-        end
-        -- 取中位数，不被偶发的卡顿带跑
-        local s = {}
-        for i, v in ipairs(latencySamples) do s[i] = v end
-        table.sort(s)
-        local n = #s
-        if n > 0 then
-            measuredLatency = (n % 2 == 1) and s[(n + 1) // 2]
-                or ((s[n // 2] + s[n // 2 + 1]) / 2)
-        end
-    end
-
-    _G._ExamSetters.bashAdaptive = function(v)
-        if v == 1 or v == "固定" then
-            bashAdaptive = false
-            _G._ExamStates.bashAdaptive = 1
-        elseif v == 2 or v == "自适应" or v == true then
-            bashAdaptive = true
-            _G._ExamStates.bashAdaptive = 2
-        else
-            return
-        end
-    end
-    -- 默认开启自适应
-    _G._ExamStates.bashAdaptive = 2
-
-    _G._ExamSetters.bashAdaptSens = function(v)
-        local n = tonumber(v)
-        if not n then return end
-        bashAdaptSens = math.clamp(n, 1, 5)
-        _G._ExamStates.bashAdaptSens = bashAdaptSens
-    end
-    _G._ExamStates.bashAdaptSens = 3
-
     -- 是否主动去肘反伤类 BOSS（奇美拉、Gilbert）
     --   默认开启：肘击对它们是有效的，只是会反伤
     local bashReflectBoss = true
@@ -3883,11 +3832,12 @@ do
         m.Parent = Workspace
         ringModel = m
 
-        -- 圆环主体：细圆柱，只用来承载 SurfaceGui 的环
+        -- 圆环主体：薄方板，平放在地面，SurfaceGui 贴顶面
+        -- （之前用 Cylinder + Face=Top，那个面是圆柱的窄边带，几乎看不见）
         local q = Instance.new("Part")
         q.Name = "ExamBashRingDisc"
-        q.Shape = Enum.PartType.Cylinder
-        q.Size = Vector3.new(0.05, PANIC_RANGE * 2, PANIC_RANGE * 2)
+        q.Shape = Enum.PartType.Block
+        q.Size = Vector3.new(PANIC_RANGE * 2, 0.05, PANIC_RANGE * 2)
         q.Material = Enum.Material.SmoothPlastic
         q.Color = Color3.fromRGB(255, 190, 60)
         q.Transparency = 1
@@ -3930,33 +3880,6 @@ do
         return
     end
 
-    -- 当前「有效触发半径」：自适应模式下会随延迟/速度浮动
-    -- 开环绕用这个值画，跟实际判定完全一致
-    local function currentTriggerRadius()
-        if not bashAdaptive then return PANIC_RANGE end
-
-        local char = lp.Character
-        local hrp = char and char:FindFirstChild("HumanoidRootPart")
-        -- 自己的速度会拉长预判，触发距离也跟着变大
-        local myApproach = 0
-        if hrp then
-            myApproach = math.max(0, hrp.AssemblyLinearVelocity.Magnitude)
-        end
-
-        -- 实测延迟越大，提前量越多，触发半径也越大
-        local mult = 0.6 + (bashAdaptSens - 1) * 0.2
-        local lead = measuredLatency * mult
-        lead = lead + math.min(myApproach / 55, 0.20)
-
-        -- 用一个参考速度换算成“提前多少距离”
-        -- 怪物典型冲刺速度取 18（大多数怪在 14-26 之间）
-        local refSpeed = 18 + myApproach * 0.5
-        local extra = lead * refSpeed
-
-        -- 限制在合理范围，不能太夸张
-        return math.clamp(PANIC_RANGE + extra * 0.45, PANIC_RANGE, PANIC_RANGE + 8)
-    end
-
     -- 地面射线缓存（每 6 帧更新一次）
     local cachedGroundY = nil
     local cachedRayX, cachedRayZ = 0, 0
@@ -3989,7 +3912,9 @@ do
             cachedRayZ = hrp.Position.Z
         end
         local base = Vector3.new(hrp.Position.X, groundY + 0.7, hrp.Position.Z)
-        local r = currentTriggerRadius()
+        -- 圈按「真实判定半径」画，不用自适应预判值
+        --   之前圈画的是含预判扩张的半径，比实际能肘到的距离大一截
+        local r = PANIC_RANGE
 
         if bashRangeMode == "line" then
             if facePart then destroyFace() end
@@ -3997,15 +3922,12 @@ do
 
             local disc = ringModel and ringModel:FindFirstChild("ExamBashRingDisc")
             if disc then
-                -- 尺寸变了才重设
-                if lastRingRadius ~= r then
-                    lastRingRadius = r
-                    disc.Size = Vector3.new(0.05, r * 2, r * 2)
-                end
-                -- 每次都直接写 CFrame。
-                --   单个 Part 写 CFrame 几乎零开销，
-                --   而 PivotTo + 缓存判断那一套反而容易因为状态不同步而失效。
-                disc.CFrame = CFrame.new(base) * CFrame.Angles(0, 0, math.rad(90))
+                -- 每次都设尺寸和位置。
+                --   单个 Part 的属性写入开销可以忽略，
+                --   之前用 lastRingRadius 缓存判断，实测会出现「值变了圈没更新」的鬼情况
+                --   （bashRange 5 时圈还是 8.6，明显是上一次的残留）。
+                disc.Size = Vector3.new(r * 2, 0.05, r * 2)
+                disc.CFrame = CFrame.new(base)
             end
                 else
             if #ringParts > 0 then destroyRing() end
@@ -4173,8 +4095,7 @@ do
     --   相对速度同时考虑：怪物冲过来 + 我自己冲过去
     local function shouldBashNow(target, dist)
         if not target then return false end
-        -- 当前有效触发半径（自适应下会变大）
-        local eff = bashAdaptive and currentTriggerRadius() or PANIC_RANGE
+        local eff = PANIC_RANGE
         if dist <= eff then return true end
         if dist > SCAN_RANGE then return false end
 
@@ -4201,29 +4122,11 @@ do
 
         if approach < 1 then
             -- 双方都没在靠近，等它近一点再说
-            -- 自适应模式下，卡顿/高延迟时多留一点余量
-            local extra = 3
-            if bashAdaptive then
-                extra = 3 + math.min(math.floor((measuredLatency - 0.28) * 20), 4)
-            end
-            return dist <= PANIC_RANGE + extra
+            return dist <= PANIC_RANGE + 3
         end
 
-        -- 预判提前量
-        local lead
-        if bashAdaptive then
-            -- 自适应：以实测延迟为基准
-            --   灵敏度 1..5 映射成 0.6..1.4 倍
-            local mult = 0.6 + (bashAdaptSens - 1) * 0.2
-            lead = measuredLatency * mult
-            -- 自己冲得越快，再多留一点（撞上去的速度也更快）
-            lead = lead + math.min(myApproach / 55, 0.20)
-            -- 怪物也在冲的话它也占一部分
-            lead = lead + math.min(monsterApproach / 80, 0.12)
-        else
-            -- 固定：原来的公式
-            lead = 0.28 + math.min(myApproach / 40, 0.22)
-        end
+        -- 预判提前量（固定公式）
+        local lead = 0.28 + math.min(myApproach / 40, 0.22)
 
         -- 预测 lead 秒后会不会进入危险距离
         local eta = dist - approach * lead
@@ -4302,47 +4205,13 @@ do
         loopToken = (loopToken or 0) + 1
         local my = loopToken
         task.spawn(function()
-            -- 自适应用的采样状态
-            local pendingT0 = nil          -- 按下时刻
-            local pendingTarget = nil      -- 打的目标
-            local pendingDist = nil        -- 按下时的距离
-
             while autoBashEnabled and gui.Parent and loopToken == my do
                 local target, dist = nearestTarget()
-
-                -- 自适应：量一次「按下 -> 目标开始被打中」的耗时
-                if pendingT0 then
-                    local done = false
-                    if not target or target ~= pendingTarget then
-                        -- 目标没了 / 换了，也算一次完成
-                        done = true
-                    else
-                        local thum = target:FindFirstChildOfClass("Humanoid")
-                        -- 打到之后怪物会僵直/掉血/被击退，任一都算生效
-                        if thum and (thum.Health < 100 or thum.WalkSpeed < 8) then
-                            done = true
-                        end
-                    end
-                    if done then
-                        recordLatency(os.clock() - pendingT0)
-                        pendingT0 = nil
-                        pendingTarget = nil
-                    elseif os.clock() - pendingT0 > 1.0 then
-                        -- 超过 1 秒还没反应，说明这次没打中，直接丢弃
-                        pendingT0 = nil
-                        pendingTarget = nil
-                    end
-                end
 
                 if target and os.clock() - lastBash >= INTERVAL
                    and shouldBashNow(target, dist) then
                     lastBash = os.clock()
-                    local t0 = pressBash()
-                    if bashAdaptive and t0 then
-                        pendingT0 = t0
-                        pendingTarget = target
-                        pendingDist = dist
-                    end
+                    pressBash()
                 end
                 -- 扫得勤一点，反应才跟得上
                 task.wait(0.05)
@@ -7612,8 +7481,7 @@ tab:Expand({
         { Kind = "number", Key = "bashRange", Name = "触发距离", Min = 4, Max = 20, Default = 9, Callback = function(v) CB("bashRange", v) end },
         { Kind = "toggle", Key = "bashShowRange", Name = "显示范围", Callback = function(v) CB("bashShowRange", v) end },
         { Kind = "cycle", Key = "bashRangeMode", Name = "范围样式", Options = { "线状", "面状" }, DefaultIndex = 1, Callback = function(v) CB("bashRangeMode", v) end },
-        { Kind = "cycle", Key = "bashAdaptive", Name = "预判模式", Options = { "固定", "自适应" }, DefaultIndex = 2, Callback = function(v) CB("bashAdaptive", v) end },
-        { Kind = "number", Key = "bashAdaptSens", Name = "自适应灵敏度", Min = 1, Max = 5, Default = 3, Callback = function(v) CB("bashAdaptSens", v) end },
+
         { Kind = "cycle", Key = "bashReflectBoss", Name = "是否击打反伤怪", Options = { "否", "是" }, DefaultIndex = 2, Callback = function(v) CB("bashReflectBoss", v) end },
     },
 })
@@ -7736,7 +7604,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.4.3"
+local CURRENT_VERSION = "1.4.4"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
