@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.3.4  魔法子弹支持锁定 BTR 无人机（新增开关）
+-- Examination v1.3.5  无人机 ESP 标签去重；手持 AT-7 时优先锁定 BTR
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -57,6 +57,8 @@ local slideSteerMode = "camera"
 local mbTargetMode = 1
 -- 是否把 BTR 放出的无人机也纳入魔法子弹锁定（默认开）
 local mbTargetDrones = true
+-- 手持 AT-7 时是否锁定 BTR（默认开）
+local mbTargetBTR = true
 
 local shootVisualEnabled = false
 local tracerEnabled = true
@@ -121,6 +123,45 @@ local function getAllBTRDrones()
         end
     end
     return out
+end
+
+-- 是否手持 AT-7（唯一能打 BTR 的武器）
+--   BTR 只能用 AT-7 击毁，所以只有拿着它时才把 BTR 纳入锁定
+local function isHoldingAT7()
+    local char = lp.Character
+    if not char then return false end
+    local tool = char:FindFirstChildOfClass("Tool")
+    if not tool then return false end
+    local n = tool.Name
+    return n == "AT-7" or n:find("AT%-7") ~= nil or n:find("AT7") ~= nil
+end
+
+-- BTR 模型（和 ESP 用同一套定位）
+local function getBTRModelForAim()
+    local map = Workspace:FindFirstChild("Map")
+    return map and map:FindFirstChild("BTR-82 (BOSS)")
+end
+
+-- BTR 是否可被锁定（活着）
+local function isBTRTargetable(btr)
+    if not btr or not btr.Parent then return false end
+    if btr:GetAttribute("Destroyed") == true then return false end
+    -- 血量用 HealthPercent 判断
+    local pct = btr:GetAttribute("HealthPercent")
+    if type(pct) == "number" and pct <= 0 then return false end
+    return true
+end
+
+-- BTR 的瞄准点：优先 BTRRoot，其次任意 BasePart
+local function getBTRAimPart(btr)
+    if not btr then return nil end
+    local root = btr:FindFirstChild("BTRRoot")
+    if root and root:IsA("BasePart") then return root end
+    if btr.PrimaryPart then return btr.PrimaryPart end
+    for _, c in ipairs(btr:GetDescendants()) do
+        if c:IsA("BasePart") then return c end
+    end
+    return nil
 end
 
 local SHOTGUN_PUMP_IDS = {
@@ -1863,13 +1904,16 @@ do
         tl.BackgroundTransparency = 1; tl.TextColor3 = C_DRONE
         tl.TextStrokeTransparency = 0; tl.TextScaled = true
         tl.Font = Enum.Font.SourceSansBold
+        -- 标签格式：[无人机] 血量
+        --   之前是 "[无人机] 无人机 | 血量"，名字重复了
         local function droneText(cur, max)
             local parts = {}
-            if showESPName then table.insert(parts, "无人机") end
             if showESPHealth then
                 if cur and max then
                     table.insert(parts, string.format("%d / %d", math.floor(cur), math.floor(max)))
-                elseif cur then table.insert(parts, tostring(math.floor(cur))) end
+                elseif cur then
+                    table.insert(parts, tostring(math.floor(cur)))
+                end
             end
             if #parts == 0 then return "[无人机]" end
             return "[无人机] " .. table.concat(parts, " | ")
@@ -5646,6 +5690,48 @@ end
             end
         end
 
+        -- ⓪ BTR：只有手持 AT-7 时才锁，且优先级最高
+        --   理由：BTR 只能用 AT-7 打，拿大炮时别去炸无人机/小怪
+        if mbTargetBTR and isHoldingAT7() then
+            local btr = getBTRModelForAim()
+            if btr and isBTRTargetable(btr) then
+                candidates = candidates + 1
+                local aimPart = getBTRAimPart(btr)
+                if aimPart then
+                    local wd = (aimPart.Position - myPos).Magnitude
+                    if wd <= mbWorldDistMax then
+                        -- FOV / 可见性检查（和普通目标一致）
+                        local passFov = true
+                        if mbTargetMode ~= 3 then
+                            local s, onScreen = cam:WorldToViewportPoint(aimPart.Position)
+                            if onScreen and s.Z > 0 then
+                                local dx = s.X - cx
+                                local dy = s.Y - cy
+                                if dx*dx + dy*dy > r2 then passFov = false end
+                            else
+                                passFov = false
+                            end
+                        end
+
+                        local passVis = true
+                        if mbRequireVisible then
+                            passVis = isPointVisible(camPos, aimPart.Position, btr, excludeVis)
+                        end
+
+                        if passFov and passVis then
+                            -- 优先级 -1：比所有普通目标（0）和低优先（1）都高
+                            bestPrio = -1
+                            bestWorldD = wd
+                            best = { model = btr, head = aimPart, aimPart = aimPart }
+                        else
+                            if not passFov then outFov = outFov + 1 end
+                            if not passVis then visBlocked = visBlocked + 1 end
+                        end
+                    end
+                end
+            end
+        end
+
         -- ① 普通敌人
         for _, folderName in ipairs(AI_CONTAINERS) do
             local folder = Workspace:FindFirstChild(folderName)
@@ -6372,6 +6458,12 @@ end
         _G._ExamStates.mbTargetDrones = mbTargetDrones
     end
     _G._ExamStates.mbTargetDrones = true
+
+    _G._ExamSetters.mbTargetBTR = function(v)
+        mbTargetBTR = v and true or false
+        _G._ExamStates.mbTargetBTR = mbTargetBTR
+    end
+    _G._ExamStates.mbTargetBTR = true
     autoFireBtn = Instance.new("TextButton", magicPage)
     autoFireBtn.Size = UDim2.new(1, -30, 0, 28)
     autoFireBtn.Position = UDim2.new(0, 15, 0, 196)
@@ -7527,6 +7619,8 @@ tab:Expand({
         Callback = function(idx) CB("mbTargetMode", idx) end,
     },
     Children = {
+        { Kind = "toggle", Key = "mbTargetBTR", Name = "手持AT-7时锁定BTR", Default = true,
+          Callback = function(v) CB("mbTargetBTR", v) end },
         { Kind = "toggle", Key = "mbTargetDrones", Name = "锁定BTR无人机", Default = true,
           Callback = function(v) CB("mbTargetDrones", v) end },
         { Kind = "toggle", Key = "mbShowRadius", Name = "360°锁定半径锁定显示", Default = false,
@@ -7696,7 +7790,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.3.4"
+local CURRENT_VERSION = "1.3.5"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
