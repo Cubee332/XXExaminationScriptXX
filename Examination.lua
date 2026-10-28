@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.4.5  修复面状模式圈不显示（Cylinder 改 Block）
+-- Examination v1.4.6  新增屏幕显示 FPS/延迟/人数；修复卸载鼠标
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -7218,6 +7218,28 @@ end
 -- CDMUI 控制面板
 -- ============================================================
 -- 统一回调入口
+-- 屏幕信息 HUD（FPS / 延迟 / 人数）
+--   用 CDMUI 的 HUD 模块，独立 ScreenGui，不拦截任何输入
+do
+    local function setHud(kind)
+        return function(v)
+            local CD = getgenv().CDMUI
+            if CD and CD.SetHUD then
+                pcall(CD.SetHUD, kind, v and true or false)
+            end
+            _G._ExamStates["hud" .. kind:sub(1,1):upper() .. kind:sub(2)] = v and true or false
+        end
+    end
+
+    _G._ExamSetters.hudFPS = setHud("fps")
+    _G._ExamSetters.hudPing = setHud("ping")
+    _G._ExamSetters.hudPlayers = setHud("players")
+
+    _G._ExamStates.hudFPS = false
+    _G._ExamStates.hudPing = false
+    _G._ExamStates.hudPlayers = false
+end
+
 local function CB(key, value)
     -- 先不要直接写 _ExamStates：
     -- cycle 控件传的是中文标签，直接写会把 setter 写入的数字覆盖掉
@@ -7399,6 +7421,12 @@ tab:Toggle({ Key = "worldESP", Name = "全图高亮", Desc = "全图变亮", Def
     Callback = function(v) CB("worldESP", v) end })
 
 tab:Section({ Name = "界面" })
+tab:Toggle({ Key = "hudFPS", Name = "显示 FPS", Desc = "在屏幕上显示实时帧率", Default = false,
+    Callback = function(v) CB("hudFPS", v) end })
+tab:Toggle({ Key = "hudPing", Name = "显示延迟", Desc = "在屏幕上显示服务器往返延迟（ms）", Default = false,
+    Callback = function(v) CB("hudPing", v) end })
+tab:Toggle({ Key = "hudPlayers", Name = "显示服务器人数", Desc = "在屏幕上显示当前服务器人数（上限 20）", Default = false,
+    Callback = function(v) CB("hudPlayers", v) end })
 tab:Toggle({ Key = "chatForce", Name = "聊天框强制显示", Desc = "始终显示聊天窗口", Default = false,
     Callback = function(v) CB("chatForce", v) end })
 
@@ -7610,7 +7638,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.4.5"
+local CURRENT_VERSION = "1.4.6"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
