@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.7.6  HUD 关闭时先回位再左滑（两段动画）
+-- Examination v1.7.7  屏幕信息显示增加操作说明
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -8792,7 +8792,7 @@ tab:Section({ Name = "界面" })
 tab:Expand({
     Key = "hudOn",
     Name = "屏幕信息显示",
-    Desc = "在屏幕上显示 FPS / 延迟 / 服务器人数",
+    Desc = "在屏幕上显示 FPS / 延迟 / 服务器人数。点击 LOCKED 可解锁并拖动位置，再点变回 FREE 重新锁定",
     Default = true,
     Callback = function(v) CB("hudOn", v) end,
     Children = {
@@ -9005,7 +9005,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.7.6"
+local CURRENT_VERSION = "1.7.7"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
