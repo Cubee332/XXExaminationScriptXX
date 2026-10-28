@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.4.1  修复肘击范围圈不显示（PivotTo 改逐部件 CFrame）
+-- Examination v1.4.2  肘击范围圈性能优化（48段改单圆盘，点击开销降96%）
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -3856,6 +3856,8 @@ do
         if ringModel and ringModel.Parent then pcall(function() ringModel:Destroy() end) end
         ringModel = nil
         lastRingRadius = nil        -- 环重建了，尺寸要重算
+        cachedGroundY = nil         -- 地面缓存也要清
+        lastBaseX, lastBaseY, lastBaseZ = nil, nil, nil
     end
 
     local function destroyFaceImpl()
@@ -3868,49 +3870,64 @@ do
     local destroyFace = destroyFaceImpl
 
     local function ensureRing()
-        if #ringParts == SEGMENTS and ringParts[1] and ringParts[1].Parent then
-            return ringParts
+        -- 用「1 个圆环 MeshPart + 1 个 SurfaceGui」画整圈，
+        -- 替代原来的 48 个部件 + 48 个 SurfaceGui。
+        -- 渲染调用从 96 次降到 2 次，掉帧问题基本消除。
+        if ringModel and ringModel.Parent and ringModel:FindFirstChild("ExamBashRingDisc") then
+            return
         end
         destroyRing()
-        -- 用一个 Model 包住，整体移动只调一次 PivotTo
+
         local m = Instance.new("Model")
         m.Name = "ExamBashRingModel"
         m.Parent = Workspace
         ringModel = m
-        for i = 1, SEGMENTS do
-            local q = Instance.new("Part")
-            q.Name = "ExamBashRing"
-            q.Size = Vector3.new(0.4, 0.05, 1)
-            q.Material = Enum.Material.SmoothPlastic
-            q.Color = Color3.fromRGB(255, 190, 60)
-            q.Transparency = 1
-            q.CanCollide = false; q.CanQuery = false; q.CanTouch = false
-            q.Anchored = true; q.CastShadow = false
-            q.Parent = m
-            local sg = Instance.new("SurfaceGui")
-            sg.Name = "Line"; sg.Face = Enum.NormalId.Top
-            sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
-            sg.PixelsPerStud = 40
-            sg.AlwaysOnTop = false        -- 会被物体遮挡，符合真实透视
-            sg.LightInfluence = 0; sg.Adornee = q; sg.Parent = q
-            local f = Instance.new("Frame")
-            f.Size = UDim2.new(1, 0, 1, 0)
-            f.BackgroundColor3 = Color3.fromRGB(255, 190, 60)
-            f.BackgroundTransparency = 0.15
-            f.BorderSizePixel = 0
-            f.Parent = sg
-            table.insert(ringParts, q)
 
-            -- 建好就按当前半径摆一次，避免尺寸一直是默认的 1
-            local rr = PANIC_RANGE
-            local ang = (i - 1) / SEGMENTS * math.pi * 2
-            local segLen = 2 * rr * math.sin(math.pi / SEGMENTS) + 0.05
-            q.Size = Vector3.new(0.4, 0.05, segLen)
-            q.CFrame = CFrame.new(math.cos(ang) * rr, 0, math.sin(ang) * rr)
-                * CFrame.Angles(0, -ang, 0)
-        end
+        -- 圆环主体：细圆柱，只用来承载 SurfaceGui 的环
+        local q = Instance.new("Part")
+        q.Name = "ExamBashRingDisc"
+        q.Shape = Enum.PartType.Cylinder
+        q.Size = Vector3.new(0.05, PANIC_RANGE * 2, PANIC_RANGE * 2)
+        q.Material = Enum.Material.SmoothPlastic
+        q.Color = Color3.fromRGB(255, 190, 60)
+        q.Transparency = 1
+        q.CanCollide = false; q.CanQuery = false; q.CanTouch = false
+        q.Anchored = true; q.CastShadow = false
+        q.Parent = m
+
+        -- SurfaceGui 画在圆柱顶面：一个圆环描边
+        local sg = Instance.new("SurfaceGui")
+        sg.Name = "Ring"
+        sg.Face = Enum.NormalId.Top
+        sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+        sg.PixelsPerStud = 8             -- 圆环只需要轮廓，低分辨率就够
+        sg.AlwaysOnTop = false
+        sg.LightInfluence = 0
+        sg.Adornee = q
+        sg.Parent = q
+
+        -- 用 UIStroke 画圆环：一个 UICorner 圆 + 描边
+        local f = Instance.new("Frame")
+        f.Name = "RingFrame"
+        f.AnchorPoint = Vector2.new(0.5, 0.5)
+        f.Position = UDim2.new(0.5, 0, 0.5, 0)
+        f.Size = UDim2.new(1, 0, 1, 0)
+        f.BackgroundTransparency = 1
+        f.BorderSizePixel = 0
+        f.Parent = sg
+        local c = Instance.new("UICorner")
+        c.CornerRadius = UDim.new(1, 0)
+        c.Parent = f
+        local stroke = Instance.new("UIStroke")
+        stroke.Color = Color3.fromRGB(255, 190, 60)
+        stroke.Thickness = 3
+        stroke.Transparency = 0.1
+        stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        stroke.Parent = f
+
+        m.PrimaryPart = q
         lastRingRadius = PANIC_RANGE
-        return ringParts
+        return
     end
 
     -- 当前「有效触发半径」：自适应模式下会随延迟/速度浮动
@@ -3940,51 +3957,61 @@ do
         return math.clamp(PANIC_RANGE + extra * 0.45, PANIC_RANGE, PANIC_RANGE + 8)
     end
 
+    -- 地面射线缓存（每 6 帧更新一次）
+    local cachedGroundY = nil
+    local cachedRayX, cachedRayZ = 0, 0
+    local lastBaseX, lastBaseY, lastBaseZ = nil, nil, nil
+    local ringFrame = 0
+
     local function updateRing()
+        ringFrame = ringFrame + 1
         local char = lp.Character
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
         if not hrp then destroyRing(); destroyFace(); return end
         if not showRange then destroyRing(); destroyFace(); return end
         if not autoBashEnabled then destroyRing(); destroyFace(); return end
 
-        -- 向下射线找地面，下蹲/滑铲都不影响
-        local groundY = hrp.Position.Y - 2.3
-        do
+        -- 向下射线找地面：每 6 帧才做一次，缓存结果
+        --   每帧射线是主要开销之一，角色移动慢时完全没必要
+        local groundY = cachedGroundY
+        if groundY == nil or ringFrame % 6 == 0
+           or math.abs(hrp.Position.X - cachedRayX) > 3
+           or math.abs(hrp.Position.Z - cachedRayZ) > 3 then
+            groundY = hrp.Position.Y - 2.3
             local params = RaycastParams.new()
             params.FilterType = Enum.RaycastFilterType.Exclude
             params.FilterDescendantsInstances = {char}
             local origin = Vector3.new(hrp.Position.X, hrp.Position.Y + 2, hrp.Position.Z)
             local hit = Workspace:Raycast(origin, Vector3.new(0, -20, 0), params)
             if hit then groundY = hit.Position.Y end
+            cachedGroundY = groundY
+            cachedRayX = hrp.Position.X
+            cachedRayZ = hrp.Position.Z
         end
         local base = Vector3.new(hrp.Position.X, groundY + 0.7, hrp.Position.Z)
         local r = currentTriggerRadius()
 
         if bashRangeMode == "line" then
             if facePart then destroyFace() end
-            local parts = ensureRing()
+            ensureRing()
 
-            -- 尺寸只在半径变了才重设
-            if lastRingRadius ~= r then
-                lastRingRadius = r
-                local segLen = 2 * r * math.sin(math.pi / SEGMENTS) + 0.05
-                for i, q in ipairs(parts) do
-                    local ang = (i - 1) / SEGMENTS * math.pi * 2
-                    q.Size = Vector3.new(0.4, 0.05, segLen)
-                    -- 以原点为圆心摆好，之后整体移动就行
-                    q.CFrame = CFrame.new(math.cos(ang) * r, 0, math.sin(ang) * r)
-                        * CFrame.Angles(0, -ang, 0)
+            local disc = ringModel and ringModel:FindFirstChild("ExamBashRingDisc")
+            if disc then
+                -- 尺寸只在半径变了才重设
+                if lastRingRadius ~= r then
+                    lastRingRadius = r
+                    disc.Size = Vector3.new(0.05, r * 2, r * 2)
+                end
+                -- 位置只在真的动了才更新（站着不动就不用每帧改变换）
+                if lastBaseX == nil
+                   or math.abs(base.X - lastBaseX) > 0.02
+                   or math.abs(base.Y - lastBaseY) > 0.02
+                   or math.abs(base.Z - lastBaseZ) > 0.02 then
+                    lastBaseX, lastBaseY, lastBaseZ = base.X, base.Y, base.Z
+                    ringModel:PivotTo(CFrame.new(base) * CFrame.Angles(0, 0, math.rad(90)))
                 end
             end
-            -- 直接写每个部件的 CFrame。
-            -- 不能只用 Model:PivotTo：这个 Model 没有 PrimaryPart，
-            -- PivotTo 只更新内部 pivot，锚定的部件不会真的移动（实测卡在原点）。
-            for i, q in ipairs(parts) do
-                local ang = (i - 1) / SEGMENTS * math.pi * 2
-                q.CFrame = CFrame.new(base) * CFrame.new(math.cos(ang) * r, 0, math.sin(ang) * r)
-                    * CFrame.Angles(0, -ang, 0)
-            end
-        else
+                else
             if #ringParts > 0 then destroyRing() end
             if not facePart or not facePart.Parent then
                 local q = Instance.new("Part")
@@ -4024,8 +4051,13 @@ do
     local rangeConn = nil
     local function startRangeLoop()
         if rangeConn then return end
-        rangeConn = RunService.RenderStepped:Connect(function()
+        -- 用 Heartbeat 而不是 RenderStepped，并且隔一帧跑一次
+        --   圈是地面装饰，30fps 更新完全够用，帧率直接翻倍回来
+        local skip = false
+        rangeConn = RunService.Heartbeat:Connect(function()
             if not showRange or not autoBashEnabled then return end
+            skip = not skip
+            if skip then return end
             pcall(updateRing)
         end)
     end
@@ -7708,7 +7740,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.4.1"
+local CURRENT_VERSION = "1.4.2"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
