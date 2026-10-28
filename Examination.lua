@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.3.8  BTR 血量/锁定框/无人机锁定修复；AT-7 优先级
+-- Examination v1.3.9  移除 BTR 锁定相关功能（AT-7 优先级、BTR 锁定框），保留血量透视与无人机锁定
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -57,8 +57,6 @@ local slideSteerMode = "camera"
 local mbTargetMode = 1
 -- 是否把 BTR 放出的无人机也纳入魔法子弹锁定（默认开）
 local mbTargetDrones = true
--- 手持 AT-7 时是否锁定 BTR（默认开）
-local mbTargetBTR = true
 
 local shootVisualEnabled = false
 local tracerEnabled = true
@@ -123,45 +121,6 @@ local function getAllBTRDrones()
         end
     end
     return out
-end
-
--- 是否手持 AT-7（唯一能打 BTR 的武器）
---   BTR 只能用 AT-7 击毁，所以只有拿着它时才把 BTR 纳入锁定
-local function isHoldingAT7()
-    local char = lp.Character
-    if not char then return false end
-    local tool = char:FindFirstChildOfClass("Tool")
-    if not tool then return false end
-    local n = tool.Name
-    return n == "AT-7" or n:find("AT%-7") ~= nil or n:find("AT7") ~= nil
-end
-
--- BTR 模型（和 ESP 用同一套定位）
-local function getBTRModelForAim()
-    local map = Workspace:FindFirstChild("Map")
-    return map and map:FindFirstChild("BTR-82 (BOSS)")
-end
-
--- BTR 是否可被锁定（活着）
-local function isBTRTargetable(btr)
-    if not btr or not btr.Parent then return false end
-    if btr:GetAttribute("Destroyed") == true then return false end
-    -- 血量用 HealthPercent 判断
-    local pct = btr:GetAttribute("HealthPercent")
-    if type(pct) == "number" and pct <= 0 then return false end
-    return true
-end
-
--- BTR 的瞄准点：优先 BTRRoot，其次任意 BasePart
-local function getBTRAimPart(btr)
-    if not btr then return nil end
-    local root = btr:FindFirstChild("BTRRoot")
-    if root and root:IsA("BasePart") then return root end
-    if btr.PrimaryPart then return btr.PrimaryPart end
-    for _, c in ipairs(btr:GetDescendants()) do
-        if c:IsA("BasePart") then return c end
-    end
-    return nil
 end
 
 local SHOTGUN_PUMP_IDS = {
@@ -5690,48 +5649,6 @@ end
             end
         end
 
-        -- ⓪ BTR：只有手持 AT-7 时才锁，且优先级最高
-        --   理由：BTR 只能用 AT-7 打，拿大炮时别去炸无人机/小怪
-        if mbTargetBTR and isHoldingAT7() then
-            local btr = getBTRModelForAim()
-            if btr and isBTRTargetable(btr) then
-                candidates = candidates + 1
-                local aimPart = getBTRAimPart(btr)
-                if aimPart then
-                    local wd = (aimPart.Position - myPos).Magnitude
-                    if wd <= mbWorldDistMax then
-                        -- FOV / 可见性检查（和普通目标一致）
-                        local passFov = true
-                        if mbTargetMode ~= 3 then
-                            local s, onScreen = cam:WorldToViewportPoint(aimPart.Position)
-                            if onScreen and s.Z > 0 then
-                                local dx = s.X - cx
-                                local dy = s.Y - cy
-                                if dx*dx + dy*dy > r2 then passFov = false end
-                            else
-                                passFov = false
-                            end
-                        end
-
-                        local passVis = true
-                        if mbRequireVisible then
-                            passVis = isPointVisible(camPos, aimPart.Position, btr, excludeVis)
-                        end
-
-                        if passFov and passVis then
-                            -- 优先级 -1：比所有普通目标（0）和低优先（1）都高
-                            bestPrio = -1
-                            bestWorldD = wd
-                            best = { model = btr, head = aimPart, aimPart = aimPart }
-                        else
-                            if not passFov then outFov = outFov + 1 end
-                            if not passVis then visBlocked = visBlocked + 1 end
-                        end
-                    end
-                end
-            end
-        end
-
         -- ① 普通敌人
         for _, folderName in ipairs(AI_CONTAINERS) do
             local folder = Workspace:FindFirstChild(folderName)
@@ -5989,35 +5906,15 @@ end
         if lockBB and lockBB.Parent then pcall(function() lockBB:Destroy() end) end
         lockBB = nil; lockTarget = nil
     end
-    -- 锁定框：旋转的方框
-    --   part  : 挂载点
-    --   model : 大目标（BTR / 无人机）传进来，框会按模型尺寸放大并居中
-    local function createLockBB(part, model)
+    local function createLockBB(part)
         local bb = Instance.new("BillboardGui")
         bb.Name = "Exam_MB_LockBB"
         bb.Adornee = part
         bb.AlwaysOnTop = true; bb.LightInfluence = 0
         bb.MaxDistance = mbWorldDistMax; bb.ResetOnSpawn = false
 
-        if model then
-            -- 大目标：BillboardGui 的 Size 是屏幕像素，
-            --   要让框「贴住」整个模型，得按距离换算像素尺寸，
-            --   所以这里记下模型的真实尺寸，交给 updateLockBB 每帧算。
-            local ok, cf, size = pcall(function() return model:GetBoundingBox() end)
-            if ok and cf and size then
-                bb.Size = UDim2.fromOffset(200, 200)   -- 先给个初值，每帧会重算
-                bb:SetAttribute("__lockBoxSide", math.max(size.X, size.Z) * 1.15)
-                bb:SetAttribute("__lockBoxIsModel", true)
-                local off = cf.Position - part.Position
-                bb.StudsOffsetWorldSpace = Vector3.new(off.X, off.Y, off.Z)
-            else
-                bb.Size = UDim2.new(mbBBSizeStuds, 0, mbBBSizeStuds, 0)
-                bb.StudsOffsetWorldSpace = Vector3.new(0, mbStudsOffsetY, 0)
-            end
-        else
-            bb.Size = UDim2.new(mbBBSizeStuds, 0, mbBBSizeStuds, 0)
-            bb.StudsOffsetWorldSpace = Vector3.new(0, mbStudsOffsetY, 0)
-        end
+        bb.Size = UDim2.new(mbBBSizeStuds, 0, mbBBSizeStuds, 0)
+        bb.StudsOffsetWorldSpace = Vector3.new(0, mbStudsOffsetY, 0)
 
         bb.Parent = part
         local f = Instance.new("Frame", bb)
@@ -6059,35 +5956,12 @@ end
             return
         end
 
-        local isBig = isVehicle(target.model) or isBTRDrone(target.model)
-
         if lockTarget ~= target.model or not lockBB or not lockBB.Parent
            or lockBB.Adornee ~= aimPart then
             if lockBB and lockBB.Parent then pcall(function() lockBB:Destroy() end) end
-            lockBB = createLockBB(aimPart, isBig and target.model or nil)
+            lockBB = createLockBB(aimPart)
             lockTarget = target.model
-        else
-            lockBB.Enabled = true
-        end
-
-        -- 大目标：按距离换算像素尺寸，让框始终贴住模型
-        if isBig and lockBB and lockBB.Parent then
-            local side = lockBB:GetAttribute("__lockBoxSide")
-            if side and side > 0 then
-                local cam = Workspace.CurrentCamera
-                if cam then
-                    local dist = (cam.CFrame.Position - aimPart.Position).Magnitude
-                    if dist > 0.1 then
-                        -- 视角高度换算：屏幕像素 / 距离
-                        local vs = cam.ViewportSize
-                        local fovRad = math.rad(cam.FieldOfView)
-                        local pxPerStud = (vs.Y * 0.5) / (math.tan(fovRad * 0.5) * dist)
-                        local px = math.clamp(side * pxPerStud, 24, 1400)
-                        lockBB.Size = UDim2.fromOffset(math.floor(px), math.floor(px))
-                    end
-                end
-            end
-        end
+        else lockBB.Enabled = true end
     end
     local mbOrigFire = nil
     local mbOrigRaycastNew = nil
@@ -6102,93 +5976,35 @@ end
         if fp and fp:IsA("Attachment") then return fp.WorldPosition end
         return core.Position
     end
-    -- 把命中数据重定向到指定部件
-    --   普通目标：hum = Humanoid，char = 模型
-    --   BTR / 无人机：没有 Humanoid，直接指定模型和瞄准部件
-    local function redirectHit(hitData, model, aimPart)
-        if type(hitData) ~= "table" or not model or not aimPart then return false end
-        if hitData[2] == aimPart then return false end
-
+    local function forceAimPart(hitData)
+        if type(hitData) ~= "table" then return false end
+        local hum = hitData[1]
+        local part = hitData[2]
+        if not hum or not hum:IsA("Humanoid") then return false end
+        if hum.Health <= 0 then return false end
+        local char = hum.Parent
+        if not char or not char.Parent then return false end
+        if _playerChars[char] then return false end
+        if char:GetAttribute("FriendlyToFlare") == true then return false end
+        local aimPart = getAimPart(char)
+        if not aimPart then return false end
+        if part == aimPart then return false end
+        local cam = Workspace.CurrentCamera
+        local camPos = cam and cam.CFrame.Position
         local normal = hitData[4]
         if typeof(normal) ~= "Vector3" then
             local fp = hitData[5]
-            if typeof(fp) == "Vector3" then
-                normal = (aimPart.Position - fp).Unit
-            else
-                normal = Vector3.new(0, 1, 0)
-            end
+            if typeof(fp) == "Vector3" then normal = (aimPart.Position - fp).Unit
+            else normal = Vector3.new(0, 1, 0) end
         end
-
-        hitData[2] = aimPart
-        hitData[3] = aimPart.Position
-
-        local cam = Workspace.CurrentCamera
-        local camPos = cam and cam.CFrame.Position
+        hitData[2] = aimPart; hitData[3] = aimPart.Position
         if camPos then hitData[5] = camPos end
-
-        -- 第 7 项是「相对于 RootPart 的 CFrame」，BTR 没有 RootPart 就不写
-        local root = model:FindFirstChild("HumanoidRootPart")
-            or model:FindFirstChild("BTRRoot")
-            or model:FindFirstChild("DroneRoot")
-        if root and root:IsA("BasePart") then
+        local root = hum.RootPart or char:FindFirstChild("HumanoidRootPart")
+        if root then
             local cf = CFrame.new(aimPart.Position, aimPart.Position - normal * 1.5)
             hitData[7] = root.CFrame:ToObjectSpace(cf)
         end
-
         return true
-    end
-
-    local function forceAimPart(hitData)
-        if type(hitData) ~= "table" then return false end
-
-        local first = hitData[1]
-        local part = hitData[2]
-
-        -- ① 普通目标：第一项是 Humanoid
-        if first and typeof(first) == "Instance" and first:IsA("Humanoid") then
-            if first.Health <= 0 then return false end
-            local char = first.Parent
-            if not char or not char.Parent then return false end
-            if _playerChars[char] then return false end
-            if char:GetAttribute("FriendlyToFlare") == true then return false end
-            local aimPart = getAimPart(char)
-            if not aimPart then return false end
-            return redirectHit(hitData, char, aimPart)
-        end
-
-        -- ② BTR：没有 Humanoid，命中数据的第一项可能是模型或部件
-        --   只有在手持 AT-7 时才重定向（别的枪打不动 BTR）
-        if not mbTargetBTR or not isHoldingAT7() then return false end
-
-        local btr = getBTRModelForAim()
-        if not btr or not isBTRTargetable(btr) then return false end
-
-        -- 判断这次命中是不是打到了 BTR 上（避免把打小怪的子弹拽到 BTR）
-        local hitModel = nil
-        if first and typeof(first) == "Instance" then
-            local node = first
-            local guard = 0
-            while node and guard < 20 do
-                if node == btr then hitModel = btr; break end
-                node = node.Parent
-                guard = guard + 1
-            end
-        end
-        if not hitModel and part and typeof(part) == "Instance" then
-            local node = part
-            local guard = 0
-            while node and guard < 20 do
-                if node == btr then hitModel = btr; break end
-                node = node.Parent
-                guard = guard + 1
-            end
-        end
-        -- 打中的不是 BTR 就不管
-        if not hitModel then return false end
-
-        local aimPart = getBTRAimPart(btr)
-        if not aimPart then return false end
-        return redirectHit(hitData, btr, aimPart)
     end
     local shieldCache = { list = {}, tick = 0 }
     local helmetCache = { list = {}, tick = 0 }
@@ -6563,11 +6379,6 @@ end
     end
     _G._ExamStates.mbTargetDrones = true
 
-    _G._ExamSetters.mbTargetBTR = function(v)
-        mbTargetBTR = v and true or false
-        _G._ExamStates.mbTargetBTR = mbTargetBTR
-    end
-    _G._ExamStates.mbTargetBTR = true
     autoFireBtn = Instance.new("TextButton", magicPage)
     autoFireBtn.Size = UDim2.new(1, -30, 0, 28)
     autoFireBtn.Position = UDim2.new(0, 15, 0, 196)
@@ -7723,8 +7534,6 @@ tab:Expand({
         Callback = function(idx) CB("mbTargetMode", idx) end,
     },
     Children = {
-        { Kind = "toggle", Key = "mbTargetBTR", Name = "手持AT-7时锁定BTR", Default = true,
-          Callback = function(v) CB("mbTargetBTR", v) end },
         { Kind = "toggle", Key = "mbTargetDrones", Name = "锁定BTR无人机", Default = true,
           Callback = function(v) CB("mbTargetDrones", v) end },
         { Kind = "toggle", Key = "mbShowRadius", Name = "360°锁定半径锁定显示", Default = false,
@@ -7894,7 +7703,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.3.8"
+local CURRENT_VERSION = "1.3.9"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
