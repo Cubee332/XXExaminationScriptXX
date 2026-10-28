@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.6.5  人体图位置修正（LayoutOrder）
+-- Examination v1.6.6  人体图尺寸与字号对齐 CDMUI
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -7254,7 +7254,14 @@ local function BodyPartPicker(tab, cfg)
     -- 主行
     local row = Instance.new("Frame")
     row.Name = "BodyRow"
-    row.Size = UDim2.new(1, 0, 0, 56)
+    -- 这些值对齐 CDMUI 的 LAYOUT（Layout 表未导出，直接写值）
+    local IS_M = CD.IsMobile
+    local ROW_H    = IS_M and 88 or 76
+    local TITLE_SZ = IS_M and 22 or 20
+    local DESC_SZ  = IS_M and 19 or 17
+    local ARROW_W  = IS_M and 38 or 32
+
+    row.Size = UDim2.new(1, 0, 0, ROW_H)
     row.BackgroundColor3 = T.row
     row.BackgroundTransparency = 0.15
     row.BorderSizePixel = 0
@@ -7273,13 +7280,13 @@ local function BodyPartPicker(tab, cfg)
     -- 标题
     local title = Instance.new("TextLabel")
     title.Name = "Title"
-    title.Size = UDim2.new(1, -100, 0, 22)
-    title.Position = UDim2.fromOffset(14, 10)
+    title.Size = UDim2.new(1, -100, 0, 24)
+    title.Position = UDim2.fromOffset(14, 14)
     title.BackgroundTransparency = 1
     title.Text = cfg.Name or "选择部位"
     title.TextColor3 = T.text
     title.Font = Enum.Font.GothamBold
-    title.TextSize = 15
+    title.TextSize = TITLE_SZ
     title.TextXAlignment = Enum.TextXAlignment.Left
     title.ZIndex = 5
     title.Active = false
@@ -7288,13 +7295,13 @@ local function BodyPartPicker(tab, cfg)
     -- 描述
     local desc = Instance.new("TextLabel")
     desc.Name = "Desc"
-    desc.Size = UDim2.new(1, -100, 0, 18)
-    desc.Position = UDim2.fromOffset(14, 32)
+    desc.Size = UDim2.new(1, -100, 0, 20)
+    desc.Position = UDim2.fromOffset(14, 40)
     desc.BackgroundTransparency = 1
     desc.Text = cfg.Desc or "点击人体图选择"
     desc.TextColor3 = T.textDim
     desc.Font = Enum.Font.Gotham
-    desc.TextSize = 12
+    desc.TextSize = DESC_SZ
     desc.TextXAlignment = Enum.TextXAlignment.Left
     desc.ZIndex = 5
     desc.Active = false
@@ -7303,15 +7310,15 @@ local function BodyPartPicker(tab, cfg)
     -- 箭头按钮
     local arrow = Instance.new("TextButton")
     arrow.Name = "Arrow"
-    arrow.Size = UDim2.fromOffset(30, 30)
-    arrow.Position = UDim2.new(1, -42, 0.5, -15)
+    arrow.Size = UDim2.fromOffset(ARROW_W, ARROW_W)
+    arrow.Position = UDim2.new(1, -(ARROW_W + 12), 0.5, -ARROW_W / 2)
     arrow.BackgroundColor3 = T.box
     arrow.BackgroundTransparency = 0.3
     arrow.BorderSizePixel = 0
     arrow.Text = "▼"
     arrow.TextColor3 = T.textDim
     arrow.Font = Enum.Font.GothamBold
-    arrow.TextSize = 12
+    arrow.TextSize = 14
     arrow.AutoButtonColor = false
     arrow.ZIndex = 20
     arrow.Active = true
@@ -8838,7 +8845,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.6.5"
+local CURRENT_VERSION = "1.6.6"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
