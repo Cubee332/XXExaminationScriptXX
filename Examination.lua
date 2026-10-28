@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.3.7  新增 AT-7 快速连发（绕过开火锁与自动丢弃）
+-- Examination v1.3.7  BTR 锁定框按模型尺寸自适应；AT-7 优先锁定 BTR
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -4619,118 +4619,6 @@ do
     end)
 end
 
--- ============ 模块 16.4: AT-7 快速连发 ============
--- AT-7 单发装填，开火后有 1.15s 的 FireLockDuration，
--- 之后还会自动丢弃（AutoDisposeAfterFire=true，DisposeDuration=2.7s）。
--- 这个模块持续把状态刷回「可开火」，让它能连着打。
-do
-    local at7FastFire = false
-    local loopConn = nil
-    local lastTool = nil
-
-    -- 找手上的 AT-7
-    local function getAT7()
-        local char = lp.Character
-        if not char then return nil end
-        local tool = char:FindFirstChildOfClass("Tool")
-        if not tool then return nil end
-        local n = tool.Name
-        if n == "AT-7" or n:find("AT%-7") or n:find("AT7") then
-            return tool
-        end
-        return nil
-    end
-
-    -- 把 AT-7 刷回可用状态
-    local function refreshAT7(tool)
-        if not tool or not tool.Parent then return end
-        pcall(function()
-            -- 已开火标记清零（这是锁住开火的关键）
-            if tool:GetAttribute("AT7Fired") == true then
-                tool:SetAttribute("AT7Fired", false)
-            end
-            -- 装填状态清零
-            if tool:GetAttribute("Reloading") == true then
-                tool:SetAttribute("Reloading", false)
-            end
-            -- 弹药补满
-            local clipSize = tool:GetAttribute("ClipSize")
-            local clipCur = tool:GetAttribute("ClipCurrent")
-            if type(clipSize) == "number" and type(clipCur) == "number"
-               and clipCur < clipSize then
-                tool:SetAttribute("ClipCurrent", clipSize)
-            end
-            -- 装填进度清零
-            local tickV = tool:GetAttribute("ReloadTick")
-            if type(tickV) == "number" and tickV ~= 0 then
-                tool:SetAttribute("ReloadTick", 0)
-            end
-            -- 已装填标记
-            if tool:GetAttribute("AT7Loaded") ~= true then
-                tool:SetAttribute("AT7Loaded", true)
-            end
-            -- 丢弃标记（这个最重要：自动丢弃后就不能再打了）
-            if tool:GetAttribute("AT7Disposed") == true then
-                tool:SetAttribute("AT7Disposed", false)
-            end
-            -- 开火锁时长压到最短
-            local lockDur = tool:GetAttribute("FireLockDuration")
-            if type(lockDur) == "number" and lockDur > 0.05 then
-                tool:SetAttribute("FireLockDuration", 0.05)
-            end
-            -- 关掉自动丢弃
-            if tool:GetAttribute("AutoDisposeAfterFire") == true then
-                tool:SetAttribute("AutoDisposeAfterFire", false)
-            end
-        end)
-    end
-
-    local function startLoop()
-        if loopConn then return end
-        loopConn = RunService.Heartbeat:Connect(function()
-            if not at7FastFire then return end
-            local tool = getAT7()
-            if tool then
-                lastTool = tool
-                refreshAT7(tool)
-            end
-        end)
-    end
-
-    local function stopLoop()
-        if loopConn then
-            pcall(function() loopConn:Disconnect() end)
-            loopConn = nil
-        end
-        -- 恢复被改过的属性
-        if lastTool and lastTool.Parent then
-            pcall(function()
-                lastTool:SetAttribute("FireLockDuration", 1.15)
-                lastTool:SetAttribute("AutoDisposeAfterFire", true)
-            end)
-        end
-        lastTool = nil
-    end
-
-    _G._ExamSetters.at7FastFire = function(v)
-        at7FastFire = v and true or false
-        _G._ExamStates.at7FastFire = at7FastFire
-        if at7FastFire then startLoop() else stopLoop() end
-    end
-    _G._ExamStates.at7FastFire = false
-
-    -- 换角色时重启
-    lp.CharacterAdded:Connect(function()
-        task.wait(1)
-        if at7FastFire then startLoop() end
-    end)
-
-    table.insert(cleanupFns, function()
-        at7FastFire = false
-        stopLoop()
-    end)
-end
-
 -- ============ 模块 16.5: 修复盾牌滑铲/疾跑 ============
 do
     local SLIDE_BADGE_ID = 3938313051889761
@@ -7694,9 +7582,6 @@ tab:Toggle({ Key = "muzzle", Name = "去除枪口遮挡", Desc = "贴墙时不�
     Callback = function(v) CB("muzzle", v) end })
 tab:Toggle({ Key = "shotgunNoPump", Name = "霰弹枪连发", Desc = "霰弹枪免拉栓动画", Default = false,
     Callback = function(v) CB("shotgunNoPump", v) end })
-tab:Toggle({ Key = "at7FastFire", Name = "AT-7 快速连发",
-    Desc = "绕过开火锁和自动丢弃，可以连着打（只对 AT-7 生效）", Default = false,
-    Callback = function(v) CB("at7FastFire", v) end })
 
 tab:Section({ Name = "换弹" })
 tab:Toggle({ Key = "fastReload", Name = "快速换弹", Desc = "换弹速度 2 倍", Default = false,
