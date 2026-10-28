@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.8.0  人体图与魔法子弹锁定部位真正联动
+-- Examination v1.8.1  自动肘击补齐处决判定（和魔法子弹同款）
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -3733,20 +3733,29 @@ do
     local lastBash = 0
 
     -- 判断一只感染怪现在能不能被肘击
-    --   不能：死亡 / 正在处决动画 / 瘫倒 / 复活中
+    --   和魔法子弹的 isDowned 判定完全对齐：
+    --     不能：死亡 / 正在处决动画 / 瘫倒 / 复活中 / PlatformStand
     --   不建议：免处决（打了不理会）
     local function bashableState(model, hum)
         if not hum then return false, "no-hum" end
         if hum.Health <= 0 then return false, "dead" end
 
-        local st = hum:GetState()
-        if st == Enum.HumanoidStateType.Dead then return false, "dead" end
+        local ok, st = pcall(function() return hum:GetState() end)
+        if ok then
+            if st == Enum.HumanoidStateType.Dead then return false, "dead" end
+            -- 处决动画期间 Humanoid 会被 PlatformStand，
+            -- 被打倒之类的是 FallingDown，这两种都不该再去打
+            if st == Enum.HumanoidStateType.PlatformStanding then return false, "executing" end
+            if st == Enum.HumanoidStateType.FallingDown then return false, "knocked" end
+            if st == Enum.HumanoidStateType.Physics then return false, "physics" end
+        end
 
-        -- 处决动画期间 Humanoid 会被 PlatformStand，
-        -- 被打倒之类的是 FallingDown，这两种都不该再去打
-        if st == Enum.HumanoidStateType.PlatformStanding then return false, "executing" end
-        if st == Enum.HumanoidStateType.FallingDown then return false, "knocked" end
-        if st == Enum.HumanoidStateType.Physics then return false, "physics" end
+        -- 处决中：和魔法子弹同款检测（属性 + 子对象）
+        if hum.PlatformStand == true then return false, "platform-stand" end
+        if model:FindFirstChild("BeingExecuted") ~= nil then return false, "executing" end
+        if model:FindFirstChild("IsBeingExecuted") ~= nil then return false, "executing" end
+        if model:GetAttribute("BeingExecuted") == true then return false, "executing" end
+        if model:GetAttribute("IsExecuting") == true then return false, "executing" end
 
         -- 复活中
         local br = model:FindFirstChild("IsBusyResurrecting")
@@ -3786,8 +3795,13 @@ do
         local hum = model:FindFirstChildOfClass("Humanoid")
         -- 必须活着：血量为 0 或已死亡状态都跳过，避免鞭尸
         if not hum or hum.Health <= 0 then return false end
-        local st = hum:GetState()
-        if st == Enum.HumanoidStateType.Dead then return false end
+        local ok, st = pcall(function() return hum:GetState() end)
+        if ok and st == Enum.HumanoidStateType.Dead then return false end
+        -- 处决中 / 瘫倒 / 复活中也不算有效目标（和魔法子弹一致）
+        if hum.PlatformStand == true then return false end
+        if ok and st == Enum.HumanoidStateType.PlatformStanding then return false end
+        if model:FindFirstChild("BeingExecuted") ~= nil then return false end
+        if model:GetAttribute("BeingExecuted") == true then return false end
         -- 有些尸体模型血还是正的，额外看 Humanoid 是否还能动
         if hum.WalkSpeed <= 0 and hum.Health <= 0 then return false end
 
@@ -9028,7 +9042,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.8.0"
+local CURRENT_VERSION = "1.8.1"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
