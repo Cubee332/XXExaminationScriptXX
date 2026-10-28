@@ -8425,9 +8425,179 @@ local function CB(key, value)
     if cb then pcall(cb, value) end
 end
 
+-- ============================================================
+-- 加载预热：把首次开启功能时会卡的工作提前做掉
+--   每个任务都是真实的优化动作，进度条反映实际完成度
+-- ============================================================
+local function buildWarmupTasks()
+    local tasks = {}
+
+    -- 1) 预扫描场景容器（透视/雷达/魔法子弹都要用）
+    --   首次扫描要走一遍 Workspace 树，人多时能卡 100~300ms
+    tasks[#tasks + 1] = {
+        Name = "扫描场景容器",
+        Run = function()
+            local found = {}
+            for _, name in ipairs({
+                "Characters", "Dummies", "AI", "NPCs",
+                "Enemies", "Mobs", "Monsters",
+            }) do
+                local f = workspace:FindFirstChild(name)
+                if f then found[#found + 1] = f end
+            end
+            _G._ExamContainersWarm = found
+
+            -- 顺便统计一下当前玩家数，雷达/人数显示要用
+            _G._ExamPlayerCountWarm = #game:GetService("Players"):GetPlayers()
+        end,
+    }
+
+    -- 2) 预热 Highlight 实例池
+    --   Roblox 的 Highlight 首次创建开销不小，预建 8 个循环复用
+    tasks[#tasks + 1] = {
+        Name = "预热高亮池",
+        Run = function()
+            local Lighting = game:GetService("Lighting")
+            local holder = Lighting:FindFirstChild("__ExamHLPool")
+            if not holder then
+                holder = Instance.new("Folder")
+                holder.Name = "__ExamHLPool"
+                holder.Parent = Lighting
+            end
+            local pool = {}
+            for i = 1, 8 do
+                local h = holder:FindFirstChild("HL_" .. i)
+                if not h then
+                    h = Instance.new("Highlight")
+                    h.Name = "HL_" .. i
+                    h.Enabled = false
+                    h.FillTransparency = 0.5
+                    h.OutlineTransparency = 0
+                    h.DepthMode = Enum.HighlightDepthMode.Occluded
+                    h.Parent = holder
+                end
+                pool[i] = h
+            end
+            _G._ExamHLPool = pool
+        end,
+    }
+
+    -- 3) 预热音频池
+    --   点击音效/命中音效如果每次 new Sound 会有明显延迟
+    tasks[#tasks + 1] = {
+        Name = "预热音频池",
+        Run = function()
+            local SoundService = game:GetService("SoundService")
+            local holder = SoundService:FindFirstChild("__ExamSoundPool")
+            if not holder then
+                holder = Instance.new("Folder")
+                holder.Name = "__ExamSoundPool"
+                holder.Parent = SoundService
+            end
+            local pool = {}
+            for i = 1, 4 do
+                local s = holder:FindFirstChild("Snd_" .. i)
+                if not s then
+                    s = Instance.new("Sound")
+                    s.Name = "Snd_" .. i
+                    s.Volume = 0.5
+                    s.Parent = holder
+                end
+                pool[i] = s
+            end
+            _G._ExamSoundPool = pool
+        end,
+    }
+
+    -- 4) 预热相机/鼠标引用
+    --   很多功能每帧都要读 CurrentCamera，缓存起来减少属性访问
+    tasks[#tasks + 1] = {
+        Name = "缓存运行环境",
+        Run = function()
+            _G._ExamCamWarm = workspace.CurrentCamera
+            _G._ExamUISWarm = game:GetService("UserInputService")
+            _G._ExamRunSvcWarm = game:GetService("RunService")
+            -- 预读一次玩家角色，避免首次透视时等待
+            local lp2 = game:GetService("Players").LocalPlayer
+            _G._ExamLPWarm = lp2
+            _G._ExamCharWarm = lp2 and lp2.Character
+        end,
+    }
+
+    -- 5) 预热魔法子弹模块（首次开启要建 FOV 圈、装 hook）
+    tasks[#tasks + 1] = {
+        Name = "初始化战斗模块",
+        Run = function()
+            -- 预热 FOV 圈的 GUI 容器（不显示，只是提前建好）
+            pcall(function()
+                local plrs = game:GetService("Players")
+                local me = plrs and plrs.LocalPlayer
+                local pgv = me and me:FindFirstChild("PlayerGui")
+                if pgv and not pgv:FindFirstChild("__ExamWarmGui") then
+                    local g = Instance.new("ScreenGui")
+                    g.Name = "__ExamWarmGui"
+                    g.ResetOnSpawn = false
+                    g.Enabled = false
+                    g.Parent = pgv
+                end
+            end)
+        end,
+    }
+
+    -- 6) 预热雷达点池
+    tasks[#tasks + 1] = {
+        Name = "预热雷达",
+        Run = function()
+            local plrs = game:GetService("Players")
+            local me = plrs and plrs.LocalPlayer
+            local pgv = me and me:FindFirstChild("PlayerGui")
+            if pgv then
+                local holder = pgv:FindFirstChild("__ExamRadarPool")
+                if not holder then
+                    holder = Instance.new("Folder")
+                    holder.Name = "__ExamRadarPool"
+                    holder.Parent = pgv
+                end
+                local pool = {}
+                for i = 1, 12 do
+                    local f = holder:FindFirstChild("Dot_" .. i)
+                    if not f then
+                        f = Instance.new("Frame")
+                        f.Name = "Dot_" .. i
+                        f.Size = UDim2.fromOffset(6, 6)
+                        f.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
+                        f.BorderSizePixel = 0
+                        f.Visible = false
+                        f.Parent = holder
+                    end
+                    pool[i] = f
+                end
+                _G._ExamRadarPool = pool
+            end
+        end,
+    }
+
+    -- 7) 收尾：清理内存碎片
+    tasks[#tasks + 1] = {
+        Name = "整理内存",
+        Run = function()
+            pcall(function() collectgarbage("step") end)
+            task.wait(0.03)
+        end,
+    }
+
+    return tasks
+end
+
+-- 是否启用真实预热（默认开启：让加载条真的在干活）
+--   关掉后加载动画只是装饰，不执行任何预热
+local USE_REAL_WARMUP = true
+
 local win = CDMUI.Create({
     Title = "控制面板",
     TopbarText = "控制面板",
+    RealLoading = USE_REAL_WARMUP,
+    Tasks = USE_REAL_WARMUP and buildWarmupTasks() or nil,
 })
 
 -- 让模块 setter 能反向同步 UI 状态
