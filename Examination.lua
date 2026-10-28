@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.2.9  全面检查：修正 radarFast 默认值不一致
+-- Examination v1.3.0  适配 CDMUI v1.6.0（状态单一数据源/错误隔离/折叠基类）
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -7388,7 +7388,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.2.9"
+local CURRENT_VERSION = "1.3.0"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
