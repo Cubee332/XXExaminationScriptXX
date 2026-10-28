@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.5.2  屏幕 HUD 位置修复与手机适配
+-- Examination v1.5.3  HUD 自动开启重试，修复数据不显示
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -7279,7 +7279,11 @@ do
         for i = 1, 40 do
             local CD = getgenv().CDMUI
             if CD and CD.SetHUDAll then
-                pcall(CD.SetHUDAll, hudOn, hudOn, hudOn)
+                -- 首次调用可能撞上 UI 还没建完，连续调几次确保生效
+                for _ = 1, 3 do
+                    pcall(CD.SetHUDAll, hudOn, hudOn, hudOn)
+                    task.wait(0.3)
+                end
                 return
             end
             task.wait(0.1)
@@ -7692,7 +7696,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.5.2"
+local CURRENT_VERSION = "1.5.3"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
