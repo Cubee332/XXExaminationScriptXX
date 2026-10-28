@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.7.5  修复重载时 HUD 提前出现的竞态
+-- Examination v1.7.6  HUD 关闭时先回位再左滑（两段动画）
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -7571,28 +7571,56 @@ do
         hudTweens.size = tw
     end
 
-    -- 出场：往左滑出 + 收起
-    -- 出场：往左侧平移滑出（高度不变）
+    -- 出场：两段动画，连贯执行
+    --   ① 先滑回默认位置（用户可能拖过）
+    --   ② 再往左滑出屏幕
     local function popOut(onDone)
         if not hudFrame then
             if onDone then onDone() end
             return
         end
-        local homeX = hudFrame.Position.X.Offset
-        local homeY = hudFrame.Position.Y.Offset
 
-        local info = TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.In)
-        local tw = TweenService:Create(hudFrame, info, {
-            Position = UDim2.new(0, homeX - BOX_W - 40, 0, homeY),
-        })
-        tw:Play()
-        tw.Completed:Connect(function()
-            -- 归位（下次打开从正确位置开始）
-            if hudFrame then
-                hudFrame.Position = UDim2.new(0, homeX, 0, homeY)
+        -- 默认位置（左下角，夜视仪上方）
+        local homeX = BOX_X
+        local fullH = PAD_Y * 2 + 3 * ROW_H + 2 * ROW_GAP
+        local homeY = math.max(0, BOX_TOP_Y - fullH) + getInsetY()
+
+        local curX = hudFrame.Position.X.Offset
+        local curY = hudFrame.Position.Y.Offset
+        local dist = math.abs(curX - homeX) + math.abs(curY - homeY)
+
+        local function slideOut()
+            if not hudFrame then
+                if onDone then onDone() end
+                return
             end
-            if onDone then onDone() end
-        end)
+            -- ② 往左滑出
+            local tw = TweenService:Create(hudFrame,
+                TweenInfo.new(0.30, Enum.EasingStyle.Back, Enum.EasingDirection.In),
+                { Position = UDim2.new(0, homeX - BOX_W - 40, 0, homeY) })
+            tw:Play()
+            tw.Completed:Connect(function()
+                -- 归位（下次打开从正确位置开始）
+                if hudFrame then
+                    hudFrame.Position = UDim2.new(0, homeX, 0, homeY)
+                end
+                if onDone then onDone() end
+            end)
+        end
+
+        if dist > 4 then
+            -- ① 偏离了默认位置：先滑回去
+            --   时长按距离算，最多 0.28 秒，保证连贯不拖沓
+            local dur = math.clamp(dist / 900, 0.10, 0.28)
+            local tw = TweenService:Create(hudFrame,
+                TweenInfo.new(dur, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+                { Position = UDim2.new(0, homeX, 0, homeY) })
+            tw:Play()
+            tw.Completed:Connect(slideOut)
+        else
+            -- 已经在原位：直接滑出
+            slideOut()
+        end
     end
 
     local function tweenSize(target, instant, dur, style, dir)
@@ -8977,7 +9005,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.7.5"
+local CURRENT_VERSION = "1.7.6"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
