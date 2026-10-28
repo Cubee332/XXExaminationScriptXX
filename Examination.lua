@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.7.9  修复人体图依赖 CDMUI 全局导致不显示
+-- Examination v1.8.0  人体图与魔法子弹锁定部位真正联动
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -6617,6 +6617,15 @@ end
         _G._ExamStates.mbAimPart = n
         pcall(refreshAimSelection)
         pcall(destroyLockBB)
+        -- 同步到小人图的勾选显示（如果存在）
+        pcall(function()
+            local w = getgenv().ExaminationWin
+            if not w then return end
+            local ctrl = w.Rows and w.Rows["mbAimPart"]
+            if ctrl and type(ctrl.SetSilent) == "function" then
+                ctrl.SetSilent(n)
+            end
+        end)
     end
     _G._ExamStates.mbAimPart = 1
     if _G._ExamAimPartIndex == nil then _G._ExamAimPartIndex = 1 end
@@ -8868,8 +8877,15 @@ BodyPartPicker(tab, {
     Key = "mbAimPart",
     Name = "锁定部位",
     Desc = "点击人体图选择锁定的部位",
-    Default = 1,
-    Callback = function(idx) CB("mbAimPart", idx) end,
+    Default = _G._ExamAimPartIndex or 1,
+    Callback = function(idx)
+        -- 关键：魔法子弹读的是 _G._ExamAimPartIndex，
+        --   这里必须同步写，否则选了部位也不生效
+        _G._ExamAimPartIndex = idx
+        _G._ExamStates.mbAimPart = idx
+        -- 再走统一回调（会触发 setter 和重新锁定）
+        CB("mbAimPart", idx)
+    end,
 })
 
 tab:Section({ Name = "开火" })
@@ -9012,7 +9028,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.7.9"
+local CURRENT_VERSION = "1.8.0"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
