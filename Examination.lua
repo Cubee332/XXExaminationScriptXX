@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.2.7  自动肘击自适应预判+多怪威胁评分+处决过滤；修正瞄准/范围等变量作用域
+-- Examination v1.2.8  锁定部位改折叠式(R6比例)；魔法子弹描述修正；清理重复 setter
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -2352,17 +2352,10 @@ do
     end
     _G._ExamStates.hlPlayerHP = false
 
-    -- 锁定部位（1=头部 2=身体 ...，与原版 AIM_PARTS 表对应）
-    _G._ExamSetters.mbAimPart = function(v)
-        local idx = tonumber(v)
-        if idx then
-            -- 模块 17 里自己拿着 getAimPartIndex()，
-            -- 这里写不到它，必须经过 _G 传一下
-            _G._ExamAimPartIndex = idx
-            _G._ExamStates.mbAimPart = idx
-        end
-    end
+    -- 锁定部位（1=头部 2=身体 ...）
+    -- 真正的 setter 在模块 17 里定义（需要刷新小人高亮），这里只初始化状态
     _G._ExamStates.mbAimPart = 1
+    if _G._ExamAimPartIndex == nil then _G._ExamAimPartIndex = 1 end
 
     -- 玩家血量/名称需要持续刷新（血量会变）
     spawn(function()
@@ -3592,10 +3585,10 @@ do
     --   默认开启：肘击对它们是有效的，只是会反伤
     local bashReflectBoss = true
     _G._ExamSetters.bashReflectBoss = function(v)
-        if v == 1 or v == "不击打" or v == "不反伤" or v == false then
+        if v == 1 or v == "否" or v == "不击打" or v == "不反伤" or v == false then
             bashReflectBoss = false
             _G._ExamStates.bashReflectBoss = 1
-        elseif v == 2 or v == "击打" or v == "可反伤" or v == true then
+        elseif v == 2 or v == "是" or v == "击打" or v == "可反伤" or v == true then
             bashReflectBoss = true
             _G._ExamStates.bashReflectBoss = 2
         else
@@ -3680,6 +3673,33 @@ do
         return ringParts
     end
 
+    -- 当前「有效触发半径」：自适应模式下会随延迟/速度浮动
+    -- 开环绕用这个值画，跟实际判定完全一致
+    local function currentTriggerRadius()
+        if not bashAdaptive then return PANIC_RANGE end
+
+        local char = lp.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        -- 自己的速度会拉长预判，触发距离也跟着变大
+        local myApproach = 0
+        if hrp then
+            myApproach = math.max(0, hrp.AssemblyLinearVelocity.Magnitude)
+        end
+
+        -- 实测延迟越大，提前量越多，触发半径也越大
+        local mult = 0.6 + (bashAdaptSens - 1) * 0.2
+        local lead = measuredLatency * mult
+        lead = lead + math.min(myApproach / 55, 0.20)
+
+        -- 用一个参考速度换算成“提前多少距离”
+        -- 怪物典型冲刺速度取 18（大多数怪在 14-26 之间）
+        local refSpeed = 18 + myApproach * 0.5
+        local extra = lead * refSpeed
+
+        -- 限制在合理范围，不能太夸张
+        return math.clamp(PANIC_RANGE + extra * 0.45, PANIC_RANGE, PANIC_RANGE + 8)
+    end
+
     local function updateRing()
         local char = lp.Character
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -3698,7 +3718,7 @@ do
             if hit then groundY = hit.Position.Y end
         end
         local base = Vector3.new(hrp.Position.X, groundY + 0.7, hrp.Position.Z)
-        local r = PANIC_RANGE
+        local r = currentTriggerRadius()
 
         if bashRangeMode == "line" then
             if facePart then destroyFace() end
@@ -3881,7 +3901,9 @@ do
     --   相对速度同时考虑：怪物冲过来 + 我自己冲过去
     local function shouldBashNow(target, dist)
         if not target then return false end
-        if dist <= PANIC_RANGE then return true end
+        -- 当前有效触发半径（自适应下会变大）
+        local eff = bashAdaptive and currentTriggerRadius() or PANIC_RANGE
+        if dist <= eff then return true end
         if dist > SCAN_RANGE then return false end
 
         local char = lp.Character
@@ -3933,7 +3955,7 @@ do
 
         -- 预测 lead 秒后会不会进入危险距离
         local eta = dist - approach * lead
-        return eta <= PANIC_RANGE
+        return eta <= eff
     end
 
     -- 手机 / PC 都能用：
@@ -6207,16 +6229,47 @@ end
         end
     end
     _G._ExamStates.mbWorldDistMax = mbWorldDistMax
+    -- 和上面的东西留点间距
+    local aimTitle = Instance.new("TextLabel", magicPage)
+    aimTitle.Size = UDim2.new(1, -30, 0, 26)
+    aimTitle.Position = UDim2.new(0, 15, 0, 266)
+    aimTitle.BackgroundTransparency = 1
+    aimTitle.Text = "锁定部位"
+    aimTitle.TextColor3 = Color3.new(1, 1, 1)
+    aimTitle.Font = Enum.Font.GothamBold
+    aimTitle.TextSize = 16
+    aimTitle.TextXAlignment = Enum.TextXAlignment.Left
+
+    local aimValue = Instance.new("TextLabel", magicPage)
+    aimValue.Size = UDim2.new(0, 90, 0, 26)
+    aimValue.Position = UDim2.new(1, -120, 0, 266)
+    aimValue.BackgroundTransparency = 1
+    aimValue.Text = "头部"
+    aimValue.TextColor3 = Color3.fromRGB(0, 220, 120)
+    aimValue.Font = Enum.Font.GothamBold
+    aimValue.TextSize = 16
+    aimValue.TextXAlignment = Enum.TextXAlignment.Right
+
+    -- 点标题展开/收起
+    local aimHit = Instance.new("TextButton", magicPage)
+    aimHit.Size = UDim2.new(1, -30, 0, 26)
+    aimHit.Position = UDim2.new(0, 15, 0, 266)
+    aimHit.BackgroundTransparency = 1
+    aimHit.Text = ""
+    aimHit.Active = true
+
     local charBox = Instance.new("Frame", magicPage)
-    charBox.Size = UDim2.new(1, -30, 0, 120)
+    charBox.Size = UDim2.new(1, -30, 0, 0)
     charBox.Position = UDim2.new(0, 15, 0, 294)
     charBox.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
-    charBox.BorderSizePixel = 0; charBox.Visible = false
+    charBox.BorderSizePixel = 0
+    charBox.ClipsDescendants = true
+    local charBoxOpen = false
     Instance.new("UICorner", charBox).CornerRadius = UDim.new(0, 6)
     local bodyColor = Color3.fromRGB(60, 60, 70)
     local bodyColorSel = Color3.fromRGB(0, 200, 100)
     local figure = Instance.new("Frame", charBox)
-    figure.Size = UDim2.new(0, 130, 1, 0)
+    figure.Size = UDim2.new(0, 200, 1, 0)
     figure.Position = UDim2.new(0, 0, 0, 0)
     figure.BackgroundTransparency = 1
     local partBtns = {}
@@ -6230,25 +6283,38 @@ end
         Instance.new("UICorner", b).CornerRadius = UDim.new(0, 3)
         return b
     end
-    partBtns[1] = makePartBtn(47, 5, 36, 26)
-    partBtns[2] = makePartBtn(47, 34, 36, 40)
-    partBtns[3] = makePartBtn(29, 34, 16, 40)
-    partBtns[4] = makePartBtn(85, 34, 16, 40)
-    partBtns[5] = makePartBtn(47, 78, 16, 38)
-    partBtns[6] = makePartBtn(67, 78, 16, 38)
-    local rightInfo = Instance.new("Frame", charBox)
-    rightInfo.Size = UDim2.new(1, -145, 1, 0)
-    rightInfo.Position = UDim2.new(0, 140, 0, 0)
-    rightInfo.BackgroundTransparency = 1
-    local infoValue = Instance.new("TextLabel", rightInfo)
-    infoValue.Size = UDim2.new(1, 0, 0, 40)
-    infoValue.Position = UDim2.new(0, 0, 0, 36)
-    infoValue.BackgroundTransparency = 1
-    infoValue.Text = "头部"
-    infoValue.TextColor3 = Color3.fromRGB(0, 220, 120)
-    infoValue.Font = Enum.Font.GothamBold
-    infoValue.TextSize = 22
-    infoValue.TextXAlignment = Enum.TextXAlignment.Left
+    -- 完全按 R6 官方比例：
+    --   Head  2x1x1  -> 宽：高 = 2:1
+    --   Torso 2x2x1  -> 正方形
+    --   四肢  1x2x1  -> 宽是躯干的一半，高和躯干一样
+    local SCALE = 24                       -- 1 stud = 24 px
+    local TORSO_W = 2 * SCALE              -- 48
+    local TORSO_H = 2 * SCALE              -- 48
+    local LIMB_W  = 1 * SCALE              -- 24（躯干的一半）
+    local LIMB_H  = TORSO_H                -- 48（和躯干同高）
+    local HEAD_W  = 2 * SCALE              -- 48
+    local HEAD_H  = 1 * SCALE              -- 24
+    local GAP = 0                          -- R6 本来就是贴着的，不留缝
+    local totalW = LIMB_W * 2 + TORSO_W + GAP * 2
+    local startX = math.floor((200 - totalW) / 2)
+
+    local headX = startX + math.floor((totalW - HEAD_W) / 2)
+    local headY = 4
+    local torsoY = headY + HEAD_H + 2
+    local torsoX = startX + LIMB_W + GAP
+    local armL_x = startX
+    local armR_x = torsoX + TORSO_W + GAP
+    local legY = torsoY + TORSO_H
+    local legL_x = torsoX + math.floor((TORSO_W - LIMB_W * 2) / 2)
+    local legR_x = legL_x + LIMB_W
+
+    partBtns[1] = makePartBtn(headX, headY, HEAD_W, HEAD_H)
+    partBtns[2] = makePartBtn(torsoX, torsoY, TORSO_W, TORSO_H)
+    partBtns[3] = makePartBtn(armL_x, torsoY, LIMB_W, LIMB_H)
+    partBtns[4] = makePartBtn(armR_x, torsoY, LIMB_W, LIMB_H)
+    partBtns[5] = makePartBtn(legL_x, legY, LIMB_W, LIMB_H)
+    partBtns[6] = makePartBtn(legR_x, legY, LIMB_W, LIMB_H)
+    local infoValue = aimValue
     local function refreshAimSelection()
         for i, btn in ipairs(partBtns) do
             if i == getAimPartIndex() then btn.BackgroundColor3 = bodyColorSel
@@ -6267,6 +6333,19 @@ end
         bindTap(btn, function() selectAim(i) end)
     end
     refreshAimSelection()
+
+    -- 展开 / 收起
+    local function setAimOpen(open)
+        charBoxOpen = open and true or false
+        local targetH = charBoxOpen and 152 or 0
+        game:GetService("TweenService"):Create(charBox,
+            TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+            { Size = UDim2.new(1, -30, 0, targetH) }):Play()
+    end
+    bindTap(aimHit, function()
+        setAimOpen(not charBoxOpen)
+    end)
+
     _G._ExamSetters.mbAimPart = function(v)
         local n = tonumber(v)
         if not n then n = 1 end
@@ -7112,7 +7191,7 @@ tab:Expand({
     Key = "magicBullet",
     Callback = function(v) CB("magicBullet", v) end,
     Name = "启用魔法子弹",
-    Desc = "自动锁定准星内最近的敌人",
+    Desc = "子弹自动追踪已锁定的目标，命中判定跟随锁定部位",
     Default = false,
     Children = {
         { Kind = "toggle", Key = "mbShowBox", Name = "显示 3D 头框", Default = true, Callback = function(v) CB("mbShowBox", v) end },
@@ -7184,10 +7263,10 @@ tab:Expand({
     Children = {
         { Kind = "number", Key = "bashRange", Name = "触发距离", Min = 4, Max = 20, Default = 9, Callback = function(v) CB("bashRange", v) end },
         { Kind = "toggle", Key = "bashShowRange", Name = "显示范围", Callback = function(v) CB("bashShowRange", v) end },
-        { Kind = "cycle", Key = "bashRangeMode", Name = "范围样式", Options = { "线状", "面状" }, Callback = function(v) CB("bashRangeMode", v) end },
-        { Kind = "cycle", Key = "bashAdaptive", Name = "预判模式", Options = { "固定", "自适应" }, Callback = function(v) CB("bashAdaptive", v) end },
+        { Kind = "cycle", Key = "bashRangeMode", Name = "范围样式", Options = { "线状", "面状" }, DefaultIndex = 1, Callback = function(v) CB("bashRangeMode", v) end },
+        { Kind = "cycle", Key = "bashAdaptive", Name = "预判模式", Options = { "固定", "自适应" }, DefaultIndex = 2, Callback = function(v) CB("bashAdaptive", v) end },
         { Kind = "number", Key = "bashAdaptSens", Name = "自适应灵敏度", Min = 1, Max = 5, Default = 3, Callback = function(v) CB("bashAdaptSens", v) end },
-        { Kind = "cycle", Key = "bashReflectBoss", Name = "反伤怪处理", Options = { "不反伤", "可反伤" }, Callback = function(v) CB("bashReflectBoss", v) end },
+        { Kind = "cycle", Key = "bashReflectBoss", Name = "是否击打反伤怪", Options = { "否", "是" }, DefaultIndex = 2, Callback = function(v) CB("bashReflectBoss", v) end },
     },
 })
 
@@ -7309,7 +7388,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.2.7"
+local CURRENT_VERSION = "1.2.8"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
