@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.4.0  清理实验性功能；BTR 血量透视 + 无人机锁定稳定版
+-- Examination v1.4.1  修复肘击范围圈不显示（PivotTo 改逐部件 CFrame）
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -3976,9 +3976,13 @@ do
                         * CFrame.Angles(0, -ang, 0)
                 end
             end
-            -- 整个 Model 跟着角色走，只动一次
-            if ringModel and ringModel.Parent then
-                pcall(function() ringModel:PivotTo(CFrame.new(base)) end)
+            -- 直接写每个部件的 CFrame。
+            -- 不能只用 Model:PivotTo：这个 Model 没有 PrimaryPart，
+            -- PivotTo 只更新内部 pivot，锚定的部件不会真的移动（实测卡在原点）。
+            for i, q in ipairs(parts) do
+                local ang = (i - 1) / SEGMENTS * math.pi * 2
+                q.CFrame = CFrame.new(base) * CFrame.new(math.cos(ang) * r, 0, math.sin(ang) * r)
+                    * CFrame.Angles(0, -ang, 0)
             end
         else
             if #ringParts > 0 then destroyRing() end
@@ -7704,7 +7708,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.4.0"
+local CURRENT_VERSION = "1.4.1"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
