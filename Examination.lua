@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.3.5  无人机 ESP 标签去重；手持 AT-7 时优先锁定 BTR
+-- Examination v1.3.6  BTR 锁定框按模型尺寸+距离自适应，套住整车；AT-7 优先级保护
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -5989,14 +5989,36 @@ end
         if lockBB and lockBB.Parent then pcall(function() lockBB:Destroy() end) end
         lockBB = nil; lockTarget = nil
     end
-    local function createLockBB(part)
+    -- 锁定框：旋转的方框
+    --   part  : 挂载点
+    --   model : 大目标（BTR / 无人机）传进来，框会按模型尺寸放大并居中
+    local function createLockBB(part, model)
         local bb = Instance.new("BillboardGui")
         bb.Name = "Exam_MB_LockBB"
         bb.Adornee = part
-        bb.Size = UDim2.new(mbBBSizeStuds, 0, mbBBSizeStuds, 0)
-        bb.StudsOffsetWorldSpace = Vector3.new(0, mbStudsOffsetY, 0)
         bb.AlwaysOnTop = true; bb.LightInfluence = 0
         bb.MaxDistance = mbWorldDistMax; bb.ResetOnSpawn = false
+
+        if model then
+            -- 大目标：BillboardGui 的 Size 是屏幕像素，
+            --   要让框「贴住」整个模型，得按距离换算像素尺寸，
+            --   所以这里记下模型的真实尺寸，交给 updateLockBB 每帧算。
+            local ok, cf, size = pcall(function() return model:GetBoundingBox() end)
+            if ok and cf and size then
+                bb.Size = UDim2.fromOffset(200, 200)   -- 先给个初值，每帧会重算
+                bb:SetAttribute("__lockBoxSide", math.max(size.X, size.Z) * 1.15)
+                bb:SetAttribute("__lockBoxIsModel", true)
+                local off = cf.Position - part.Position
+                bb.StudsOffsetWorldSpace = Vector3.new(off.X, off.Y, off.Z)
+            else
+                bb.Size = UDim2.new(mbBBSizeStuds, 0, mbBBSizeStuds, 0)
+                bb.StudsOffsetWorldSpace = Vector3.new(0, mbStudsOffsetY, 0)
+            end
+        else
+            bb.Size = UDim2.new(mbBBSizeStuds, 0, mbBBSizeStuds, 0)
+            bb.StudsOffsetWorldSpace = Vector3.new(0, mbStudsOffsetY, 0)
+        end
+
         bb.Parent = part
         local f = Instance.new("Frame", bb)
         f.Name = "BoxFrame"
@@ -6036,12 +6058,36 @@ end
             if lockBB and lockBB.Parent then lockBB.Enabled = false end
             return
         end
+
+        local isBig = isVehicle(target.model) or isBTRDrone(target.model)
+
         if lockTarget ~= target.model or not lockBB or not lockBB.Parent
            or lockBB.Adornee ~= aimPart then
             if lockBB and lockBB.Parent then pcall(function() lockBB:Destroy() end) end
-            lockBB = createLockBB(aimPart)
+            lockBB = createLockBB(aimPart, isBig and target.model or nil)
             lockTarget = target.model
-        else lockBB.Enabled = true end
+        else
+            lockBB.Enabled = true
+        end
+
+        -- 大目标：按距离换算像素尺寸，让框始终贴住模型
+        if isBig and lockBB and lockBB.Parent then
+            local side = lockBB:GetAttribute("__lockBoxSide")
+            if side and side > 0 then
+                local cam = Workspace.CurrentCamera
+                if cam then
+                    local dist = (cam.CFrame.Position - aimPart.Position).Magnitude
+                    if dist > 0.1 then
+                        -- 视角高度换算：屏幕像素 / 距离
+                        local vs = cam.ViewportSize
+                        local fovRad = math.rad(cam.FieldOfView)
+                        local pxPerStud = (vs.Y * 0.5) / (math.tan(fovRad * 0.5) * dist)
+                        local px = math.clamp(side * pxPerStud, 24, 1400)
+                        lockBB.Size = UDim2.fromOffset(math.floor(px), math.floor(px))
+                    end
+                end
+            end
+        end
     end
     local mbOrigFire = nil
     local mbOrigRaycastNew = nil
@@ -7790,7 +7836,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.3.5"
+local CURRENT_VERSION = "1.3.6"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
