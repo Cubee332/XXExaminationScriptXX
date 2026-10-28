@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.3.0  适配 CDMUI v1.6.0（状态单一数据源/错误隔离/折叠基类）
+-- Examination v1.3.1  卸载清理延迟加长，避免顶栏动画未播完就被删
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -7388,7 +7388,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.3.0"
+local CURRENT_VERSION = "1.3.1"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
@@ -7549,7 +7549,8 @@ unloadRow = tab:ClickableRow({
         end)
 
         -- 2) 等动画真正播完再清理
-        task.delay(0.32, function()
+        --    顶栏动画时长 = 0.24 * 0.85 + 0.04 兜底 ≈ 0.25s，这里留 0.10s 余量
+        task.delay(0.35, function()
             -- 先停功能（可能耗时，放前面）
             pcall(function()
                 if _G._ExamLastCleanup then _G._ExamLastCleanup() end
