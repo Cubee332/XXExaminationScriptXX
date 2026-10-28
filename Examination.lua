@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.7.8  屏幕信息描述简化
+-- Examination v1.7.9  修复人体图依赖 CDMUI 全局导致不显示
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -7260,10 +7260,16 @@ end
 -- 人体部位选择器（用 CDMUI 的 Tab:Custom 预设行）
 -- ============================================================
 local function BodyPartPicker(tab, cfg)
+    -- 不用 getgenv().CDMUI：加载时序不同可能拿不到
+    -- 从 tab.Window 拿主题（一定存在）
     local CD = getgenv().CDMUI
-    if not CD then return nil end
-
-    local T = CD.Theme
+    local T = (CD and CD.Theme) or {
+        text = Color3.fromRGB(240, 240, 245),
+        textDim = Color3.fromRGB(150, 150, 162),
+        accent = Color3.fromRGB(120, 170, 255),
+        row = Color3.fromRGB(30, 30, 36),
+        rowChild = Color3.fromRGB(24, 24, 30),
+    }
     local key = cfg.Key or cfg.key
     local selected = cfg.Default or 1
 
@@ -7366,7 +7372,8 @@ local function BodyPartPicker(tab, cfg)
             for idx, entry in pairs(buttons) do
                 entry.btn.Activated:Connect(function()
                     -- 和库内其他控件一样播点击音效
-                    if CD and CD.PlayClick then pcall(CD.PlayClick) end
+                    local cd2 = getgenv().CDMUI
+                    if cd2 and cd2.PlayClick then pcall(cd2.PlayClick) end
                     selected = idx
                     render()
                     if cfg.Callback then pcall(cfg.Callback, idx) end
@@ -9005,7 +9012,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.7.8"
+local CURRENT_VERSION = "1.7.9"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
