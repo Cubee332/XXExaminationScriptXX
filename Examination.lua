@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.4.2  肘击范围圈性能优化（48段改单圆盘，点击开销降96%）
+-- Examination v1.4.3  肘击范围圈单圆盘方案，修复不显示与掉帧
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -3997,19 +3997,15 @@ do
 
             local disc = ringModel and ringModel:FindFirstChild("ExamBashRingDisc")
             if disc then
-                -- 尺寸只在半径变了才重设
+                -- 尺寸变了才重设
                 if lastRingRadius ~= r then
                     lastRingRadius = r
                     disc.Size = Vector3.new(0.05, r * 2, r * 2)
                 end
-                -- 位置只在真的动了才更新（站着不动就不用每帧改变换）
-                if lastBaseX == nil
-                   or math.abs(base.X - lastBaseX) > 0.02
-                   or math.abs(base.Y - lastBaseY) > 0.02
-                   or math.abs(base.Z - lastBaseZ) > 0.02 then
-                    lastBaseX, lastBaseY, lastBaseZ = base.X, base.Y, base.Z
-                    ringModel:PivotTo(CFrame.new(base) * CFrame.Angles(0, 0, math.rad(90)))
-                end
+                -- 每次都直接写 CFrame。
+                --   单个 Part 写 CFrame 几乎零开销，
+                --   而 PivotTo + 缓存判断那一套反而容易因为状态不同步而失效。
+                disc.CFrame = CFrame.new(base) * CFrame.Angles(0, 0, math.rad(90))
             end
                 else
             if #ringParts > 0 then destroyRing() end
@@ -7740,7 +7736,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.4.2"
+local CURRENT_VERSION = "1.4.3"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
