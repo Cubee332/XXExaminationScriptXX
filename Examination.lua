@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.4.6  新增屏幕显示 FPS/延迟/人数；修复卸载鼠标
+-- Examination v1.4.6  FPS/延迟/人数 默认开启
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -7235,9 +7235,20 @@ do
     _G._ExamSetters.hudPing = setHud("ping")
     _G._ExamSetters.hudPlayers = setHud("players")
 
-    _G._ExamStates.hudFPS = false
-    _G._ExamStates.hudPing = false
-    _G._ExamStates.hudPlayers = false
+    _G._ExamStates.hudFPS = true
+    _G._ExamStates.hudPing = true
+    _G._ExamStates.hudPlayers = true
+
+    -- 默认开启：等 CDMUI 就绪后自动打开
+    task.defer(function()
+        task.wait(0.6)
+        local CD = getgenv().CDMUI
+        if CD and CD.SetHUD then
+            pcall(CD.SetHUD, "fps", true)
+            pcall(CD.SetHUD, "ping", true)
+            pcall(CD.SetHUD, "players", true)
+        end
+    end)
 end
 
 local function CB(key, value)
@@ -7421,11 +7432,11 @@ tab:Toggle({ Key = "worldESP", Name = "全图高亮", Desc = "全图变亮", Def
     Callback = function(v) CB("worldESP", v) end })
 
 tab:Section({ Name = "界面" })
-tab:Toggle({ Key = "hudFPS", Name = "显示 FPS", Desc = "在屏幕上显示实时帧率", Default = false,
+tab:Toggle({ Key = "hudFPS", Name = "显示 FPS", Desc = "在屏幕上显示实时帧率", Default = true,
     Callback = function(v) CB("hudFPS", v) end })
-tab:Toggle({ Key = "hudPing", Name = "显示延迟", Desc = "在屏幕上显示服务器往返延迟（ms）", Default = false,
+tab:Toggle({ Key = "hudPing", Name = "显示延迟", Desc = "在屏幕上显示服务器往返延迟（ms）", Default = true,
     Callback = function(v) CB("hudPing", v) end })
-tab:Toggle({ Key = "hudPlayers", Name = "显示服务器人数", Desc = "在屏幕上显示当前服务器人数（上限 20）", Default = false,
+tab:Toggle({ Key = "hudPlayers", Name = "显示服务器人数", Desc = "在屏幕上显示当前服务器人数（上限 20）", Default = true,
     Callback = function(v) CB("hudPlayers", v) end })
 tab:Toggle({ Key = "chatForce", Name = "聊天框强制显示", Desc = "始终显示聊天窗口", Default = false,
     Callback = function(v) CB("chatForce", v) end })
