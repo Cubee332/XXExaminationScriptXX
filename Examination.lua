@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.3.9  移除 BTR 锁定相关功能（AT-7 优先级、BTR 锁定框），保留血量透视与无人机锁定
+-- Examination v1.4.0  清理实验性功能；BTR 血量透视 + 无人机锁定稳定版
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -7452,6 +7452,7 @@ tab:Toggle({ Key = "muzzle", Name = "去除枪口遮挡", Desc = "贴墙时不�
 tab:Toggle({ Key = "shotgunNoPump", Name = "霰弹枪连发", Desc = "霰弹枪免拉栓动画", Default = false,
     Callback = function(v) CB("shotgunNoPump", v) end })
 
+
 tab:Section({ Name = "换弹" })
 tab:Toggle({ Key = "fastReload", Name = "快速换弹", Desc = "换弹速度 2 倍", Default = false,
     Callback = function(v) CB("fastReload", v) end })
@@ -7703,7 +7704,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.3.9"
+local CURRENT_VERSION = "1.4.0"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
