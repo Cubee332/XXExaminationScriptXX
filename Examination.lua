@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.4.6  FPS/延迟/人数 默认开启
+-- Examination v1.5.1  卸载时清 HUD 与断开全部连接
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -338,6 +338,18 @@ pcall(safeCleanup)
 
 _G._ExamLastCleanup = function()
     for _, fn in ipairs(cleanupFns) do pcall(fn) end
+
+    -- 清掉 CDMUI 的 HUD（独立 ScreenGui，不在面板子树里）
+    pcall(function()
+        local CD = getgenv().CDMUI
+        if CD and CD.DestroyHUD then CD.DestroyHUD() end
+    end)
+
+    -- 断开 CDMUI 登记的所有连接（防止重载后残留）
+    pcall(function()
+        local CD = getgenv().CDMUI
+        if CD and CD.DisconnectEverything then CD.DisconnectEverything() end
+    end)
     if _G._ExamMB and _G._ExamMB.magicOffFn then pcall(_G._ExamMB.magicOffFn) end
     if _G._ExamFH and _G._ExamFH.forceOffFn then pcall(_G._ExamFH.forceOffFn) end
     if _G.ControlPanelUI and _G.ControlPanelUI.Parent then
@@ -7221,32 +7233,56 @@ end
 -- 屏幕信息 HUD（FPS / 延迟 / 人数）
 --   用 CDMUI 的 HUD 模块，独立 ScreenGui，不拦截任何输入
 do
-    local function setHud(kind)
-        return function(v)
-            local CD = getgenv().CDMUI
-            if CD and CD.SetHUD then
-                pcall(CD.SetHUD, kind, v and true or false)
-            end
-            _G._ExamStates["hud" .. kind:sub(1,1):upper() .. kind:sub(2)] = v and true or false
+    -- 三项永远一起显示（已合并成一个总开关）
+    local hudOn = true
+
+    local function pushHudState()
+        local CD = getgenv().CDMUI
+        if not CD then return end
+        if CD.SetHUDAll then
+            pcall(CD.SetHUDAll, hudOn, hudOn, hudOn)
+        elseif CD.SetHUD then
+            pcall(CD.SetHUD, "fps", hudOn)
+            pcall(CD.SetHUD, "ping", hudOn)
+            pcall(CD.SetHUD, "players", hudOn)
         end
     end
 
-    _G._ExamSetters.hudFPS = setHud("fps")
-    _G._ExamSetters.hudPing = setHud("ping")
-    _G._ExamSetters.hudPlayers = setHud("players")
 
-    _G._ExamStates.hudFPS = true
-    _G._ExamStates.hudPing = true
-    _G._ExamStates.hudPlayers = true
+    -- 总开关：关掉就整块隐藏，打开就恢复子项状态
+    _G._ExamSetters.hudOn = function(v)
+        hudOn = v and true or false
+        _G._ExamStates.hudOn = hudOn
+        pushHudState()
+    end
+    _G._ExamStates.hudOn = true
 
-    -- 默认开启：等 CDMUI 就绪后自动打开
-    task.defer(function()
-        task.wait(0.6)
+    -- 重置位置
+    _G._ExamSetters.hudResetPos = function(v)
+        if not v then return end
         local CD = getgenv().CDMUI
-        if CD and CD.SetHUD then
-            pcall(CD.SetHUD, "fps", true)
-            pcall(CD.SetHUD, "ping", true)
-            pcall(CD.SetHUD, "players", true)
+        if CD and CD.ResetHUDPosition then
+            pcall(CD.ResetHUDPosition)
+        end
+        -- 复位后自动弹回关（它是个动作型开关）
+        task.defer(function()
+            _G._ExamStates.hudResetPos = false
+            if CALLBACK_SINK then pcall(CALLBACK_SINK, "hudResetPos", false) end
+        end)
+    end
+    _G._ExamStates.hudResetPos = false
+
+    _G._ExamStates.hudOn = true
+
+    -- 默认开启：轮询等 CDMUI 就绪
+    task.spawn(function()
+        for i = 1, 40 do
+            local CD = getgenv().CDMUI
+            if CD and CD.SetHUDAll then
+                pcall(CD.SetHUDAll, hudOn, hudOn, hudOn)
+                return
+            end
+            task.wait(0.1)
         end
     end)
 end
@@ -7432,12 +7468,19 @@ tab:Toggle({ Key = "worldESP", Name = "全图高亮", Desc = "全图变亮", Def
     Callback = function(v) CB("worldESP", v) end })
 
 tab:Section({ Name = "界面" })
-tab:Toggle({ Key = "hudFPS", Name = "显示 FPS", Desc = "在屏幕上显示实时帧率", Default = true,
-    Callback = function(v) CB("hudFPS", v) end })
-tab:Toggle({ Key = "hudPing", Name = "显示延迟", Desc = "在屏幕上显示服务器往返延迟（ms）", Default = true,
-    Callback = function(v) CB("hudPing", v) end })
-tab:Toggle({ Key = "hudPlayers", Name = "显示服务器人数", Desc = "在屏幕上显示当前服务器人数（上限 20）", Default = true,
-    Callback = function(v) CB("hudPlayers", v) end })
+tab:Expand({
+    Key = "hudOn",
+    Name = "屏幕信息显示",
+    Desc = "在屏幕上显示 FPS / 延迟 / 服务器人数",
+    Default = true,
+    Callback = function(v) CB("hudOn", v) end,
+    Children = {
+        { Kind = "action", Key = "hudResetPos", Name = "重置位置",
+          IconImage = "rbxassetid://112173305232811",
+          IconColor = Color3.fromRGB(220, 225, 235),
+          OnClick = function() CB("hudResetPos", true) end },
+    },
+})
 tab:Toggle({ Key = "chatForce", Name = "聊天框强制显示", Desc = "始终显示聊天窗口", Default = false,
     Callback = function(v) CB("chatForce", v) end })
 
@@ -7649,7 +7692,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.4.6"
+local CURRENT_VERSION = "1.5.1"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
