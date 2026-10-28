@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.6.3  人体部位选择器；HUD 开关与动画修复
+-- Examination v1.6.4  人体图完整实现；HUD 纯平移入场/出场动画
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -7227,56 +7227,19 @@ end
 -- ============================================================
 
 -- ============================================================
--- 人体部位选择器（独立实现，不依赖 CDMUI）
---   用法：BodyPartPicker(tab, { Key, Name, Desc, Default, Callback })
---   外观：展开式分组 + R6 比例方块人体图
+-- 人体部位选择器（独立实现）
+--   自己管理折叠 + 人体图，不依赖 Expand 内部机制
 -- ============================================================
 local function BodyPartPicker(tab, cfg)
     local CD = getgenv().CDMUI
     if not CD then return nil end
 
+    local T = CD.Theme
+    local SZ = CD.Size
     local key = cfg.Key or cfg.key
-    local parts = cfg.Parts or {
-        { Key = 1, Name = "头部" },
-        { Key = 2, Name = "躯干" },
-        { Key = 3, Name = "左臂" },
-        { Key = 4, Name = "右臂" },
-        { Key = 5, Name = "左腿" },
-        { Key = 6, Name = "右腿" },
-    }
-
     local selected = cfg.Default or 1
 
-    -- 用 Expand 做外壳，Children 里塞一个人体图
-    local ctrl = tab:Expand({
-        Key = key .. "_exp",
-        Name = cfg.Name or "选择部位",
-        Desc = cfg.Desc or "点击人体图选择",
-        Default = false,
-        Children = {
-            { Kind = "action", Key = key .. "_noop", Name = " ", Icon = " " },
-        },
-    })
-
-    if not ctrl then return nil end
-
-    -- 找 Expand 的子容器，把人体图塞进去
-    local childRow
-    for _, d in ipairs(tab.Container:GetChildren()) do
-        if d.Name == "ChildRow" and d:GetAttribute("__expandKey") == key .. "_exp" then
-            childRow = d
-            break
-        end
-    end
-    if not childRow then return ctrl end
-
-    -- 清掉占位 action
-    for _, d in ipairs(childRow:GetChildren()) do
-        if d.Name == "ChildRow" or (d:IsA("Frame") and d.LayoutOrder > 0) then
-            pcall(function() d:Destroy() end)
-        end
-    end
-
+    -- 尺寸
     local TOTAL_W = 180
     local S = math.floor(TOTAL_W / 4)
     local TW, TH = 2 * S, 2 * S
@@ -7286,9 +7249,98 @@ local function BodyPartPicker(tab, cfg)
     local GAP = 3
     local totalW = AW + GAP + TW + GAP + AW
     local totalH = HY + GAP + TH + GAP + LH
+    local CH_H = totalH + 32          -- 子容器高度
 
+    -- 主行
+    local row = Instance.new("Frame")
+    row.Name = "BodyRow"
+    row.Size = UDim2.new(1, 0, 0, 56)
+    row.BackgroundColor3 = T.row
+    row.BackgroundTransparency = 0.15
+    row.BorderSizePixel = 0
+    row.LayoutOrder = (tab.Items or 0) + 1
+    row.ZIndex = 4
+    row.Active = false
+    row.Parent = tab.Container
+    table.insert(tab.Widgets or {}, row)
+
+    local rc = Instance.new("UICorner")
+    rc.CornerRadius = UDim.new(0, SZ.radius)
+    rc.Parent = row
+
+    -- 标题
+    local title = Instance.new("TextLabel")
+    title.Name = "Title"
+    title.Size = UDim2.new(1, -100, 0, 22)
+    title.Position = UDim2.fromOffset(14, 10)
+    title.BackgroundTransparency = 1
+    title.Text = cfg.Name or "选择部位"
+    title.TextColor3 = T.text
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 15
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.ZIndex = 5
+    title.Active = false
+    title.Parent = row
+
+    -- 描述
+    local desc = Instance.new("TextLabel")
+    desc.Name = "Desc"
+    desc.Size = UDim2.new(1, -100, 0, 18)
+    desc.Position = UDim2.fromOffset(14, 32)
+    desc.BackgroundTransparency = 1
+    desc.Text = cfg.Desc or "点击人体图选择"
+    desc.TextColor3 = T.textDim
+    desc.Font = Enum.Font.Gotham
+    desc.TextSize = 12
+    desc.TextXAlignment = Enum.TextXAlignment.Left
+    desc.ZIndex = 5
+    desc.Active = false
+    desc.Parent = row
+
+    -- 箭头按钮
+    local arrow = Instance.new("TextButton")
+    arrow.Name = "Arrow"
+    arrow.Size = UDim2.fromOffset(30, 30)
+    arrow.Position = UDim2.new(1, -42, 0.5, -15)
+    arrow.BackgroundColor3 = T.box
+    arrow.BackgroundTransparency = 0.3
+    arrow.BorderSizePixel = 0
+    arrow.Text = "▼"
+    arrow.TextColor3 = T.textDim
+    arrow.Font = Enum.Font.GothamBold
+    arrow.TextSize = 12
+    arrow.AutoButtonColor = false
+    arrow.ZIndex = 20
+    arrow.Active = true
+    arrow.Parent = row
+
+    local ac = Instance.new("UICorner")
+    ac.CornerRadius = UDim.new(0, 5)
+    ac.Parent = arrow
+
+    -- 子容器
+    local childRow = Instance.new("Frame")
+    childRow.Name = "BodyChild"
+    childRow.Size = UDim2.new(1, -12, 0, 0)
+    childRow.BackgroundColor3 = T.rowChild
+    childRow.BackgroundTransparency = 0.15
+    childRow.BorderSizePixel = 0
+    childRow.LayoutOrder = row.LayoutOrder * 1000 + 1
+    childRow.ClipsDescendants = true
+    childRow.Visible = false
+    childRow.ZIndex = 4
+    childRow.Active = false
+    childRow.Parent = tab.Container
+    table.insert(tab.Widgets or {}, childRow)
+
+    local cc = Instance.new("UICorner")
+    cc.CornerRadius = UDim.new(0, SZ.radius)
+    cc.Parent = childRow
+
+    -- 人体图画布
     local canvas = Instance.new("Frame")
-    canvas.Name = "BodyCanvas"
+    canvas.Name = "Canvas"
     canvas.Size = UDim2.fromOffset(totalW, totalH)
     canvas.Position = UDim2.new(0.5, -totalW / 2, 0, 16)
     canvas.BackgroundTransparency = 1
@@ -7297,7 +7349,7 @@ local function BodyPartPicker(tab, cfg)
 
     local COL_IDLE = Color3.fromRGB(58, 58, 68)
     local COL_HOVER = Color3.fromRGB(78, 78, 92)
-    local COL_ON = Color3.fromRGB(120, 170, 255)
+    local COL_ON = T.accent
 
     local buttons = {}
 
@@ -7379,20 +7431,52 @@ local function BodyPartPicker(tab, cfg)
 
     render()
 
+    -- 折叠
+    local open = false
+    local function setOpen(v, animate)
+        open = v and true or false
+        if open then
+            childRow.Visible = true
+            if animate then
+                TweenService:Create(childRow,
+                    TweenInfo.new(0.24, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+                    { Size = UDim2.new(1, -12, 0, CH_H) }):Play()
+            else
+                childRow.Size = UDim2.new(1, -12, 0, CH_H)
+            end
+        else
+            if animate then
+                TweenService:Create(childRow,
+                    TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+                    { Size = UDim2.new(1, -12, 0, 0) }):Play()
+            else
+                childRow.Size = UDim2.new(1, -12, 0, 0)
+            end
+            task.delay(animate and 0.22 or 0, function()
+                if childRow and childRow.Parent and not open then
+                    childRow.Visible = false
+                end
+            end)
+        end
+        TweenService:Create(arrow, TweenInfo.new(0.2),
+            { Rotation = open and 180 or 0 }):Play()
+    end
+
+    arrow.Activated:Connect(function()
+        setOpen(not open, true)
+    end)
+
+    tab.Items = (tab.Items or 0) + 2
+
     return {
         Set = function(v) if type(v) == "number" and buttons[v] then selected = v; render() end end,
         SetSilent = function(v) if type(v) == "number" and buttons[v] then selected = v; render() end end,
         Get = function() return selected end,
+        Expand = function(v) setOpen(v, true) end,
     }
 end
 
 
--- ============================================================
--- CDMUI 控制面板
--- ============================================================
--- 统一回调入口
--- 屏幕信息 HUD（FPS / 延迟 / 人数）
---   用 CDMUI 的 HUD 模块，独立 ScreenGui，不拦截任何输入
 -- ============================================================
 -- 屏幕 HUD 浮层（FPS / 延迟 / 服务器人数）
 --   独立实现，不依赖 CDMUI
@@ -7544,6 +7628,7 @@ do
     end
 
     -- 入场：从左滑入 + 展开（高度从 0 撑到满）
+    -- 入场：从左侧平移滑入（高度不变）
     local function popIn()
         local sc = ensureScale()
         if sc then sc.Scale = 1 end
@@ -7553,20 +7638,21 @@ do
         local homeY = hudFrame.Position.Y.Offset
         local fullH = PAD_Y * 2 + 3 * ROW_H + 2 * ROW_GAP
 
-        -- 起点：左移 40px + 高度 0 + 底边对齐（展开时向上长）
-        hudFrame.Position = UDim2.new(0, homeX - 40, 0, homeY + fullH)
-        hudFrame.Size = UDim2.fromOffset(BOX_W, 0)
+        -- 高度先给满，只动 X
+        hudFrame.Size = UDim2.fromOffset(BOX_W, fullH)
+        -- 起点：完全在屏幕左侧外
+        hudFrame.Position = UDim2.new(0, homeX - BOX_W - 30, 0, homeY)
 
-        local info = TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+        local info = TweenInfo.new(0.42, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
         local tw = TweenService:Create(hudFrame, info, {
             Position = UDim2.new(0, homeX, 0, homeY),
-            Size = UDim2.fromOffset(BOX_W, fullH),
         })
         tw:Play()
         hudTweens.size = tw
     end
 
     -- 出场：往左滑出 + 收起
+    -- 出场：往左侧平移滑出（高度不变）
     local function popOut(onDone)
         if not hudFrame then
             if onDone then onDone() end
@@ -7574,21 +7660,16 @@ do
         end
         local homeX = hudFrame.Position.X.Offset
         local homeY = hudFrame.Position.Y.Offset
-        -- 不用 desiredHeight()：它在本函数之后才定义，前向引用会拿到 nil
-        local fullH = PAD_Y * 2 + 3 * ROW_H + 2 * ROW_GAP
-        local info = TweenInfo.new(0.26, Enum.EasingStyle.Back, Enum.EasingDirection.In)
+
+        local info = TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.In)
         local tw = TweenService:Create(hudFrame, info, {
-            Position = UDim2.new(0, homeX - 50, 0, homeY + fullH),
-            Size = UDim2.fromOffset(BOX_W, 0),
+            Position = UDim2.new(0, homeX - BOX_W - 40, 0, homeY),
         })
         tw:Play()
         tw.Completed:Connect(function()
-            -- 只恢复位置，Size 保持 0
-            --   之前这里把 Size 设回 fullH，导致「关闭」后框又变回满高，
-            --   看起来就像关不掉
+            -- 归位（下次打开从正确位置开始）
             if hudFrame then
-                hudFrame.Position = UDim2.new(0, homeX, 0, homeY + fullH)
-                hudFrame.Size = UDim2.fromOffset(BOX_W, 0)
+                hudFrame.Position = UDim2.new(0, homeX, 0, homeY)
             end
             if onDone then onDone() end
         end)
@@ -8755,7 +8836,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.6.3"
+local CURRENT_VERSION = "1.6.4"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
