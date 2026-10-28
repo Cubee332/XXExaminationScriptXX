@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.7.0  对齐 CDMUI v2.1.0（预设/依赖/配置）
+-- Examination v1.7.1  卸载时 HUD 播退场动画；小人图切页恢复
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -8264,6 +8264,32 @@ do
         stopLoop(); destroyHud()
     end
 
+    -- 带退场动画的销毁：先播左滑出场，动画完再销毁
+    --   卸载脚本时用这个，避免 HUD 突然消失
+    function HUD.DestroyHUDWithAnim(onDone)
+        if not hudFrame or not hudFrame.Parent then
+            HUD.DestroyHUD()
+            if onDone then task.defer(onDone) end
+            return
+        end
+
+        stopLoop()
+
+        local homeX = hudFrame.Position.X.Offset
+        local homeY = hudFrame.Position.Y.Offset
+        local W = hudFrame.AbsoluteSize.X
+
+        local tw = TweenService:Create(hudFrame,
+            TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.In),
+            { Position = UDim2.new(0, homeX - W - 40, 0, homeY) })
+        tw:Play()
+        tw.Completed:Connect(function()
+            showFPS, showPing, showPlayers = false, false, false
+            destroyHud()
+            if onDone then task.defer(onDone) end
+        end)
+    end
+
     if lp then
         lp.CharacterAdded:Connect(function()
             task.wait(1)
@@ -8738,7 +8764,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.7.0"
+local CURRENT_VERSION = "1.7.1"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
@@ -8819,11 +8845,8 @@ getgenv().ExaminationWin = win
 
 -- 卸载按钮
 local unloadRow
-unloadRow = tab:ClickableRow({
-    Name = "卸载脚本",
-    Desc = "停止所有功能并关闭面板",
-    Arrow = true,
-    Callback = function()
+-- 卸载流程（抽成具名函数，便于外部调用和测试）
+local function doUnload()
         if unloadRow then
             unloadRow.SetBusy(true)
             unloadRow.Set("正在卸载…", "正在清理功能…")
@@ -8915,12 +8938,19 @@ unloadRow = tab:ClickableRow({
                 end
             end)
 
-            -- 先停功能（可能耗时，放前面）
-            pcall(function()
-                if _G._ExamLastCleanup then _G._ExamLastCleanup() end
-            end)
+            -- 先播 HUD 退场动画，动画播完后再继续清理
+            --   用 onDone 回调串联，避免在 task.delay 里用 task.wait
+            local finished = false
+            local function continueCleanup()
+                if finished then return end
+                finished = true
 
-            -- 再销毁所有 UI 实例（一次性，不留给后续）
+                -- 停功能
+                pcall(function()
+                    if _G._ExamLastCleanup then _G._ExamLastCleanup() end
+                end)
+
+                -- 再销毁所有 UI 实例（一次性，不留给后续）
             pcall(function()
                 local cg2 = game:GetService("CoreGui")
                 local pg2 = lp:FindFirstChild("PlayerGui")
@@ -8958,12 +8988,34 @@ unloadRow = tab:ClickableRow({
                 end
             end)
 
-            pcall(function() _G._ExamLastCleanup = nil end)
-            pcall(function() _G._CDMUILastCleanup = nil end)
-            pcall(function() getgenv().ExaminationUILoaded = nil end)
-            pcall(function() getgenv().ExaminationWin = nil end)
+                pcall(function() _G._ExamLastCleanup = nil end)
+                pcall(function() _G._CDMUILastCleanup = nil end)
+                pcall(function() getgenv().ExaminationUILoaded = nil end)
+                pcall(function() getgenv().ExaminationWin = nil end)
+            end
+
+            -- 启动：有 HUD 就播退场动画，没有就直接清理
+            if HUD and HUD.DestroyHUDWithAnim then
+                local ok = pcall(function()
+                    HUD.DestroyHUDWithAnim(continueCleanup)
+                end)
+                if not ok then continueCleanup() end
+                -- 兜底：1 秒后强制完成（防止动画回调没触发）
+                task.delay(1.0, continueCleanup)
+            else
+                continueCleanup()
+            end
         end)
-    end,
+end
+
+-- 暴露给外部（也可用于测试）
+_G._ExamUnload = doUnload
+
+unloadRow = tab:ClickableRow({
+    Name = "卸载脚本",
+    Desc = "停止所有功能并关闭面板",
+    Arrow = true,
+    Callback = doUnload,
 })
 
 getgenv().ExaminationUILoaded = true
