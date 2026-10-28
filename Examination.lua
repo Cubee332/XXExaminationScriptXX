@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.2.8  锁定部位改折叠式(R6比例)；魔法子弹描述修正；清理重复 setter
+-- Examination v1.2.9  全面检查：修正 radarFast 默认值不一致
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -7317,7 +7317,7 @@ tab:Expand({
     Desc = "小地图上显示所有敌人",
     Default = false,
     Children = {
-        { Kind = "toggle", Key = "radarFast", Name = "高刷新率", Desc = "刷新更频繁，会吃点性能", Default = false, Callback = function(v) CB("radarFast", v) end },
+        { Kind = "toggle", Key = "radarFast", Name = "高刷新率", Desc = "刷新更频繁，会吃点性能", Default = true, Callback = function(v) CB("radarFast", v) end },
         { Kind = "toggle", Key = "radarArrow", Name = "朝向箭头", Default = true, Callback = function(v) CB("radarArrow", v) end },
     },
 })
@@ -7388,7 +7388,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.2.8"
+local CURRENT_VERSION = "1.2.9"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
