@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.4.4  删除自适应預判模块，肘击范围固定
+-- Examination v1.4.5  修复面状模式圈不显示（Cylinder 改 Block）
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -3929,19 +3929,21 @@ do
                 disc.Size = Vector3.new(r * 2, 0.05, r * 2)
                 disc.CFrame = CFrame.new(base)
             end
-                else
+        else
             if #ringParts > 0 then destroyRing() end
             if not facePart or not facePart.Parent then
+                -- 用薄方板平放，SurfaceGui 贴顶面画实心圆
+                --   之前用 Cylinder + Face=Top，那个 Top 是圆柱的窄边带，
+                --   转了 90° 之后几乎看不见，所以面状模式一直不显示
                 local q = Instance.new("Part")
                 q.Name = "ExamBashFace"
-                q.Shape = Enum.PartType.Cylinder
+                q.Shape = Enum.PartType.Block
                 q.Material = Enum.Material.SmoothPlastic
                 q.Color = Color3.fromRGB(255, 190, 60)
                 q.Transparency = 1          -- 本体不渲染，靠 SurfaceGui 画
                 q.CanCollide = false; q.CanQuery = false; q.CanTouch = false
                 q.Anchored = true; q.CastShadow = false
                 q.Parent = Workspace
-                -- 圆面用顶面 SurfaceGui 画，AlwaysOnTop 保证穿透显示
                 local sg = Instance.new("SurfaceGui")
                 sg.Name = "Face"; sg.Face = Enum.NormalId.Top
                 sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
@@ -3957,11 +3959,15 @@ do
                 f.BackgroundTransparency = 0.82
                 f.BorderSizePixel = 0
                 f.Parent = sg
+                -- 圆角拉满 = 圆形
+                local c = Instance.new("UICorner")
+                c.CornerRadius = UDim.new(1, 0)
+                c.Parent = f
                 facePart = q
             end
             local d = r * 2
-            facePart.Size = Vector3.new(0.1, d, d)
-            facePart.CFrame = CFrame.new(base) * CFrame.Angles(0, 0, math.rad(90))
+            facePart.Size = Vector3.new(d, 0.05, d)
+            facePart.CFrame = CFrame.new(base)
         end
     end
 
@@ -7604,7 +7610,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.4.4"
+local CURRENT_VERSION = "1.4.5"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
