@@ -7227,15 +7227,13 @@ end
 -- ============================================================
 
 -- ============================================================
--- 人体部位选择器（独立实现）
---   自己管理折叠 + 人体图，不依赖 Expand 内部机制
+-- 人体部位选择器（用 CDMUI 的 Tab:Custom 预设行）
 -- ============================================================
 local function BodyPartPicker(tab, cfg)
     local CD = getgenv().CDMUI
     if not CD then return nil end
 
     local T = CD.Theme
-    local SZ = CD.Size
     local key = cfg.Key or cfg.key
     local selected = cfg.Default or 1
 
@@ -7249,240 +7247,121 @@ local function BodyPartPicker(tab, cfg)
     local GAP = 3
     local totalW = AW + GAP + TW + GAP + AW
     local totalH = HY + GAP + TH + GAP + LH
-    local CH_H = totalH + 32          -- 子容器高度
-
-    -- 主行
-    local row = Instance.new("Frame")
-    row.Name = "BodyRow"
-    -- 这些值对齐 CDMUI 的 LAYOUT（Layout 表未导出，直接写值）
-    local IS_M = CD.IsMobile
-    local ROW_H    = IS_M and 88 or 76
-    local TITLE_SZ = IS_M and 22 or 20
-    local DESC_SZ  = IS_M and 19 or 17
-    local ARROW_W  = IS_M and 38 or 32
-
-    row.Size = UDim2.new(1, 0, 0, ROW_H)
-    row.BackgroundColor3 = T.row
-    row.BackgroundTransparency = 0.15
-    row.BorderSizePixel = 0
-    -- LayoutOrder 必须和 CDMUI baseRow 一致：(Items+1)*1000
-    --   之前写成 (Items or 0)+1，值太小直接排到最前面去了
-    row.LayoutOrder = ((tab.Items or 0) + 1) * 1000
-    row.ZIndex = 4
-    row.Active = false
-    row.Parent = tab.Container
-    table.insert(tab.Widgets or {}, row)
-
-    local rc = Instance.new("UICorner")
-    rc.CornerRadius = UDim.new(0, SZ.radius)
-    rc.Parent = row
-
-    -- 标题
-    local title = Instance.new("TextLabel")
-    title.Name = "Title"
-    title.Size = UDim2.new(1, -100, 0, 24)
-    title.Position = UDim2.fromOffset(14, 14)
-    title.BackgroundTransparency = 1
-    title.Text = cfg.Name or "选择部位"
-    title.TextColor3 = T.text
-    title.Font = Enum.Font.GothamBold
-    title.TextSize = TITLE_SZ
-    title.TextXAlignment = Enum.TextXAlignment.Left
-    title.ZIndex = 5
-    title.Active = false
-    title.Parent = row
-
-    -- 描述
-    local desc = Instance.new("TextLabel")
-    desc.Name = "Desc"
-    desc.Size = UDim2.new(1, -100, 0, 20)
-    desc.Position = UDim2.fromOffset(14, 40)
-    desc.BackgroundTransparency = 1
-    desc.Text = cfg.Desc or "点击人体图选择"
-    desc.TextColor3 = T.textDim
-    desc.Font = Enum.Font.Gotham
-    desc.TextSize = DESC_SZ
-    desc.TextXAlignment = Enum.TextXAlignment.Left
-    desc.ZIndex = 5
-    desc.Active = false
-    desc.Parent = row
-
-    -- 箭头按钮
-    local arrow = Instance.new("TextButton")
-    arrow.Name = "Arrow"
-    arrow.Size = UDim2.fromOffset(ARROW_W, ARROW_W)
-    arrow.Position = UDim2.new(1, -(ARROW_W + 12), 0.5, -ARROW_W / 2)
-    arrow.BackgroundColor3 = T.box
-    arrow.BackgroundTransparency = 0.3
-    arrow.BorderSizePixel = 0
-    arrow.Text = "▼"
-    arrow.TextColor3 = T.textDim
-    arrow.Font = Enum.Font.GothamBold
-    arrow.TextSize = 14
-    arrow.AutoButtonColor = false
-    arrow.ZIndex = 20
-    arrow.Active = true
-    arrow.Parent = row
-
-    local ac = Instance.new("UICorner")
-    ac.CornerRadius = UDim.new(0, 5)
-    ac.Parent = arrow
-
-    -- 子容器
-    local childRow = Instance.new("Frame")
-    childRow.Name = "BodyChild"
-    childRow.Size = UDim2.new(1, -12, 0, 0)
-    childRow.BackgroundColor3 = T.rowChild
-    childRow.BackgroundTransparency = 0.15
-    childRow.BorderSizePixel = 0
-    childRow.LayoutOrder = row.LayoutOrder + 1
-    childRow.ClipsDescendants = true
-    childRow.Visible = false
-    childRow.ZIndex = 4
-    childRow.Active = false
-    childRow.Parent = tab.Container
-    table.insert(tab.Widgets or {}, childRow)
-
-    local cc = Instance.new("UICorner")
-    cc.CornerRadius = UDim.new(0, SZ.radius)
-    cc.Parent = childRow
-
-    -- 人体图画布
-    local canvas = Instance.new("Frame")
-    canvas.Name = "Canvas"
-    canvas.Size = UDim2.fromOffset(totalW, totalH)
-    canvas.Position = UDim2.new(0.5, -totalW / 2, 0, 16)
-    canvas.BackgroundTransparency = 1
-    canvas.ZIndex = 5
-    canvas.Parent = childRow
-
-    local COL_IDLE = Color3.fromRGB(58, 58, 68)
-    local COL_HOVER = Color3.fromRGB(78, 78, 92)
-    local COL_ON = T.accent
+    local CH_H = totalH + 32
 
     local buttons = {}
+    local render
 
-    local function mkPart(px, py, w, h, idx, label)
-        local b = Instance.new("TextButton")
-        b.Name = "Part" .. idx
-        b.Size = UDim2.fromOffset(w, h)
-        b.Position = UDim2.fromOffset(px, py)
-        b.BackgroundColor3 = COL_IDLE
-        b.BorderSizePixel = 0
-        b.Text = ""
-        b.AutoButtonColor = false
-        b.ZIndex = 6
-        b.Active = true
-        b.Parent = canvas
+    local ctrl = tab:Custom({
+        Key = key,
+        Name = cfg.Name or "选择部位",
+        Desc = cfg.Desc or "点击人体图选择",
+        Height = CH_H,
+        Arrow = true,
+        Builder = function(inner, ctx)
+            local canvas = Instance.new("Frame")
+            canvas.Name = "Canvas"
+            canvas.Size = UDim2.fromOffset(totalW, totalH)
+            canvas.Position = UDim2.new(0.5, -totalW / 2, 0, 0)
+            canvas.BackgroundTransparency = 1
+            canvas.ZIndex = 5
+            canvas.Parent = inner
 
-        local c = Instance.new("UICorner")
-        c.CornerRadius = UDim.new(0, 3)
-        c.Parent = b
+            local COL_IDLE = Color3.fromRGB(58, 58, 68)
+            local COL_HOVER = Color3.fromRGB(78, 78, 92)
+            local COL_ON = T.accent
 
-        local lbl = Instance.new("TextLabel")
-        lbl.Name = "Lbl"
-        lbl.Size = UDim2.new(1, 0, 1, 0)
-        lbl.BackgroundTransparency = 1
-        lbl.Text = label or ""
-        lbl.TextColor3 = Color3.fromRGB(150, 150, 162)
-        lbl.Font = Enum.Font.GothamBold
-        lbl.TextSize = 12
-        lbl.TextXAlignment = Enum.TextXAlignment.Center
-        lbl.TextYAlignment = Enum.TextYAlignment.Center
-        lbl.ZIndex = 7
-        lbl.Active = false
-        lbl.Parent = b
+            local function mkPart(px, py, w, h, idx, label)
+                local b = Instance.new("TextButton")
+                b.Name = "Part" .. idx
+                b.Size = UDim2.fromOffset(w, h)
+                b.Position = UDim2.fromOffset(px, py)
+                b.BackgroundColor3 = COL_IDLE
+                b.BorderSizePixel = 0
+                b.Text = ""
+                b.AutoButtonColor = false
+                b.ZIndex = 6
+                b.Active = true
+                b.Parent = canvas
 
-        buttons[idx] = { btn = b, lbl = lbl }
-        return b
-    end
+                local c = Instance.new("UICorner")
+                c.CornerRadius = UDim.new(0, 3)
+                c.Parent = b
 
-    local xArmL = 0
-    local xTorso = AW + GAP
-    local xArmR = xTorso + TW + GAP
-    local yHead = 0
-    local yTorso = HY + GAP
-    local yLegs = yTorso + TH + GAP
+                local lbl = Instance.new("TextLabel")
+                lbl.Name = "Lbl"
+                lbl.Size = UDim2.new(1, 0, 1, 0)
+                lbl.BackgroundTransparency = 1
+                lbl.Text = label or ""
+                lbl.TextColor3 = Color3.fromRGB(150, 150, 162)
+                lbl.Font = Enum.Font.GothamBold
+                lbl.TextSize = 12
+                lbl.TextXAlignment = Enum.TextXAlignment.Center
+                lbl.TextYAlignment = Enum.TextYAlignment.Center
+                lbl.ZIndex = 7
+                lbl.Active = false
+                lbl.Parent = b
 
-    mkPart(xTorso + (TW - HX) / 2, yHead, HX, HY, 1, "头")
-    mkPart(xTorso, yTorso, TW, TH, 2, "躯干")
-    mkPart(xArmL, yTorso, AW, AH, 3, "左臂")
-    mkPart(xArmR, yTorso, AW, AH, 4, "右臂")
-    local legsX = xTorso + (TW - LW * 2 - GAP) / 2
-    mkPart(legsX, yLegs, LW, LH, 5, "左腿")
-    mkPart(legsX + LW + GAP, yLegs, LW, LH, 6, "右腿")
-
-    local function render()
-        for idx, entry in pairs(buttons) do
-            if idx == selected then
-                entry.btn.BackgroundColor3 = COL_ON
-                entry.lbl.TextColor3 = Color3.fromRGB(18, 18, 22)
-            else
-                entry.btn.BackgroundColor3 = COL_IDLE
-                entry.lbl.TextColor3 = Color3.fromRGB(150, 150, 162)
+                buttons[idx] = { btn = b, lbl = lbl }
+                return b
             end
-        end
-    end
 
-    for idx, entry in pairs(buttons) do
-        entry.btn.Activated:Connect(function()
-            selected = idx
-            render()
-            if cfg.Callback then pcall(cfg.Callback, idx) end
-        end)
-        entry.btn.MouseEnter:Connect(function()
-            if idx ~= selected then entry.btn.BackgroundColor3 = COL_HOVER end
-        end)
-        entry.btn.MouseLeave:Connect(function()
-            if idx ~= selected then entry.btn.BackgroundColor3 = COL_IDLE end
-        end)
-    end
+            local xArmL = 0
+            local xTorso = AW + GAP
+            local xArmR = xTorso + TW + GAP
+            local yHead = 0
+            local yTorso = HY + GAP
+            local yLegs = yTorso + TH + GAP
 
-    render()
+            mkPart(xTorso + (TW - HX) / 2, yHead, HX, HY, 1, "头")
+            mkPart(xTorso, yTorso, TW, TH, 2, "躯干")
+            mkPart(xArmL, yTorso, AW, AH, 3, "左臂")
+            mkPart(xArmR, yTorso, AW, AH, 4, "右臂")
+            local legsX = xTorso + (TW - LW * 2 - GAP) / 2
+            mkPart(legsX, yLegs, LW, LH, 5, "左腿")
+            mkPart(legsX + LW + GAP, yLegs, LW, LH, 6, "右腿")
 
-    -- 折叠
-    local open = false
-    local function setOpen(v, animate)
-        open = v and true or false
-        if open then
-            childRow.Visible = true
-            if animate then
-                TweenService:Create(childRow,
-                    TweenInfo.new(0.24, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
-                    { Size = UDim2.new(1, -12, 0, CH_H) }):Play()
-            else
-                childRow.Size = UDim2.new(1, -12, 0, CH_H)
-            end
-        else
-            if animate then
-                TweenService:Create(childRow,
-                    TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-                    { Size = UDim2.new(1, -12, 0, 0) }):Play()
-            else
-                childRow.Size = UDim2.new(1, -12, 0, 0)
-            end
-            task.delay(animate and 0.22 or 0, function()
-                if childRow and childRow.Parent and not open then
-                    childRow.Visible = false
+            render = function()
+                for idx, entry in pairs(buttons) do
+                    if idx == selected then
+                        entry.btn.BackgroundColor3 = COL_ON
+                        entry.lbl.TextColor3 = Color3.fromRGB(18, 18, 22)
+                    else
+                        entry.btn.BackgroundColor3 = COL_IDLE
+                        entry.lbl.TextColor3 = Color3.fromRGB(150, 150, 162)
+                    end
                 end
-            end)
+            end
+
+            for idx, entry in pairs(buttons) do
+                entry.btn.Activated:Connect(function()
+                    selected = idx
+                    render()
+                    if cfg.Callback then pcall(cfg.Callback, idx) end
+                end)
+                entry.btn.MouseEnter:Connect(function()
+                    if idx ~= selected then entry.btn.BackgroundColor3 = COL_HOVER end
+                end)
+                entry.btn.MouseLeave:Connect(function()
+                    if idx ~= selected then entry.btn.BackgroundColor3 = COL_IDLE end
+                end)
+            end
+
+            render()
+        end,
+    })
+
+    if ctrl and ctrl.Set then
+        ctrl.Set = function(v)
+            if type(v) == "number" and buttons[v] then
+                selected = v
+                if render then render() end
+            end
         end
-        TweenService:Create(arrow, TweenInfo.new(0.2),
-            { Rotation = open and 180 or 0 }):Play()
+        ctrl.Get = function() return selected end
     end
 
-    arrow.Activated:Connect(function()
-        setOpen(not open, true)
-    end)
-
-    tab.Items = (tab.Items or 0) + 1
-
-    return {
-        Set = function(v) if type(v) == "number" and buttons[v] then selected = v; render() end end,
-        SetSilent = function(v) if type(v) == "number" and buttons[v] then selected = v; render() end end,
-        Get = function() return selected end,
-        Expand = function(v) setOpen(v, true) end,
-    }
+    return ctrl
 end
 
 
@@ -8432,18 +8311,32 @@ do
 
     _G._ExamStates.hudOn = true
 
-    -- 默认开启：轮询等 CDMUI 就绪
+    -- 默认开启：等面板完全构建完成后再启动 HUD
+    --   之前只等 CDMUI 加载，但面板还在构建中，HUD 会撞上半成品状态
     task.spawn(function()
-        for i = 1, 40 do
-            if HUD and HUD.SetHUDAll then
-                -- 首次调用可能撞上 UI 还没建完，连续调几次确保生效
-                for _ = 1, 3 do
-                    pcall(HUD.SetHUDAll, hudOn, hudOn, hudOn)
-                    task.wait(0.3)
-                end
-                return
+        -- 1. 等 CDMUI 就绪
+        for _ = 1, 100 do
+            if HUD and HUD.SetHUDAll then break end
+            task.wait(0.05)
+        end
+
+        -- 2. 等面板窗口真正建完（ExaminationWin 存在 + Panel 有尺寸）
+        local win = getgenv().ExaminationWin
+        for _ = 1, 200 do
+            win = getgenv().ExaminationWin
+            if win and win.Panel and win.Panel.AbsoluteSize.Y > 100 then break end
+            task.wait(0.05)
+        end
+
+        -- 3. 再等一帧，让布局算完
+        task.wait(0.1)
+
+        -- 4. 现在启动 HUD
+        if HUD and HUD.SetHUDAll then
+            for _ = 1, 3 do
+                pcall(HUD.SetHUDAll, hudOn, hudOn, hudOn)
+                task.wait(0.3)
             end
-            task.wait(0.1)
         end
     end)
 end
