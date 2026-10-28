@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.2.6  卸载流程优化：动画播完再清理，无残留
+-- Examination v1.2.7  自动肘击自适应预判+多怪威胁评分+处决过滤；修正瞄准/范围等变量作用域
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -619,6 +619,8 @@ do
     local nodMode = 1      -- 1=低头固定 2=抬头固定 3=来回切
     local nodSwapped = false
     local nodTimer = 0
+    local nodNeckRef = nil
+    local nodBasePos = nil
     local nodConn = nil
 
     ------------------------------------------------------------------
@@ -709,8 +711,6 @@ do
 
     -- 关键：游戏每帧重写 Neck.C0 的旋转部分，只写 Transform 会被压制。
     -- 所以要同时锁住 C0（保留位置、朝向归零）和 Transform（我们设的角度）。
-    local nodNeckRef = nil
-    local nodBasePos = nil
 
     -- 实测结论：这个游戏里 Motor6D.Transform 不起作用，
     -- 只有直接写 Neck.C0 才能改头部朝向。
@@ -798,6 +798,9 @@ do
     local headNeckRef = nil
     local headLastT = nil
 
+    -- 必须在 stopHeadSpin 之前声明，否则里面清的是另一个变量
+    local headStartT = nil
+
     local function stopHeadSpin()
         if headSpinConn then headSpinConn:Disconnect(); headSpinConn = nil end
         headSpinOn = false
@@ -809,7 +812,6 @@ do
     end
 
     -- 用绝对时间算角度，避免逐帧累加误差
-    local headStartT = nil
 
     local function headTickAbs()
         local char = lp.Character
@@ -2353,7 +2355,12 @@ do
     -- 锁定部位（1=头部 2=身体 ...，与原版 AIM_PARTS 表对应）
     _G._ExamSetters.mbAimPart = function(v)
         local idx = tonumber(v)
-        if idx then mbAimPartIndex = idx end
+        if idx then
+            -- 模块 17 里自己拿着 getAimPartIndex()，
+            -- 这里写不到它，必须经过 _G 传一下
+            _G._ExamAimPartIndex = idx
+            _G._ExamStates.mbAimPart = idx
+        end
     end
     _G._ExamStates.mbAimPart = 1
 
@@ -3450,6 +3457,52 @@ do
     local INTERVAL = 0.22       -- 两次肘击最小间隔
     local lastBash = 0
 
+    -- 判断一只感染怪现在能不能被肘击
+    --   不能：死亡 / 正在处决动画 / 瘫倒 / 复活中
+    --   不建议：免处决（打了不理会）
+    local function bashableState(model, hum)
+        if not hum then return false, "no-hum" end
+        if hum.Health <= 0 then return false, "dead" end
+
+        local st = hum:GetState()
+        if st == Enum.HumanoidStateType.Dead then return false, "dead" end
+
+        -- 处决动画期间 Humanoid 会被 PlatformStand，
+        -- 被打倒之类的是 FallingDown，这两种都不该再去打
+        if st == Enum.HumanoidStateType.PlatformStanding then return false, "executing" end
+        if st == Enum.HumanoidStateType.FallingDown then return false, "knocked" end
+        if st == Enum.HumanoidStateType.Physics then return false, "physics" end
+
+        -- 复活中
+        local br = model:FindFirstChild("IsBusyResurrecting")
+        if br and br:IsA("BoolValue") and br.Value then return false, "resurrecting" end
+
+        return true, "ok"
+    end
+
+    -- 免处决的怪打了不会有效果，记录一下供上层决策
+    local function isImmuneToExecution(model)
+        local imm = model:FindFirstChild("ImmuneToExecution")
+        return imm ~= nil and imm:IsA("BoolValue") and imm.Value == true
+    end
+
+    -- 反伤风险判定：
+    --   ImmuneToExecution + TaserImmune 同时成立的（奇美拉、Gilbert 这类）
+    --   肘击有效果，但会把伤害反弹回来
+    local function isReflectRisk(model)
+        local imm = model:FindFirstChild("ImmuneToExecution")
+        local taserImm = model:FindFirstChild("TaserImmune")
+        local hasImm = imm ~= nil and imm:IsA("BoolValue") and imm.Value == true
+        local hasTaserImm = taserImm ~= nil and taserImm:IsA("BoolValue") and taserImm.Value == true
+        return hasImm and hasTaserImm
+    end
+
+    -- 完全打不动：既免处决、又不是反伤类型的（目前没发现，保留位）
+    -- 这两个类型都需要用 EID 之外的手段，肘击本身不负责
+    local function isBashIneffective(model)
+        return isReflectRisk(model)
+    end
+
     local function isInfected(model)
         if not model or not model:IsA("Model") then return false end
         -- 排除玩家
@@ -3471,6 +3524,9 @@ do
     local SCAN_RANGE = 22
     -- 怪物进到这个距离就一定按，不等它贴脸（可由 UI 调）
     local PANIC_RANGE = 9
+    -- 必须在 setter 之前声明：否则 setter 里写的是另一个变量，
+    -- 环的尺寸缓存永远不会被清掉，改半径后圈不跟着变
+    local lastRingRadius = nil
     _G._ExamSetters.bashRange = function(v)
         local n = tonumber(v)
         if not n then return end
@@ -3482,6 +3538,74 @@ do
     _G._ExamStates.bashRange = 9
 
     ------------------------------------------------------------------
+    -- 自适应模式
+    --   固定模式：用固定的预判系数
+    --   自适应：实测「从按下到真的命中」的耗时，动态调预判量
+    ------------------------------------------------------------------
+    local bashAdaptive = true           -- 默认开启自适应
+    local bashAdaptSens = 3             -- 灵敏度 1-5，越大越提前
+    local measuredLatency = 0.28        -- 实测延迟（初始值）
+    local latencySamples = {}           -- 最近几次采样，取中位数抗抖动
+    local MAX_SAMPLES = 8
+
+    -- 记录一次「按下 -> 生效」的耗时
+    local function recordLatency(dt)
+        if dt < 0.02 or dt > 1.2 then return end    -- 异常值丢弃
+        table.insert(latencySamples, dt)
+        if #latencySamples > MAX_SAMPLES then
+            table.remove(latencySamples, 1)
+        end
+        -- 取中位数，不被偶发的卡顿带跑
+        local s = {}
+        for i, v in ipairs(latencySamples) do s[i] = v end
+        table.sort(s)
+        local n = #s
+        if n > 0 then
+            measuredLatency = (n % 2 == 1) and s[(n + 1) // 2]
+                or ((s[n // 2] + s[n // 2 + 1]) / 2)
+        end
+    end
+
+    _G._ExamSetters.bashAdaptive = function(v)
+        if v == 1 or v == "固定" then
+            bashAdaptive = false
+            _G._ExamStates.bashAdaptive = 1
+        elseif v == 2 or v == "自适应" or v == true then
+            bashAdaptive = true
+            _G._ExamStates.bashAdaptive = 2
+        else
+            return
+        end
+    end
+    -- 默认开启自适应
+    _G._ExamStates.bashAdaptive = 2
+
+    _G._ExamSetters.bashAdaptSens = function(v)
+        local n = tonumber(v)
+        if not n then return end
+        bashAdaptSens = math.clamp(n, 1, 5)
+        _G._ExamStates.bashAdaptSens = bashAdaptSens
+    end
+    _G._ExamStates.bashAdaptSens = 3
+
+    -- 是否主动去肘反伤类 BOSS（奇美拉、Gilbert）
+    --   默认开启：肘击对它们是有效的，只是会反伤
+    local bashReflectBoss = true
+    _G._ExamSetters.bashReflectBoss = function(v)
+        if v == 1 or v == "不击打" or v == "不反伤" or v == false then
+            bashReflectBoss = false
+            _G._ExamStates.bashReflectBoss = 1
+        elseif v == 2 or v == "击打" or v == "可反伤" or v == true then
+            bashReflectBoss = true
+            _G._ExamStates.bashReflectBoss = 2
+        else
+            return
+        end
+    end
+    -- 默认开启（击打反伤怪）
+    _G._ExamStates.bashReflectBoss = 2
+
+    ------------------------------------------------------------------
     -- 肘击范围显示（和 360° 半径显示同一套做法）
     ------------------------------------------------------------------
     local SEGMENTS = 48
@@ -3490,7 +3614,6 @@ do
     local facePart = nil
     local showRange = false
     local bashRangeMode = "line"
-    local lastRingRadius = nil
 
     local function destroyRingImpl()
         for _, q in ipairs(ringParts) do
@@ -3669,25 +3792,82 @@ do
     end
     _G._ExamStates.bashRangeMode = 1
 
+    -- 选目标：不是简单取最近的那只，而是按「威胁」排序
+    --   威胁 = 到达时间（越快越危险）+ 是否在背后袭击 + 束缚距离
+    -- 实战中经常是好几只同时冲过来，只盯最近的会被另一只抓
     local function nearestTarget()
         local char = lp.Character
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
         if not hrp then return nil end
 
-        local best, bestD = nil, math.huge
+        local best, bestD, bestScore = nil, math.huge, math.huge
         local chars = Workspace:FindFirstChild("Characters")
         local containers = {}
         if chars then containers[#containers + 1] = chars end
         local ais = Workspace:FindFirstChild("AI")
         if ais then containers[#containers + 1] = ais end
 
+        local myVel = hrp.AssemblyLinearVelocity
+        local myPos = hrp.Position
+
         for _, c in ipairs(containers) do
             for _, m in ipairs(c:GetChildren()) do
                 if isInfected(m) then
+                    local hum = m:FindFirstChildOfClass("Humanoid")
+                    -- 处决中 / 瘫倒 / 复活中 的直接跳过，不去摸
+                    local can, why = bashableState(m, hum)
+                    -- 反伤类：默认避开，除非用户自己打开
+                    local reflectOK = bashReflectBoss or not isReflectRisk(m)
+                    if can and reflectOK then
                     local thrp = m:FindFirstChild("HumanoidRootPart")
                     if thrp then
-                        local d = (thrp.Position - hrp.Position).Magnitude
-                        if d < bestD then bestD = d; best = m end
+                        local delta = thrp.Position - myPos
+                        local d = delta.Magnitude
+                        if d <= SCAN_RANGE then
+                            -- 它朝我靠近的速度
+                            local toMe = -delta
+                            local approach = 0
+                            if d > 0.1 then
+                                approach = thrp.AssemblyLinearVelocity:Dot(delta.Unit)
+                                if approach < 0 then approach = 0 end
+                            end
+                            -- 我自己朝它冲的速度（也算进来）
+                            local myApproach = 0
+                            if d > 0.1 then
+                                myApproach = myVel:Dot(-delta.Unit)
+                                if myApproach < 0 then myApproach = 0 end
+                            end
+                            local rel = approach + myApproach
+                            -- 到达时间：没在靠近就按距离算
+                            local eta
+                            if rel > 1 then
+                                eta = math.max(0, d - PANIC_RANGE) / rel
+                            else
+                                eta = d / 50
+                            end
+                            -- 背后来的要提前发现：看正前方向和它位置的夹角
+                            local score = eta
+                            local look = hrp.CFrame.LookVector
+                            if d > 0.1 then
+                                local dot = look:Dot(delta.Unit)
+                                if dot < -0.3 then
+                                    -- 在背后，危险度提升
+                                    score = score * 0.55
+                                elseif dot < 0.3 then
+                                    -- 侧面
+                                    score = score * 0.8
+                                end
+                            end
+                            -- 超近直接置顶
+                            if d <= PANIC_RANGE then score = -1 end
+
+                            if score < bestScore then
+                                bestScore = score
+                                best = m
+                                bestD = d
+                            end
+                        end
+                    end
                     end
                 end
             end
@@ -3727,11 +3907,29 @@ do
 
         if approach < 1 then
             -- 双方都没在靠近，等它近一点再说
-            return dist <= PANIC_RANGE + 3
+            -- 自适应模式下，卡顿/高延迟时多留一点余量
+            local extra = 3
+            if bashAdaptive then
+                extra = 3 + math.min(math.floor((measuredLatency - 0.28) * 20), 4)
+            end
+            return dist <= PANIC_RANGE + extra
         end
 
-        -- 自己冲得越快，预判窗口要越长，否则会撞上才出手
-        local lead = 0.28 + math.min(myApproach / 40, 0.22)
+        -- 预判提前量
+        local lead
+        if bashAdaptive then
+            -- 自适应：以实测延迟为基准
+            --   灵敏度 1..5 映射成 0.6..1.4 倍
+            local mult = 0.6 + (bashAdaptSens - 1) * 0.2
+            lead = measuredLatency * mult
+            -- 自己冲得越快，再多留一点（撞上去的速度也更快）
+            lead = lead + math.min(myApproach / 55, 0.20)
+            -- 怪物也在冲的话它也占一部分
+            lead = lead + math.min(monsterApproach / 80, 0.12)
+        else
+            -- 固定：原来的公式
+            lead = 0.28 + math.min(myApproach / 40, 0.22)
+        end
 
         -- 预测 lead 秒后会不会进入危险距离
         local eta = dist - approach * lead
@@ -3786,9 +3984,11 @@ do
         return false
     end
 
+    -- 记录一次按下，返回按下时刻（自适应模式用来量延迟）
     local function pressBash()
+        local t0 = os.clock()
         if IS_MOBILE then
-            if fireBashButton() then return end
+            if fireBashButton() then return t0 end
         end
         -- PC / 兜底：模拟 G 键
         local ok = pcall(function()
@@ -3800,6 +4000,7 @@ do
         if not ok and not IS_MOBILE then
             fireBashButton()
         end
+        return t0
     end
 
     local function start()
@@ -3807,12 +4008,47 @@ do
         loopToken = (loopToken or 0) + 1
         local my = loopToken
         task.spawn(function()
+            -- 自适应用的采样状态
+            local pendingT0 = nil          -- 按下时刻
+            local pendingTarget = nil      -- 打的目标
+            local pendingDist = nil        -- 按下时的距离
+
             while autoBashEnabled and gui.Parent and loopToken == my do
                 local target, dist = nearestTarget()
+
+                -- 自适应：量一次「按下 -> 目标开始被打中」的耗时
+                if pendingT0 then
+                    local done = false
+                    if not target or target ~= pendingTarget then
+                        -- 目标没了 / 换了，也算一次完成
+                        done = true
+                    else
+                        local thum = target:FindFirstChildOfClass("Humanoid")
+                        -- 打到之后怪物会僵直/掉血/被击退，任一都算生效
+                        if thum and (thum.Health < 100 or thum.WalkSpeed < 8) then
+                            done = true
+                        end
+                    end
+                    if done then
+                        recordLatency(os.clock() - pendingT0)
+                        pendingT0 = nil
+                        pendingTarget = nil
+                    elseif os.clock() - pendingT0 > 1.0 then
+                        -- 超过 1 秒还没反应，说明这次没打中，直接丢弃
+                        pendingT0 = nil
+                        pendingTarget = nil
+                    end
+                end
+
                 if target and os.clock() - lastBash >= INTERVAL
                    and shouldBashNow(target, dist) then
                     lastBash = os.clock()
-                    pressBash()
+                    local t0 = pressBash()
+                    if bashAdaptive and t0 then
+                        pendingT0 = t0
+                        pendingTarget = target
+                        pendingDist = dist
+                    end
                 end
                 -- 扫得勤一点，反应才跟得上
                 task.wait(0.05)
@@ -4489,7 +4725,8 @@ end
 
 -- ============ 模块 17: 魔法子弹 + 自动开火 + 射击视觉效果 ============
 (function()
-    local mbAimPartIndex = 1
+    -- 实时从 _G 读，UI 改了立刻生效
+    local function getAimPartIndex() return _G._ExamAimPartIndex or 1 end
     local mbFovRadius = 200
     local mbWorldDistMax = 200
     local mbBBSizeStuds = 2.0
@@ -4808,6 +5045,9 @@ end
         local c = _busyCache[m]
         if c and (now - c.t) < BUSY_CACHE_TTL then return c.v end
         local v = m:FindFirstChild("BeingExecuted") ~= nil
+            or m:FindFirstChild("IsBeingExecuted") ~= nil
+            or m:GetAttribute("BeingExecuted") == true
+            or m:GetAttribute("IsExecuting") == true
         _busyCache[m] = { v = v, t = now }
         return v
     end
@@ -4832,18 +5072,29 @@ end
         local hum = m:FindFirstChildOfClass("Humanoid")
         if not hum then return true end
         if hum.Health <= 0 then return true end
+
+        -- 处决动画 / 瘫倒 / 复活中：不管是不是 BOSS 都不能锁
+        -- （之前只对 BOSS 名单里的判断，普通怪进处决动画会被误锁）
+        local ok, st = pcall(function() return hum:GetState() end)
+        if ok then
+            if st == Enum.HumanoidStateType.Dead then return true end
+            if st == Enum.HumanoidStateType.PlatformStanding then return true end
+            if st == Enum.HumanoidStateType.FallingDown then return true end
+            if st == Enum.HumanoidStateType.Physics then return true end
+        end
+        if hum.PlatformStand == true then return true end
+
+        -- 复活中也不锁
+        local br = m:FindFirstChild("IsBusyResurrecting")
+        if br and br:IsA("BoolValue") and br.Value then return true end
+
+        -- 下面这些只对 BOSS 生效（普通怪不会有护盾阶段）
         if not BOSS_DOWNED_NAMES[m.Name] then return false end
         if m:FindFirstChildOfClass("ForceField") then return true end
         if hum:FindFirstChildOfClass("ForceField") then return true end
         if m:FindFirstChild("SIN_FORCEFIELD") then return true end
         if m:FindFirstChild("ExposeForceField") then return true end
         if m:FindFirstChild("DeathForceField") then return true end
-        local ok, st = pcall(function() return hum:GetState() end)
-        if ok then
-            if st == Enum.HumanoidStateType.Dead then return true end
-            if st == Enum.HumanoidStateType.PlatformStanding then return true end
-        end
-        if hum.PlatformStand == true then return true end
         return false
     end
     local function scanConnsFresh()
@@ -4917,7 +5168,7 @@ end
     }
     local function getAimPart(model)
         if not model then return nil end
-        local info = AIM_PARTS[mbAimPartIndex]
+        local info = AIM_PARTS[getAimPartIndex()]
         if not info then return model:FindFirstChild("Head") end
         local name = info.name
         if name == "Head" then return model:FindFirstChild("Head") end
@@ -5145,6 +5396,11 @@ end
         return best
     end
 
+    -- 必须在 destroyRadiusRing 之前声明：否则里面写的是另一个变量，
+    -- 尺寸缓存清不掉，改半径后圈不跟着变
+    local radiusRingModel = nil
+    local radiusLastR = nil
+
     local function destroyRadiusRing()
         for _, p in ipairs(radiusRingParts) do
             if p and p.Parent then pcall(function() p:Destroy() end) end
@@ -5160,6 +5416,8 @@ end
             end
         end)
     end
+    local radiusFaceModel = nil
+
     local function destroyRadiusFace()
         if radiusFacePart and radiusFacePart.Parent then pcall(function() radiusFacePart:Destroy() end) end
         radiusFacePart = nil
@@ -5172,8 +5430,6 @@ end
         end)
     end
     local function destroyAllRadius() destroyRadiusRing(); destroyRadiusFace() end
-    local radiusRingModel = nil
-    local radiusLastR = nil
 
     local function ensureRadiusRing()
         if #radiusRingParts == RING_SEGMENTS and radiusRingParts[1] and radiusRingParts[1].Parent then
@@ -5210,9 +5466,6 @@ end
         end
         return radiusRingParts
     end
-    local radiusFaceModel = nil
-
-    local radiusFaceModel = nil
 
     -- 面模式：和自动肘击范围完全一样的做法（薄圆盘 + 顶面 SurfaceGui）
     local function ensureRadiusFace()
@@ -5949,6 +6202,8 @@ end
             _G._ExamStates.mbWorldDistMax = n
             distIn.Text = tostring(n)
             cachedTarget = nil; lastFindTick = 0
+            -- 半径变了，范围圈下帧重算尺寸
+            radiusLastR = nil
         end
     end
     _G._ExamStates.mbWorldDistMax = mbWorldDistMax
@@ -5996,15 +6251,16 @@ end
     infoValue.TextXAlignment = Enum.TextXAlignment.Left
     local function refreshAimSelection()
         for i, btn in ipairs(partBtns) do
-            if i == mbAimPartIndex then btn.BackgroundColor3 = bodyColorSel
+            if i == getAimPartIndex() then btn.BackgroundColor3 = bodyColorSel
             else btn.BackgroundColor3 = bodyColor end
         end
-        local info = AIM_PARTS[mbAimPartIndex]
+        local info = AIM_PARTS[getAimPartIndex()]
         if info then infoValue.Text = info.label end
     end
     local function selectAim(index)
         if not AIM_PARTS[index] then return end
-        mbAimPartIndex = index
+        _G._ExamAimPartIndex = index
+        _G._ExamStates.mbAimPart = index
         refreshAimSelection(); destroyLockBB()
     end
     for i, btn in ipairs(partBtns) do
@@ -6012,10 +6268,17 @@ end
     end
     refreshAimSelection()
     _G._ExamSetters.mbAimPart = function(v)
-        if type(v) ~= "number" or v < 1 or v > 6 then return end
-        mbAimPartIndex = v; refreshAimSelection(); destroyLockBB()
+        local n = tonumber(v)
+        if not n then n = 1 end
+        if n < 1 or n > #AIM_PARTS then n = 1 end
+        -- 先写状态，后面刷新即使报错也不影响设置生效
+        _G._ExamAimPartIndex = n
+        _G._ExamStates.mbAimPart = n
+        pcall(refreshAimSelection)
+        pcall(destroyLockBB)
     end
     _G._ExamStates.mbAimPart = 1
+    if _G._ExamAimPartIndex == nil then _G._ExamAimPartIndex = 1 end
     local fovLbl = Instance.new("TextLabel", magicPage)
     fovLbl.Size = UDim2.new(0, 36, 0, 22)
     fovLbl.Position = UDim2.new(0, 15, 0, 432)
@@ -6922,6 +7185,9 @@ tab:Expand({
         { Kind = "number", Key = "bashRange", Name = "触发距离", Min = 4, Max = 20, Default = 9, Callback = function(v) CB("bashRange", v) end },
         { Kind = "toggle", Key = "bashShowRange", Name = "显示范围", Callback = function(v) CB("bashShowRange", v) end },
         { Kind = "cycle", Key = "bashRangeMode", Name = "范围样式", Options = { "线状", "面状" }, Callback = function(v) CB("bashRangeMode", v) end },
+        { Kind = "cycle", Key = "bashAdaptive", Name = "预判模式", Options = { "固定", "自适应" }, Callback = function(v) CB("bashAdaptive", v) end },
+        { Kind = "number", Key = "bashAdaptSens", Name = "自适应灵敏度", Min = 1, Max = 5, Default = 3, Callback = function(v) CB("bashAdaptSens", v) end },
+        { Kind = "cycle", Key = "bashReflectBoss", Name = "反伤怪处理", Options = { "不反伤", "可反伤" }, Callback = function(v) CB("bashReflectBoss", v) end },
     },
 })
 
@@ -7043,7 +7309,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.2.6"
+local CURRENT_VERSION = "1.2.7"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
