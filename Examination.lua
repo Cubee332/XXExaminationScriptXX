@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.3.1  卸载清理延迟加长，避免顶栏动画未播完就被删
+-- Examination v1.3.3  BTR 血量改用 HealthPercent 计算（Health 属性不更新）；卸载恢复鼠标
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -1593,28 +1593,168 @@ do
         local map = Workspace:FindFirstChild("Map")
         return map and map:FindFirstChild("BTR-82 (BOSS)")
     end
-    local function getBTRHealth(btr)
-        if not btr then return nil end
-        local hp = btr:GetAttribute("Health") or btr:GetAttribute("HP")
-        if hp then return hp end
-        local r = btr:FindFirstChild("BTRRoot")
-        if r then
-            hp = r:GetAttribute("Health") or r:GetAttribute("HP")
-            if hp then return hp end
+    -- 读 BTR 血量，返回 hp, maxHp
+    --   来源优先级：
+    --     ① 模型自身的 Health / HP 属性
+    --     ② BTRRoot 的 Health / HP 属性
+    --     ③ 任意子孙的 Health / HP 属性（有些版本挂在 Weapon / Turret 上）
+    --     ④ Humanoid.Health / MaxHealth
+    --   之前只查 ① ②，且刷新时只认 Humanoid，
+    --   BTR 没有 Humanoid 或血量放在属性里时就显示不对
+    local function readNumAttr(inst)
+        for _, k in ipairs({"Health", "HP", "health", "hp", "CurrentHealth", "currentHealth"}) do
+            local v = inst:GetAttribute(k)
+            if type(v) == "number" then return v end
         end
         return nil
     end
+
+    local function readMaxAttr(inst)
+        for _, k in ipairs({"MaxHealth", "MaxHP", "maxHealth", "maxHp",
+                            "HealthMax", "TotalHealth", "ScaledMaxHealth", "scaledMaxHealth"}) do
+            local v = inst:GetAttribute(k)
+            if type(v) == "number" and v > 0 then return v end
+        end
+        return nil
+    end
+
+    -- 读 BTR 血量，返回 hp, maxHp
+    --   实测数据（考试这张图）：
+    --     Health         = 560      ← 永远不变，不能直接用
+    --     MaxHealth      = 560
+    --     HealthPercent  = 0.857    ← 真实百分比，随受伤更新
+    --     ScaledMaxHealth= 560
+    --   所以真实血量 = HealthPercent * MaxHealth
+    local function getBTRHealth(btr)
+        if not btr then return nil end
+
+        local maxHp = readMaxAttr(btr)
+
+        -- ① 优先用 HealthPercent（唯一会随伤害更新的字段）
+        local pct = btr:GetAttribute("HealthPercent")
+        if type(pct) ~= "number" then
+            pct = btr:GetAttribute("healthPercent")
+        end
+        if type(pct) == "number" then
+            if not maxHp then
+                maxHp = readMaxAttr(btr)
+            end
+            -- 有些实现里百分比可能是 0~100
+            if pct > 1.5 then pct = pct / 100 end
+            if maxHp and maxHp > 0 then
+                return pct * maxHp, maxHp
+            end
+            return pct, maxHp
+        end
+
+        -- ② 没有百分比：退回 Health 属性
+        local hp = readNumAttr(btr)
+        if hp then return hp, maxHp end
+
+        -- ③ BTRRoot
+        local r = btr:FindFirstChild("BTRRoot")
+        if r then
+            hp = readNumAttr(r)
+            maxHp = readMaxAttr(r) or maxHp
+            if hp then return hp, maxHp end
+        end
+
+        -- ④ 子孙属性（只扫两层，避免开销）
+        for _, c in ipairs(btr:GetChildren()) do
+            hp = readNumAttr(c)
+            maxHp = readMaxAttr(c) or maxHp
+            if hp then return hp, maxHp end
+            if c:IsA("Model") or c:IsA("Folder") then
+                for _, g in ipairs(c:GetChildren()) do
+                    hp = readNumAttr(g)
+                    maxHp = readMaxAttr(g) or maxHp
+                    if hp then return hp, maxHp end
+                end
+            end
+        end
+
+        -- ⑤ Humanoid
+        local hum = btr:FindFirstChildOfClass("Humanoid")
+        if hum then
+            maxHp = maxHp or hum.MaxHealth
+            return hum.Health, maxHp
+        end
+
+        return nil, maxHp
+    end
+    -- 诊断用：打印 BTR 的真实数据结构，排查血量来源
+    --   用法：getgenv().ExamDebugBTR()
+    getgenv().ExamDebugBTR = function()
+        local btr = getBTRModel()
+        if not btr then
+            print("[BTR] 当前地图没有 BTR-82 (BOSS)")
+            return
+        end
+        print("[BTR] 模型=" .. btr:GetFullName())
+        print("[BTR] 属性:")
+        for k, v in pairs(btr:GetAttributes()) do
+            print(string.format("       %s = %s (%s)", k, tostring(v), typeof(v)))
+        end
+        local root = btr:FindFirstChild("BTRRoot")
+        if root then
+            print("[BTR] BTRRoot 属性:")
+            for k, v in pairs(root:GetAttributes()) do
+                print(string.format("       %s = %s (%s)", k, tostring(v), typeof(v)))
+            end
+        end
+        local sum = 0
+        for _, d in ipairs(btr:GetDescendants()) do
+            for k, v in pairs(d:GetAttributes()) do
+                if k:lower():find("health") or k:lower():find("hp") then
+                    print(string.format("[BTR] 子孙 %s -> %s = %s", d:GetFullName(), k, tostring(v)))
+                end
+            end
+            sum = sum + 1
+        end
+        local hum = btr:FindFirstChildOfClass("Humanoid")
+        if hum then
+            print(string.format("[BTR] Humanoid: Health=%.1f Max=%.1f", hum.Health, hum.MaxHealth))
+        else
+            print("[BTR] 无 Humanoid")
+        end
+        local hp, mx = getBTRHealth(btr)
+        print(string.format("[BTR] getBTRHealth 结果: hp=%s max=%s", tostring(hp), tostring(mx)))
+        print("[BTR] 子孙数量=" .. sum)
+    end
+
+    -- BTR 是否已被摧毁（属性 Destroyed 或血量 <= 0）
+    local function isBTRDead(btr)
+        if not btr then return true end
+        if btr:GetAttribute("Destroyed") == true then return true end
+        local hp = getBTRHealth(btr)
+        return hp ~= nil and hp <= 0
+    end
+
     local function removeBTR(btr)
         if not btr then return end
         for _, ch in ipairs(btr:GetChildren()) do
             if isOurESPNode(ch) then pcall(function() ch:Destroy() end) end
         end
     end
+    -- 模型是否已在刷新列表里
+    local function isInLabelList(model)
+        for _, it in ipairs(labelRefreshList) do
+            if it.model == model then return true end
+        end
+        return false
+    end
+
     local function highlightBTR(btrModel)
         if not espEnabled then return end
-        local hp = getBTRHealth(btrModel)
+        local hp, maxHp = getBTRHealth(btrModel)
         if hp and hp <= 0 then removeBTR(btrModel); return end
-        if btrModel:FindFirstChild(ESP_HL_NEW) then return end
+
+        if btrModel:FindFirstChild(ESP_HL_NEW) then
+            -- 节点还在，但不在刷新列表里（被上一轮清掉了）：
+            --   重建一次，顺便重新登记，否则血量永远不更新
+            if isInLabelList(btrModel) then return end
+            removeBTR(btrModel)
+        end
         local hl = Instance.new("Highlight")
         hl.Name = ESP_HL_NEW; hl.Adornee = btrModel; hl.FillColor = C_BTR
         hl.OutlineColor = Color3.fromRGB(255, 255, 255); hl.OutlineTransparency = 1
@@ -1629,20 +1769,27 @@ do
         tl.BackgroundTransparency = 1; tl.TextColor3 = C_BTR
         tl.TextStrokeTransparency = 0; tl.TextScaled = true
         tl.Font = Enum.Font.SourceSansBold
-        local function btrText(cur)
+        local function btrText(cur, maxCur)
             local parts = {}
             if showESPName then table.insert(parts, "BTR-82") end
-            if showESPHealth and cur then table.insert(parts, tostring(math.floor(cur))) end
+            if showESPHealth and cur then
+                if maxCur and maxCur > 0 then
+                    table.insert(parts, string.format("%d / %d",
+                        math.floor(cur), math.floor(maxCur)))
+                else
+                    table.insert(parts, tostring(math.floor(cur)))
+                end
+            end
             if #parts == 0 then return "" end
             if showESPName then
                 return "[BOSS] " .. table.concat(parts, " | ")
             end
             return table.concat(parts, " | ")
         end
-        tl.Text = btrText(hp)
+        tl.Text = btrText(hp, maxHp)
         table.insert(labelRefreshList, {
             model = btrModel, tl = tl, pre = "", hl = hl, bb = bb,
-            isBTR = true,
+            isBTR = true, maxHp = maxHp,
         })
     end
     local function highlightDrone(drone)
@@ -1787,6 +1934,8 @@ do
                     else
                         if hp and lastHP and (lastHP - hp) > 30 then need = true end
                         if not b:FindFirstChild(ESP_HL_NEW) then need = true end
+                        -- 节点在但没登记进刷新列表：也要重建，否则血量冻结
+                        if not isInLabelList(b) then need = true end
                         if need and tick() - lastRefresh > 1 then
                             lastRefresh = tick(); highlightBTR(b)
                         end
@@ -1797,39 +1946,79 @@ do
         end)
     end
 
+    -- 诊断：查看 ESP 刷新列表当前内容
+    getgenv().ExamDebugESPList = function()
+        local parts = {"tick=" .. tostring(_G.__ExamESPTick or 0),
+                       "n=" .. #labelRefreshList,
+                       "espEnabled=" .. tostring(espEnabled)}
+        for i, it in ipairs(labelRefreshList) do
+            parts[#parts+1] = string.format("[%d] model=%s isBTR=%s isDrone=%s text=%s",
+                i,
+                tostring(it.model and it.model.Name),
+                tostring(it.isBTR),
+                tostring(it.isDrone),
+                tostring(it.tl and it.tl.Text))
+        end
+        return table.concat(parts, "\n")
+    end
+
     spawn(function()
         while gui.Parent do
             task.wait(espLowLoad and 1.0 or 0.3)
+            _G.__ExamESPTick = (_G.__ExamESPTick or 0) + 1
             if espEnabled then
                 for i = #labelRefreshList, 1, -1 do
                     local item = labelRefreshList[i]
                     local m = item.model
                     if not m or not m.Parent or not m:FindFirstChild(ESP_HL_NEW) then
                         table.remove(labelRefreshList, i)
-                    elseif (function()
-                        local h = m:FindFirstChildOfClass("Humanoid")
-                        return h and h.Health <= 0
-                    end)() then
-                        -- 死亡后移除高亮
-                        for _, c in ipairs(m:GetChildren()) do
-                            if isOurESPNode(c) then pcall(function() c:Destroy() end) end
+                    elseif item.isBTR then
+                        -- ===== BTR 单独处理：不依赖 Humanoid =====
+                        --   血量可能存在属性里，也可能在 Humanoid 上，
+                        --   用 getBTRHealth 统一读，谁有就用谁
+                        local hp, maxHp = getBTRHealth(m)
+                        if maxHp then item.maxHp = maxHp end
+                        -- 注意：这里的模型变量是 m，不是 btr
+                        local dead = isBTRDead(m)
+                        if dead then
+                            -- 真死了：清掉高亮
+                            for _, c in ipairs(m:GetChildren()) do
+                                if isOurESPNode(c) then pcall(function() c:Destroy() end) end
+                            end
+                            table.remove(labelRefreshList, i)
+                        elseif hp then
+                            -- 活着：刷新文字
+                            local txtParts = {}
+                            if showESPName then table.insert(txtParts, "BTR-82") end
+                            if showESPHealth then
+                                local mx = item.maxHp
+                                if mx and mx > 0 then
+                                    table.insert(txtParts, string.format("%d / %d",
+                                        math.floor(hp), math.floor(mx)))
+                                else
+                                    table.insert(txtParts, tostring(math.floor(hp)))
+                                end
+                            end
+                            if #txtParts > 0 then
+                                item.tl.Text = (showESPName and "[BOSS] " or "")
+                                    .. table.concat(txtParts, " | ")
+                            else
+                                item.tl.Text = ""
+                            end
                         end
-                        table.remove(labelRefreshList, i)
                     else
                         local hum = m:FindFirstChildOfClass("Humanoid")
                         if hum then
                             if hum.Health <= 0 then
-                                if item.hl then item.hl:Destroy() end
-                                if item.bb then item.bb:Destroy() end
-                                table.remove(labelRefreshList, i)
-                            else
-                                if item.isBTR then
-                                    item.tl.Text = "[BOSS] BTR-82 | " .. math.floor(hum.Health)
-                                elseif item.isDrone then
-                                    item.tl.Text = "[无人机] " .. math.floor(hum.Health) .. " / " .. math.floor(hum.MaxHealth)
-                                else
-                                    item.tl.Text = genText(m, hum, item.pre)
+                                for _, c in ipairs(m:GetChildren()) do
+                                    if isOurESPNode(c) then pcall(function() c:Destroy() end) end
                                 end
+                                table.remove(labelRefreshList, i)
+                            elseif item.isDrone then
+                                item.tl.Text = "[无人机] " .. math.floor(hum.Health)
+                                    .. " / " .. math.floor(hum.MaxHealth)
+                            else
+                                item.tl.Text = genText(m, hum, item.pre)
                             end
                         end
                     end
@@ -7388,7 +7577,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.3.1"
+local CURRENT_VERSION = "1.3.3"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
@@ -7551,6 +7740,20 @@ unloadRow = tab:ClickableRow({
         -- 2) 等动画真正播完再清理
         --    顶栏动画时长 = 0.24 * 0.85 + 0.04 兜底 ≈ 0.25s，这里留 0.10s 余量
         task.delay(0.35, function()
+            -- 0) 先把鼠标还原成「打开面板之前」的状态
+            --    必须在销毁 GUI 之前做：CDMUI 的恢复流程需要窗口对象还在，
+            --    而且它内部会卸掉 __newindex hook、补写原值。
+            --    之前这一步漏了，导致卸载后鼠标一直停在解锁态。
+            pcall(function()
+                local w = getgenv().ExaminationWin
+                if w and w._RestoreMouse then
+                    w:_RestoreMouse(true)
+                elseif CDMUI and CDMUI.ForceRestoreMouse then
+                    -- 窗口对象没了：直接强制卸 hook
+                    CDMUI.ForceRestoreMouse(nil, nil)
+                end
+            end)
+
             -- 先停功能（可能耗时，放前面）
             pcall(function()
                 if _G._ExamLastCleanup then _G._ExamLastCleanup() end
@@ -7579,6 +7782,18 @@ unloadRow = tab:ClickableRow({
                         local o = l3:FindFirstChild(n)
                         if o then pcall(function() o:Destroy() end) end
                     end
+                end
+            end)
+
+            -- 最后再强制卸一次鼠标 hook（兜底）
+            --   前面 _RestoreMouse(true) 是异步的（约 0.25s 后才卸），
+            --   这里同步补一刀，保证卸载后鼠标一定回到原样
+            pcall(function()
+                local w = getgenv().ExaminationWin
+                local want = w and w._savedMouseBehavior
+                local wantIcon = w and w._savedMouseIcon
+                if CDMUI and CDMUI.ForceRestoreMouse then
+                    CDMUI.ForceRestoreMouse(want, wantIcon)
                 end
             end)
 
