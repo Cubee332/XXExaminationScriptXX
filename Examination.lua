@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.8.3  处决目标三层防护（判定+穿透+锁定排除）
+-- Examination v1.8.4  处决穿透覆盖其他玩家参与的情况
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -5461,11 +5461,14 @@ end
         if m:FindFirstChild("IsBeingExecuted") ~= nil then return true end
         if m:FindFirstChild("Executing") ~= nil then return true end
         if m:FindFirstChild("IsExecuting") ~= nil then return true end
+        if m:FindFirstChild("ExecutionTarget") ~= nil then return true end
+        if m:FindFirstChild("ExecutingTarget") ~= nil then return true end
 
         -- 2) 属性标记
         if m:GetAttribute("BeingExecuted") == true then return true end
         if m:GetAttribute("IsBeingExecuted") == true then return true end
         if m:GetAttribute("IsExecuting") == true then return true end
+        if m:GetAttribute("ExecutionTarget") ~= nil then return true end
 
         -- 3) Humanoid 状态
         local h = m:FindFirstChildOfClass("Humanoid")
@@ -5473,6 +5476,79 @@ end
             if h.PlatformStand == true then return true end
             local ok, st = pcall(function() return h:GetState() end)
             if ok and st == Enum.HumanoidStateType.PlatformStanding then return true end
+        end
+
+        -- 4) 判断「谁在处决谁」的配对关系
+        --   覆盖 3 种情况：
+        --     a) 我们自己在处决（处决者是我们）
+        --     b) 别的玩家在处决敌人（处决者是别人）
+        --     c) 别的玩家被敌人处决（被处决者是别人）
+        --   任何一方在处决流程里，双方模型都不该挡子弹
+        local mHrp = m:FindFirstChild("HumanoidRootPart")
+
+        local function isExecutingActor(char)
+            -- 判断一个角色是不是「处决者」
+            if not char then return false end
+            local hh = char:FindFirstChildOfClass("Humanoid")
+            if hh then
+                if hh.PlatformStand == true then return true end
+                local ok3, st3 = pcall(function() return hh:GetState() end)
+                if ok3 and st3 == Enum.HumanoidStateType.PlatformStanding then return true end
+            end
+            if char:FindFirstChild("BeingExecuted") ~= nil then return true end
+            if char:GetAttribute("IsExecuting") == true then return true end
+            if char:GetAttribute("BeingExecuted") == true then return true end
+            if char:GetAttribute("Executing") == true then return true end
+            return false
+        end
+
+        -- a) 我们自己在处决：m 离我们很近 → 认定 m 是被处决者
+        local myChar = lp.Character
+        if myChar and myChar ~= m and isExecutingActor(myChar) then
+            local myHrp = myChar:FindFirstChild("HumanoidRootPart")
+            if myHrp and mHrp then
+                if (myHrp.Position - mHrp.Position).Magnitude <= 8 then return true end
+            end
+            if m:GetAttribute("ExecutedBy") == myChar.Name then return true end
+            if m:GetAttribute("Executor") == myChar.Name then return true end
+        end
+
+        -- b) / c) 别的玩家参与处决
+        --   m 是玩家角色：看它自己是否在处决流程里
+        local mPlayer = Players:GetPlayerFromCharacter(m)
+        if mPlayer then
+            if isExecutingActor(m) then return true end
+        end
+
+        -- m 是敌人：看附近有没有正在处决的玩家
+        if mHrp then
+            for _, pl in ipairs(Players:GetPlayers()) do
+                if pl ~= lp then
+                    local pc = pl.Character
+                    if pc and pc ~= m then
+                        -- 玩家自己在处决流程里
+                        if isExecutingActor(pc) then
+                            local pHrp = pc:FindFirstChild("HumanoidRootPart")
+                            if pHrp then
+                                local d = (pHrp.Position - mHrp.Position).Magnitude
+                                -- 处决必须贴身，8 studs 内认定是配对关系
+                                if d <= 8 then return true end
+                            end
+                            -- 或者敌人身上有指向该玩家的标记
+                            if m:GetAttribute("ExecutedBy") == pl.Name then return true end
+                            if m:GetAttribute("Executor") == pl.Name then return true end
+                        end
+                        -- 玩家被别人处决，且 m 就在旁边（处决者）
+                        if pc:FindFirstChild("BeingExecuted") ~= nil
+                           or pc:GetAttribute("BeingExecuted") == true then
+                            local pHrp = pc:FindFirstChild("HumanoidRootPart")
+                            if pHrp then
+                                if (pHrp.Position - mHrp.Position).Magnitude <= 8 then return true end
+                            end
+                        end
+                    end
+                end
+            end
         end
 
         return false
@@ -9093,7 +9169,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.8.3"
+local CURRENT_VERSION = "1.8.4"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
