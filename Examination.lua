@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.6.1  HUD 标签右对齐，数值左对齐
+-- Examination v1.6.2  HUD 字体统一；锁定部位改用 Cycle
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -7680,7 +7680,7 @@ do
             -- 夜视仪同款标签字体
             label.Font = Enum.Font.Unknown
             pcall(function()
-                label.FontFace = Font.new("rbxasset://fonts/families/TitilliumWeb.json",
+                label.FontFace = Font.new("rbxasset://fonts/families/SourceSansPro.json",
                     Enum.FontWeight.Bold, Enum.FontStyle.Normal)
             end)
             label.TextSize = LABEL_SZ
@@ -7703,10 +7703,10 @@ do
             -- 夜视仪同款数值字体（等宽，数字不跳）
             value.Font = Enum.Font.Unknown
             pcall(function()
-                value.FontFace = Font.new("rbxasset://fonts/families/Inconsolata.json",
+                value.FontFace = Font.new("rbxasset://fonts/families/SourceSansPro.json",
                     Enum.FontWeight.Bold, Enum.FontStyle.Normal)
             end)
-            value.TextSize = FONT_SZ
+            value.TextSize = FONT_SZ - 1
             value.TextColor3 = Color3.fromRGB(255, 255, 255)
             value.TextTransparency = 0
             value.TextStrokeTransparency = 0.6
@@ -8448,20 +8448,13 @@ tab:Input({ Key = "mbParams", Name = "FOV锁定半径", Desc = "FOV=锁定半径
     Callback = function(v) CB("mbParams", v) end })
 tab:Input({ Key = "mbWorldDistMax", Name = "最大锁定距离", Desc = "锁定目标的最远距离（studs）", Default = "200",
     Callback = function(v) CB("mbWorldDistMax", v) end })
-tab:Body2D({
+tab:Cycle({
     Key = "mbAimPart",
     Name = "锁定部位",
-    Desc = "点击小人选择锁定的身体部位",
-    Default = 1,
+    Desc = "选择锁定的身体部位",
+    Options = { "头部", "躯干", "左臂", "右臂", "左腿", "右腿" },
+    DefaultIndex = 1,
     Callback = function(idx) CB("mbAimPart", idx) end,
-    Parts = {
-        { Key = 1, Name = "头部" },
-        { Key = 2, Name = "躯干" },
-        { Key = 3, Name = "左臂" },
-        { Key = 4, Name = "右臂" },
-        { Key = 5, Name = "左腿" },
-        { Key = 6, Name = "右腿" },
-    },
 })
 
 tab:Section({ Name = "开火" })
@@ -8604,7 +8597,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.6.1"
+local CURRENT_VERSION = "1.6.2"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
