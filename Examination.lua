@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.6.4  人体图完整实现；HUD 纯平移入场/出场动画
+-- Examination v1.6.5  人体图位置修正（LayoutOrder）
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -7258,7 +7258,9 @@ local function BodyPartPicker(tab, cfg)
     row.BackgroundColor3 = T.row
     row.BackgroundTransparency = 0.15
     row.BorderSizePixel = 0
-    row.LayoutOrder = (tab.Items or 0) + 1
+    -- LayoutOrder 必须和 CDMUI baseRow 一致：(Items+1)*1000
+    --   之前写成 (Items or 0)+1，值太小直接排到最前面去了
+    row.LayoutOrder = ((tab.Items or 0) + 1) * 1000
     row.ZIndex = 4
     row.Active = false
     row.Parent = tab.Container
@@ -7326,7 +7328,7 @@ local function BodyPartPicker(tab, cfg)
     childRow.BackgroundColor3 = T.rowChild
     childRow.BackgroundTransparency = 0.15
     childRow.BorderSizePixel = 0
-    childRow.LayoutOrder = row.LayoutOrder * 1000 + 1
+    childRow.LayoutOrder = row.LayoutOrder + 1
     childRow.ClipsDescendants = true
     childRow.Visible = false
     childRow.ZIndex = 4
@@ -7466,7 +7468,7 @@ local function BodyPartPicker(tab, cfg)
         setOpen(not open, true)
     end)
 
-    tab.Items = (tab.Items or 0) + 2
+    tab.Items = (tab.Items or 0) + 1
 
     return {
         Set = function(v) if type(v) == "number" and buttons[v] then selected = v; render() end end,
@@ -8836,7 +8838,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.6.4"
+local CURRENT_VERSION = "1.6.5"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
