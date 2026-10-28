@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.3.3  BTR 血量改用 HealthPercent 计算（Health 属性不更新）；卸载恢复鼠标
+-- Examination v1.3.4  魔法子弹支持锁定 BTR 无人机（新增开关）
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -55,6 +55,8 @@ local slideDistanceMult = 2
 local shieldVMAlpha = 0.9
 local slideSteerMode = "camera"
 local mbTargetMode = 1
+-- 是否把 BTR 放出的无人机也纳入魔法子弹锁定（默认开）
+local mbTargetDrones = true
 
 local shootVisualEnabled = false
 local tracerEnabled = true
@@ -75,6 +77,52 @@ local VEHICLE_NAMES = {
 local function isVehicle(m)
     return m ~= nil and VEHICLE_NAMES[m.Name] == true
 end
+-- BTR 放出来的无人机：没有 Humanoid、没有 Head，
+-- 直接挂在 Workspace 下，靠属性识别。
+--   属性：BTRDrone=true, BTRDroneActive=true, DroneState=Seeking
+--   部件：DroneHitbox（命中盒）、DroneRoot（位置参考）
+local function isBTRDrone(m)
+    if not m then return false end
+    if m:GetAttribute("BTRDrone") ~= true then return false end
+    if m:GetAttribute("IsBTRDroneTemplate") == true then return false end
+    return true
+end
+
+local function isDroneAlive(m)
+    if not isBTRDrone(m) then return false end
+    if m:GetAttribute("BTRDroneActive") == false then return false end
+    if m:GetAttribute("BTRDroneShotDownResolved") == true then return false end
+    local st = m:GetAttribute("DroneState")
+    if st == "ShotDown" or st == "Destroyed" or st == "Dead" then return false end
+    -- 命中盒还在就算活着
+    local hit = m:FindFirstChild("DroneHitbox")
+    if not hit or not hit:IsA("BasePart") then return false end
+    return hit.Parent ~= nil
+end
+
+local function getDroneAimPart(m)
+    if not m then return nil end
+    local hit = m:FindFirstChild("DroneHitbox")
+    if hit and hit:IsA("BasePart") then return hit end
+    local root = m:FindFirstChild("DroneRoot")
+    if root and root:IsA("BasePart") then return root end
+    for _, c in ipairs(m:GetChildren()) do
+        if c:IsA("BasePart") then return c end
+    end
+    return nil
+end
+
+-- 收集场景里所有活着的无人机
+local function getAllBTRDrones()
+    local out = {}
+    for _, d in ipairs(Workspace:GetChildren()) do
+        if isBTRDrone(d) and isDroneAlive(d) then
+            table.insert(out, d)
+        end
+    end
+    return out
+end
+
 local SHOTGUN_PUMP_IDS = {
     ["115903749552317"]=true,["80315455447277"]=true,["89272072134105"]=true,
     ["96917301511774"]=true,["135326741887023"]=true,["116710355675938"]=true,
@@ -5541,6 +5589,64 @@ end
         local vms = Workspace:FindFirstChild("Viewmodels")
         if vms then table.insert(excludeVis, vms) end
         local candidates, visBlocked, outFov, downedSkip = 0, 0, 0, 0
+
+        -- 统一评估一个候选目标
+        --   model    : 目标模型
+        --   aimPart  : 实际瞄准的部件
+        --   screenRef: 用于 FOV 判定的参考点（一般是头部）
+        local function consider(model, aimPart, screenRef)
+            if not aimPart or not screenRef then return end
+
+            local wd = (aimPart.Position - myPos).Magnitude
+            if wd > mbWorldDistMax then return end
+
+            local screenD2 = nil
+            if mbTargetMode ~= 3 then
+                local s, onScreen = cam:WorldToViewportPoint(screenRef.Position)
+                if onScreen and s.Z > 0 then
+                    local dx = s.X - cx
+                    local dy = s.Y - cy
+                    screenD2 = dx * dx + dy * dy
+                    if screenD2 > r2 then outFov = outFov + 1; return end
+                else
+                    outFov = outFov + 1
+                    return
+                end
+            end
+
+            if mbRequireVisible then
+                if not isPointVisible(camPos, aimPart.Position, model, excludeVis) then
+                    visBlocked = visBlocked + 1
+                    return
+                end
+            end
+
+            local prio = isLowPriority(model) and 1 or 0
+            local accept = false
+            if prio < bestPrio then
+                accept = true
+            elseif prio == bestPrio then
+                if mbTargetMode == 3 then
+                    accept = wd < bestWorldD
+                elseif mbTargetMode == 1 then
+                    accept = screenD2 ~= nil and screenD2 < bestScreenD2
+                else
+                    accept = wd < bestWorldD
+                end
+            end
+
+            if accept then
+                bestPrio = prio
+                if mbTargetMode == 1 and screenD2 then
+                    bestScreenD2 = screenD2
+                else
+                    bestWorldD = wd
+                end
+                best = { model = model, head = screenRef, aimPart = aimPart }
+            end
+        end
+
+        -- ① 普通敌人
         for _, folderName in ipairs(AI_CONTAINERS) do
             local folder = Workspace:FindFirstChild(folderName)
             if folder then
@@ -5553,50 +5659,28 @@ end
                             local aimPart = getAimPart(m)
                             local head = m:FindFirstChild("Head")
                             if aimPart and head then
-                                local wd = (aimPart.Position - myPos).Magnitude
-                                if wd <= mbWorldDistMax then
-                                    local screenD2 = nil
-                                    local skipThis = false
-                                    if mbTargetMode ~= 3 then
-                                        local s, onScreen = cam:WorldToViewportPoint(head.Position)
-                                        if onScreen and s.Z > 0 then
-                                            local dx = s.X - cx
-                                            local dy = s.Y - cy
-                                            screenD2 = dx*dx + dy*dy
-                                            if screenD2 > r2 then outFov = outFov + 1; skipThis = true end
-                                        else outFov = outFov + 1; skipThis = true end
-                                    end
-                                    if not skipThis then
-                                        local visible = true
-                                        if mbRequireVisible then
-                                            visible = isPointVisible(camPos, aimPart.Position, m, excludeVis)
-                                        end
-                                        if not visible then
-                                            visBlocked = visBlocked + 1
-                                        else
-                                            local prio = isLowPriority(m) and 1 or 0
-                                            local accept = false
-                                            if prio < bestPrio then accept = true
-                                            elseif prio == bestPrio then
-                                                if mbTargetMode == 3 then accept = wd < bestWorldD
-                                                elseif mbTargetMode == 1 then accept = screenD2 ~= nil and screenD2 < bestScreenD2
-                                                else accept = wd < bestWorldD end
-                                            end
-                                            if accept then
-                                                bestPrio = prio
-                                                if mbTargetMode == 1 and screenD2 then bestScreenD2 = screenD2
-                                                else bestWorldD = wd end
-                                                best = { model = m, head = head, aimPart = aimPart }
-                                            end
-                                        end
-                                    end
-                                end
+                                consider(m, aimPart, head)
                             end
                         end
                     end
                 end
             end
         end
+
+        -- ② BTR 放出的无人机
+        --   它们没有 Humanoid / Head，直接挂在 Workspace 下，
+        --   之前完全没被扫描到，所以魔法子弹永远锁不到
+        if mbTargetDrones ~= false then
+            for _, d in ipairs(getAllBTRDrones()) do
+                candidates = candidates + 1
+                local hit = getDroneAimPart(d)
+                if hit then
+                    -- FOV 判定用命中盒本身（无人机没有头）
+                    consider(d, hit, hit)
+                end
+            end
+        end
+
         if best then findLastReason = "locked"
         elseif candidates == 0 and downedSkip > 0 then findLastReason = "all-downed"
         elseif candidates == 0 then findLastReason = "no-hostiles"
@@ -5605,6 +5689,33 @@ end
         else findLastReason = "no-target" end
         cachedTarget = best
         return best
+    end
+
+    -- 调试：查看当前锁定结果
+    getgenv().ExamDebugMBTarget = function()
+        local t2 = findTarget()
+        if not t2 then
+            return "无目标 | 原因=" .. tostring(findLastReason)
+        end
+        return string.format("目标=%s | 瞄准部件=%s | 距离=%.1f",
+            t2.model and t2.model.Name or "?",
+            t2.aimPart and t2.aimPart.Name or "?",
+            (t2.aimPart and lp.Character and lp.Character:FindFirstChild("HumanoidRootPart")
+                and (t2.aimPart.Position - lp.Character.HumanoidRootPart.Position).Magnitude) or -1)
+    end
+
+    -- 调试：列出所有被扫描到的无人机
+    getgenv().ExamDebugDrones = function()
+        local ds = getAllBTRDrones()
+        local parts = {"活着的无人机=" .. #ds}
+        for _, d in ipairs(ds) do
+            local hit = getDroneAimPart(d)
+            parts[#parts+1] = string.format("  %s hitbox=%s state=%s",
+                d:GetFullName(),
+                tostring(hit ~= nil),
+                tostring(d:GetAttribute("DroneState")))
+        end
+        return table.concat(parts, "\n")
     end
 
     -- 必须在 destroyRadiusRing 之前声明：否则里面写的是另一个变量，
@@ -6255,6 +6366,12 @@ end
         destroyLockBB(); refreshModeBtnText(); updateFov(); wasTooLarge = false
     end
     _G._ExamStates.mbTargetMode = 1
+
+    _G._ExamSetters.mbTargetDrones = function(v)
+        mbTargetDrones = v and true or false
+        _G._ExamStates.mbTargetDrones = mbTargetDrones
+    end
+    _G._ExamStates.mbTargetDrones = true
     autoFireBtn = Instance.new("TextButton", magicPage)
     autoFireBtn.Size = UDim2.new(1, -30, 0, 28)
     autoFireBtn.Position = UDim2.new(0, 15, 0, 196)
@@ -7410,6 +7527,8 @@ tab:Expand({
         Callback = function(idx) CB("mbTargetMode", idx) end,
     },
     Children = {
+        { Kind = "toggle", Key = "mbTargetDrones", Name = "锁定BTR无人机", Default = true,
+          Callback = function(v) CB("mbTargetDrones", v) end },
         { Kind = "toggle", Key = "mbShowRadius", Name = "360°锁定半径锁定显示", Default = false,
           Callback = function(v) CB("mbShowRadius", v) end },
         { Kind = "cycle", Key = "radiusMode", Name = "360°锁定半径显示模式",
@@ -7577,7 +7696,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.3.3"
+local CURRENT_VERSION = "1.3.4"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
