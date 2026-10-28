@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.8.2  魔法子弹新增「穿透处决目标」（玩家+敌人）
+-- Examination v1.8.3  处决目标三层防护（判定+穿透+锁定排除）
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -5311,6 +5311,15 @@ end
         end
         if hum.PlatformStand == true then return true end
 
+        -- 处决标记：和穿透判定同一套（否则处决中的怪还能被锁上）
+        if m:FindFirstChild("BeingExecuted") ~= nil then return true end
+        if m:FindFirstChild("IsBeingExecuted") ~= nil then return true end
+        if m:FindFirstChild("Executing") ~= nil then return true end
+        if m:FindFirstChild("IsExecuting") ~= nil then return true end
+        if m:GetAttribute("BeingExecuted") == true then return true end
+        if m:GetAttribute("IsBeingExecuted") == true then return true end
+        if m:GetAttribute("IsExecuting") == true then return true end
+
         -- 复活中也不锁
         local br = m:FindFirstChild("IsBusyResurrecting")
         if br and br:IsA("BoolValue") and br.Value then return true end
@@ -5478,7 +5487,9 @@ end
         for _, v in ipairs(excludeBase) do table.insert(exclude, v) end
         local curOrigin = origin
         local remaining = dist
-        local maxIter = 8
+        -- 处决时可能有两具模型（处决者+被处决者）叠在一起挡视线，
+        -- 再加上队友/尸体/盾牌，8 次不够，提到 16
+        local maxIter = 16
         for _ = 1, maxIter do
             local rp = RaycastParams.new()
             rp.FilterType = Enum.RaycastFilterType.Exclude
@@ -5498,20 +5509,15 @@ end
                 else
                     local mdl = inst:FindFirstAncestorOfClass("Model")
                     if mdl and mdl ~= lp.Character then
-                        if pierceTeammateEnabled and Players:GetPlayerFromCharacter(mdl) then
+                        -- 处决判定优先：处决是双向的，处决者和被处决者都算
+                        --   放在队友/尸体之前，避免被 elseif 短路掉
+                        if pierceExecutingEnabled and isInExecution(mdl) then
+                            skip = true
+                        elseif pierceTeammateEnabled and Players:GetPlayerFromCharacter(mdl) then
                             skip = true
                         elseif pierceCorpseEnabled then
                             local h = mdl:FindFirstChildOfClass("Humanoid")
                             if h and h.Health <= 0 then skip = true end
-                        end
-
-                        -- 穿透正在参与处决的目标
-                        --   处决者（玩家/敌人）和被处决者（玩家/敌人）都算
-                        --   因为处决是双向的，两侧模型都会带标记
-                        if not skip and pierceExecutingEnabled then
-                            if isInExecution(mdl) then
-                                skip = true
-                            end
                         end
                     end
                 end
@@ -9087,7 +9093,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.8.2"
+local CURRENT_VERSION = "1.8.3"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
