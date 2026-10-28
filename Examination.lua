@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.3.7  BTR 锁定框按模型尺寸自适应；AT-7 优先锁定 BTR
+-- Examination v1.3.8  BTR 血量/锁定框/无人机锁定修复；AT-7 优先级
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -6102,35 +6102,93 @@ end
         if fp and fp:IsA("Attachment") then return fp.WorldPosition end
         return core.Position
     end
-    local function forceAimPart(hitData)
-        if type(hitData) ~= "table" then return false end
-        local hum = hitData[1]
-        local part = hitData[2]
-        if not hum or not hum:IsA("Humanoid") then return false end
-        if hum.Health <= 0 then return false end
-        local char = hum.Parent
-        if not char or not char.Parent then return false end
-        if _playerChars[char] then return false end
-        if char:GetAttribute("FriendlyToFlare") == true then return false end
-        local aimPart = getAimPart(char)
-        if not aimPart then return false end
-        if part == aimPart then return false end
-        local cam = Workspace.CurrentCamera
-        local camPos = cam and cam.CFrame.Position
+    -- 把命中数据重定向到指定部件
+    --   普通目标：hum = Humanoid，char = 模型
+    --   BTR / 无人机：没有 Humanoid，直接指定模型和瞄准部件
+    local function redirectHit(hitData, model, aimPart)
+        if type(hitData) ~= "table" or not model or not aimPart then return false end
+        if hitData[2] == aimPart then return false end
+
         local normal = hitData[4]
         if typeof(normal) ~= "Vector3" then
             local fp = hitData[5]
-            if typeof(fp) == "Vector3" then normal = (aimPart.Position - fp).Unit
-            else normal = Vector3.new(0, 1, 0) end
+            if typeof(fp) == "Vector3" then
+                normal = (aimPart.Position - fp).Unit
+            else
+                normal = Vector3.new(0, 1, 0)
+            end
         end
-        hitData[2] = aimPart; hitData[3] = aimPart.Position
+
+        hitData[2] = aimPart
+        hitData[3] = aimPart.Position
+
+        local cam = Workspace.CurrentCamera
+        local camPos = cam and cam.CFrame.Position
         if camPos then hitData[5] = camPos end
-        local root = hum.RootPart or char:FindFirstChild("HumanoidRootPart")
-        if root then
+
+        -- 第 7 项是「相对于 RootPart 的 CFrame」，BTR 没有 RootPart 就不写
+        local root = model:FindFirstChild("HumanoidRootPart")
+            or model:FindFirstChild("BTRRoot")
+            or model:FindFirstChild("DroneRoot")
+        if root and root:IsA("BasePart") then
             local cf = CFrame.new(aimPart.Position, aimPart.Position - normal * 1.5)
             hitData[7] = root.CFrame:ToObjectSpace(cf)
         end
+
         return true
+    end
+
+    local function forceAimPart(hitData)
+        if type(hitData) ~= "table" then return false end
+
+        local first = hitData[1]
+        local part = hitData[2]
+
+        -- ① 普通目标：第一项是 Humanoid
+        if first and typeof(first) == "Instance" and first:IsA("Humanoid") then
+            if first.Health <= 0 then return false end
+            local char = first.Parent
+            if not char or not char.Parent then return false end
+            if _playerChars[char] then return false end
+            if char:GetAttribute("FriendlyToFlare") == true then return false end
+            local aimPart = getAimPart(char)
+            if not aimPart then return false end
+            return redirectHit(hitData, char, aimPart)
+        end
+
+        -- ② BTR：没有 Humanoid，命中数据的第一项可能是模型或部件
+        --   只有在手持 AT-7 时才重定向（别的枪打不动 BTR）
+        if not mbTargetBTR or not isHoldingAT7() then return false end
+
+        local btr = getBTRModelForAim()
+        if not btr or not isBTRTargetable(btr) then return false end
+
+        -- 判断这次命中是不是打到了 BTR 上（避免把打小怪的子弹拽到 BTR）
+        local hitModel = nil
+        if first and typeof(first) == "Instance" then
+            local node = first
+            local guard = 0
+            while node and guard < 20 do
+                if node == btr then hitModel = btr; break end
+                node = node.Parent
+                guard = guard + 1
+            end
+        end
+        if not hitModel and part and typeof(part) == "Instance" then
+            local node = part
+            local guard = 0
+            while node and guard < 20 do
+                if node == btr then hitModel = btr; break end
+                node = node.Parent
+                guard = guard + 1
+            end
+        end
+        -- 打中的不是 BTR 就不管
+        if not hitModel then return false end
+
+        local aimPart = getBTRAimPart(btr)
+        if not aimPart then return false end
+        return redirectHit(hitData, btr, aimPart)
     end
     local shieldCache = { list = {}, tick = 0 }
     local helmetCache = { list = {}, tick = 0 }
@@ -7836,7 +7894,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.3.7"
+local CURRENT_VERSION = "1.3.8"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
