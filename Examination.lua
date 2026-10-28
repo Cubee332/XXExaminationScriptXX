@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.8.1  自动肘击补齐处决判定（和魔法子弹同款）
+-- Examination v1.8.2  魔法子弹新增「穿透处决目标」（玩家+敌人）
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -80,6 +80,7 @@ local pierceShieldEnabled = true
 local pierceHelmetEnabled = true
 local pierceTeammateEnabled = true
 local pierceCorpseEnabled = true
+local pierceExecutingEnabled = true   -- 穿透正在处决/被处决的目标
 local headSize = 4
 local slideDistanceMult = 2
 local shieldVMAlpha = 0.9
@@ -536,6 +537,7 @@ local TOGGLE_KEY_MAP = {
     ["穿透SIN头盔"] = "pierceHelmet",
     ["穿透队友"] = "pierceTeammate",
     ["穿透尸体"] = "pierceCorpse",
+["穿透处决目标"] = "pierceExecuting",
     ["显示FOV圈"] = "mbShowFovCircle",
     ["未锁定不穿透"] = "mbOnlyWhenLocked",
     ["启用（雷达探敌）"] = "radar",
@@ -5439,6 +5441,34 @@ end
         if isVehicle(m) then return false end
         return true
     end
+    -- 判断一个 Model 是否正在参与处决（处决者 或 被处决者）
+    --   玩家和敌人通用，因为标记挂在各自的角色模型上
+    --   覆盖 5 种标记：PlatformStand 属性 / 4 种处决标记 / PlatformStanding 状态
+    local function isInExecution(m)
+        if not m then return false end
+
+        -- 1) 被处决 / 处决中的子对象标记
+        if m:FindFirstChild("BeingExecuted") ~= nil then return true end
+        if m:FindFirstChild("IsBeingExecuted") ~= nil then return true end
+        if m:FindFirstChild("Executing") ~= nil then return true end
+        if m:FindFirstChild("IsExecuting") ~= nil then return true end
+
+        -- 2) 属性标记
+        if m:GetAttribute("BeingExecuted") == true then return true end
+        if m:GetAttribute("IsBeingExecuted") == true then return true end
+        if m:GetAttribute("IsExecuting") == true then return true end
+
+        -- 3) Humanoid 状态
+        local h = m:FindFirstChildOfClass("Humanoid")
+        if h then
+            if h.PlatformStand == true then return true end
+            local ok, st = pcall(function() return h:GetState() end)
+            if ok and st == Enum.HumanoidStateType.PlatformStanding then return true end
+        end
+
+        return false
+    end
+
     local function isPointVisible(origin, targetPos, targetModel, excludeBase)
         local dir = targetPos - origin
         local dist = dir.Magnitude
@@ -5473,6 +5503,15 @@ end
                         elseif pierceCorpseEnabled then
                             local h = mdl:FindFirstChildOfClass("Humanoid")
                             if h and h.Health <= 0 then skip = true end
+                        end
+
+                        -- 穿透正在参与处决的目标
+                        --   处决者（玩家/敌人）和被处决者（玩家/敌人）都算
+                        --   因为处决是双向的，两侧模型都会带标记
+                        if not skip and pierceExecutingEnabled then
+                            if isInExecution(mdl) then
+                                skip = true
+                            end
                         end
                     end
                 end
@@ -6286,6 +6325,11 @@ end
         corpseCache.tick = 0; corpseCache.list = {}
     end, UDim2.new(0, 140, 0, 28)))
     _G._ExamSetters.pierceCorpse = _f; _G._ExamStates.pierceCorpse = true
+
+    local _fx = select(2, toggleMagic("穿透处决目标", UDim2.new(0, 15, 0, 164), true, function(v)
+        pierceExecutingEnabled = v
+    end, UDim2.new(0, 140, 0, 28)))
+    _G._ExamSetters.pierceExecuting = _fx; _G._ExamStates.pierceExecuting = true
 
     local _g = select(2, toggleMagic("显示FOV圈", UDim2.new(0, 15, 0, 132), true, function(v)
         mbShowFovCircle = v; updateFov(); updateLockBB()
@@ -8854,6 +8898,7 @@ tab:Expand({
         { Kind = "toggle", Key = "pierceHelmet", Name = "穿透 SIN 头盔", Default = true, Callback = function(v) CB("pierceHelmet", v) end },
         { Kind = "toggle", Key = "pierceTeammate", Name = "穿透队友", Default = true, Callback = function(v) CB("pierceTeammate", v) end },
         { Kind = "toggle", Key = "pierceCorpse", Name = "穿透尸体", Default = true, Callback = function(v) CB("pierceCorpse", v) end },
+        { Kind = "toggle", Key = "pierceExecuting", Name = "穿透处决目标", Default = true, Callback = function(v) CB("pierceExecuting", v) end },
         { Kind = "toggle", Key = "mbShowFovCircle", Name = "显示 FOV 圈", Default = true, Callback = function(v) CB("mbShowFovCircle", v) end },
         { Kind = "toggle", Key = "mbOnlyWhenLocked", Name = "未锁定不穿透", Default = true, Callback = function(v) CB("mbOnlyWhenLocked", v) end },
     },
@@ -9042,7 +9087,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.8.1"
+local CURRENT_VERSION = "1.8.2"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
