@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.9.0  地图重绘：补画信号屏蔽区
+-- Examination v1.9.1  绕过怪物盾牌（关撞撞+缩小）
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -77,6 +77,12 @@ local shieldVMEnabled = false
 local noCDEnabled = false
 local noCDActiveUntil = 0
 local pierceShieldEnabled = true
+-- 绕过怪物盾牌（Dave / Shielder 这类带 RiotShieldCollisionBody 的）
+--   盾牌是焊在 HumanoidRootPart 上的隐形碰撞体（CanCollide=true），
+--   子弹的物理碰撞由服务器判定，改客户端的射线没用。
+--   真正有效的做法：把盾牌的 CanCollide 关掉 / 缩小 / 挪走。
+--   实测服务器不会重置这三个属性。
+local bypassRiotShieldEnabled = true
 local pierceHelmetEnabled = true
 local pierceTeammateEnabled = true
 local pierceCorpseEnabled = true
@@ -534,6 +540,7 @@ local TOGGLE_KEY_MAP = {
     ["显示 3D 头框"] = "mbShowBox",
     ["掩体检测"] = "mbRequireVisible",
     ["穿透盾牌"] = "pierceShield",
+["绕过怪物盾牌"] = "bypassRiotShield",
     ["穿透SIN头盔"] = "pierceHelmet",
     ["穿透队友"] = "pierceTeammate",
     ["穿透尸体"] = "pierceCorpse",
@@ -7022,6 +7029,137 @@ end
     end)
 end)()
 
+-- ============ 模块 17.5: 绕过怪物盾牌 ============
+--   游戏里的怪物（Dave / Shielder / Riser 等 60 种）身上焊着一个
+--   RiotShieldCollisionBody：隐形、CanCollide=true 的碰撞体，
+--   会挡住子弹。它 CanQuery=false，所以客户端射线检测绕不过，
+--   子弹的物理碰撞判定在服务器，改射线没用。
+--
+--   实测有效方案：直接改盾牌的三个属性，服务器不会重置。
+--     ① CanCollide = false（最干净，子弹完全穿过）
+--     ② 缩到 0.1（视觉上看不出来，物理上几乎不挡）
+--     ③ 挪到高处（远离身体）
+--   这里用 ①+② 组合，效果最稳。
+do
+    local bvsEnabled = true
+    local bvsLoop = nil
+    local bvsTouched = {}      -- [shieldPart] = { size, collide, pos }
+    local BVS_INTERVAL = 1.0   -- 每秒扫一次（怪物会动态刷新）
+    local BVS_SMALL = 0.1
+
+    -- 需要处理的容器
+    local BVS_CONTAINERS = { "Characters", "AI", "Reactor1", "Reactor2", "Reactor3", "Reactor4" }
+
+    -- 处理一个盾牌
+    local function bvsPatch(shield)
+        if not shield or not shield.Parent then return false end
+        if not shield:IsA("BasePart") then return false end
+
+        -- 记录原始值（第一次遇到时）
+        local rec = bvsTouched[shield]
+        if not rec then
+            rec = {
+                size = shield.Size,
+                collide = shield.CanCollide,
+                pos = shield.Position,
+            }
+            bvsTouched[shield] = rec
+        end
+
+        local changed = false
+        if shield.CanCollide then
+            pcall(function() shield.CanCollide = false end)
+            changed = true
+        end
+        if shield.Size.X > BVS_SMALL * 2 then
+            pcall(function() shield.Size = Vector3.new(BVS_SMALL, BVS_SMALL, BVS_SMALL) end)
+            changed = true
+        end
+        return changed
+    end
+
+    -- 还原一个盾牌
+    local function bvsRestore(shield, rec)
+        if not shield or not shield.Parent then return end
+        pcall(function()
+            shield.CanCollide = rec.collide
+            shield.Size = rec.size
+        end)
+    end
+
+    -- 扫一遍所有怪物
+    local function bvsScanOnce()
+        local n = 0
+        for _, containerName in ipairs(BVS_CONTAINERS) do
+            local container = Workspace:FindFirstChild(containerName)
+            if container then
+                for _, model in ipairs(container:GetChildren()) do
+                    if model:IsA("Model") then
+                        local shield = model:FindFirstChild("RiotShieldCollisionBody")
+                        if shield and bvsPatch(shield) then
+                            n = n + 1
+                        end
+                    end
+                end
+            end
+        end
+        return n
+    end
+
+    -- 全部还原
+    local function bvsRestoreAll()
+        for shield, rec in pairs(bvsTouched) do
+            bvsRestore(shield, rec)
+        end
+        bvsTouched = {}
+    end
+
+    local function bvsStart()
+        if bvsLoop then return end
+        bvsLoop = task.spawn(function()
+            while bvsEnabled do
+                pcall(bvsScanOnce)
+                task.wait(BVS_INTERVAL)
+            end
+            bvsLoop = nil
+        end)
+    end
+
+    local function bvsStop()
+        bvsEnabled = false
+        if bvsLoop then
+            -- 循环自己会退出
+            bvsLoop = nil
+        end
+        bvsRestoreAll()
+    end
+
+    -- ===== Setter =====
+    _G._ExamSetters.bypassRiotShield = function(v)
+        bypassRiotShieldEnabled = v and true or false
+        _G._ExamStates.bypassRiotShield = bypassRiotShieldEnabled
+        if bypassRiotShieldEnabled then
+            bvsEnabled = true
+            local n = bvsScanOnce()
+            bvsStart()
+            print(string.format("[绕过盾牌] 已处理 %d 个怪物的盾牌", n))
+        else
+            bvsStop()
+            print("[绕过盾牌] 已还原所有盾牌")
+        end
+    end
+    _G._ExamStates.bypassRiotShield = true
+
+    -- 启动时如果默认开着，直接跑
+    task.defer(function()
+        if bypassRiotShieldEnabled then
+            bvsEnabled = true
+            pcall(bvsScanOnce)
+            bvsStart()
+        end
+    end)
+end
+
 -- ============ 模块 18: 雷达页 ============
 do
     local rpEnabled = false
@@ -9051,6 +9189,7 @@ tab:Expand({
         { Kind = "toggle", Key = "mbShowBox", Name = "显示 3D 头框", Default = true, Callback = function(v) CB("mbShowBox", v) end },
         { Kind = "toggle", Key = "mbRequireVisible", Name = "掩体检测", Default = true, Callback = function(v) CB("mbRequireVisible", v) end },
         { Kind = "toggle", Key = "pierceShield", Name = "穿透盾牌", Default = true, Callback = function(v) CB("pierceShield", v) end },
+        { Kind = "toggle", Key = "bypassRiotShield", Name = "绕过怪物盾牌", Default = true, Callback = function(v) CB("bypassRiotShield", v) end },
         { Kind = "toggle", Key = "pierceHelmet", Name = "穿透 SIN 头盔", Default = true, Callback = function(v) CB("pierceHelmet", v) end },
         { Kind = "toggle", Key = "pierceTeammate", Name = "穿透队友", Default = true, Callback = function(v) CB("pierceTeammate", v) end },
         { Kind = "toggle", Key = "pierceCorpse", Name = "穿透尸体", Default = true, Callback = function(v) CB("pierceCorpse", v) end },
@@ -9181,256 +9320,6 @@ tab:Section({ Name = "信号" })
 tab:Toggle({ Key = "radarBoost", Name = "信号增幅器", Desc = "去除无信号区域干扰", Default = false,
     Callback = function(v) CB("radarBoost", v) end })
 
-tab:Expand({
-    Key = "mapRedraw",
-    Callback = function(v) CB("mapRedraw", v) end,
-    Name = "地图重绘/补充",
-    Desc = "在小地图上画出游戏没画的信号屏蔽区",
-    Default = false,
-    Children = {
-        { Kind = "toggle", Key = "mapRedrawAuto", Name = "自动补画新区",
-          Desc = "游戏更新出新屏蔽区时自动画上", Default = false,
-          Callback = function(v) CB("mapRedrawAuto", v) end },
-        { Kind = "action", Key = "mapRedrawNow", Name = "立即重绘",
-          IconImage = "rbxassetid://112173305232811",
-          IconColor = Color3.fromRGB(220, 225, 235),
-          OnClick = function() CB("mapRedrawNow", true) end },
-    },
-})
-
--- ============================================================
--- 模块 18.5: 地图重绘（信号屏蔽区补充绘制）
---   游戏的小地图是 ViewportFrame 渲染 MinimapWorld 里的 3D 薄片几何，
---   但 NoSignalZones 里的区域游戏没画上去。
---   这里读取 NoSignalZones 的数据，按原游戏风格补画：
---     · 同样放在 MinimapWorld 的对应 Layer 里
---     · 同样是薄片几何（厚度 0.2~3）
---     · 用醒目但协调的颜色（红橙色，和"危险"语义一致）
--- ============================================================
-do
-    local mrEnabled = false
-    local mrAuto = false
-    local mrConn = nil
-    local mrDrawn = {}          -- [zoneInstance] = model
-    local mrFolder = nil
-
-    -- 配色：信号屏蔽区用红橙色，和原游戏的 INTEREST 红色标记同系
-    --   原游戏 INTEREST = Color3.fromRGB(170, 0, 0)
-    local MR_COLOR       = Color3.fromRGB(200, 60, 40)
-    local MR_FILL_COLOR  = Color3.fromRGB(150, 40, 30)
-    local MR_FILL_TRANS  = 0.55
-    local MR_EDGE_THICK  = 0.6
-    local MR_EDGE_H      = 1.2
-    local MR_LAYER_Z     = 6      -- 比普通几何高一点，避免被遮挡
-
-    -- 取小地图的 MinimapWorld
-    local function mrGetWorld()
-        local pg = lp:FindFirstChild("PlayerGui")
-        local mm = pg and pg:FindFirstChild("Minimap")
-        local mc = mm and mm:FindFirstChild("MinimapContainer")
-        local core = mc and mc:FindFirstChild("Core")
-        return core and core:FindFirstChild("MinimapWorld")
-    end
-
-    -- 根据区域的 Y 高度判断应该画在哪一层
-    --   原游戏分层：Layer_1 (Y≈-44) / Layer_2 (Y≈-10) / Layer_3 (Y≈6)
-    local function mrPickLayer(world, zoneY)
-        if not world then return nil end
-        local best, bestD = nil, math.huge
-        for _, layer in ipairs(world:GetChildren()) do
-            if layer.Name:match("^Layer_%d+$") then
-                -- 找该层的平均 Y
-                local sum, n = 0, 0
-                for _, d in ipairs(layer:GetDescendants()) do
-                    if d:IsA("BasePart") then
-                        sum = sum + d.Position.Y
-                        n = n + 1
-                        if n >= 20 then break end
-                    end
-                end
-                if n > 0 then
-                    local avgY = sum / n
-                    local d = math.abs(avgY - zoneY)
-                    if d < bestD then bestD = d; best = layer end
-                end
-            end
-        end
-        return best or world:FindFirstChild("Layer_2") or world:FindFirstChildWhichIsA("Model")
-    end
-
-    -- 清掉之前画的
-    local function mrClear()
-        for _, model in pairs(mrDrawn) do
-            if model and model.Parent then
-                pcall(function() model:Destroy() end)
-            end
-        end
-        mrDrawn = {}
-        if mrFolder and mrFolder.Parent then
-            pcall(function() mrFolder:Destroy() end)
-        end
-        mrFolder = nil
-    end
-
-    -- 画一个区域：外框 + 半透明填充
-    local function mrDrawZone(world, zone)
-        if not zone:IsA("BasePart") then return nil end
-        if zone:GetAttribute("Enabled") == false then return nil end
-
-        local layer = mrPickLayer(world, zone.Position.Y)
-        if not layer then return nil end
-
-        local model = Instance.new("Model")
-        model.Name = "__MapRedraw_" .. zone.Name
-
-        -- 区域在 XZ 平面的四角
-        local cf = zone.CFrame
-        local sx, sz = zone.Size.X * 0.5, zone.Size.Z * 0.5
-        local baseY = zone.Position.Y + zone.Size.Y * 0.5 + MR_LAYER_Z
-
-        -- 半透明填充（整个矩形）
-        local fill = Instance.new("Part")
-        fill.Name = "Fill"
-        fill.Anchored = true
-        fill.CanCollide = false
-        fill.CanQuery = false
-        fill.CanTouch = false
-        fill.Material = Enum.Material.SmoothPlastic
-        fill.Color = MR_FILL_COLOR
-        fill.Transparency = MR_FILL_TRANS
-        fill.Size = Vector3.new(zone.Size.X, 0.2, zone.Size.Z)
-        fill.CFrame = CFrame.new(Vector3.new(zone.Position.X, baseY, zone.Position.Z))
-            * (cf - cf.Position)
-        fill.Parent = model
-
-        -- 四边描边（细长条）
-        local edges = {
-            { Vector3.new(zone.Size.X, MR_EDGE_H, MR_EDGE_THICK), Vector3.new(0, 0, -sz) },
-            { Vector3.new(zone.Size.X, MR_EDGE_H, MR_EDGE_THICK), Vector3.new(0, 0,  sz) },
-            { Vector3.new(MR_EDGE_THICK, MR_EDGE_H, zone.Size.Z), Vector3.new(-sx, 0, 0) },
-            { Vector3.new(MR_EDGE_THICK, MR_EDGE_H, zone.Size.Z), Vector3.new( sx, 0, 0) },
-        }
-        local rot = cf - cf.Position
-        for idx, e in ipairs(edges) do
-            local part = Instance.new("Part")
-            part.Name = "Edge" .. idx
-            part.Anchored = true
-            part.CanCollide = false
-            part.CanQuery = false
-            part.CanTouch = false
-            part.Material = Enum.Material.SmoothPlastic
-            part.Color = MR_COLOR
-            part.Transparency = 0.1
-            part.Size = e[1]
-            local off = e[2]
-            part.CFrame = CFrame.new(Vector3.new(
-                zone.Position.X + off.X, baseY, zone.Position.Z + off.Z))
-                * rot
-            part.Parent = model
-        end
-
-        model.Parent = layer
-        return model
-    end
-
-    -- 主绘制流程
-    local function mrRedraw()
-        mrClear()
-        if not mrEnabled then return 0 end
-
-        local world = mrGetWorld()
-        if not world then return 0 end
-
-        local mmd = Workspace:FindFirstChild("MinimapData")
-        local zones = mmd and mmd:FindFirstChild("NoSignalZones")
-        if not zones then return 0 end
-
-        local n = 0
-        for _, zone in ipairs(zones:GetChildren()) do
-            local model = mrDrawZone(world, zone)
-            if model then
-                mrDrawn[zone] = model
-                n = n + 1
-            end
-        end
-        return n
-    end
-
-    -- 自动监听：游戏更新出新区时补画
-    local function mrStartWatch()
-        if mrConn then return end
-        local mmd = Workspace:FindFirstChild("MinimapData")
-        local zones = mmd and mmd:FindFirstChild("NoSignalZones")
-        if not zones then return end
-
-        mrConn = zones.ChildAdded:Connect(function(child)
-            if not mrEnabled or not mrAuto then return end
-            task.wait(0.3)   -- 等属性就位
-            if not mrEnabled or not mrAuto then return end
-            if mrDrawn[child] then return end
-            local world = mrGetWorld()
-            if not world then return end
-            local model = mrDrawZone(world, child)
-            if model then
-                mrDrawn[child] = model
-            end
-        end)
-    end
-
-    local function mrStopWatch()
-        if mrConn then
-            pcall(function() mrConn:Disconnect() end)
-            mrConn = nil
-        end
-    end
-
-    -- ===== Setter =====
-    _G._ExamSetters.mapRedraw = function(v)
-        mrEnabled = v and true or false
-        _G._ExamStates.mapRedraw = mrEnabled
-        if mrEnabled then
-            local n = mrRedraw()
-            if mrAuto then mrStartWatch() end
-            if n == 0 then
-                print("[地图重绘] 未找到可绘制的信号屏蔽区")
-            else
-                print(string.format("[地图重绘] 已绘制 %d 个信号屏蔽区", n))
-            end
-        else
-            mrClear()
-            mrStopWatch()
-        end
-    end
-    _G._ExamStates.mapRedraw = false
-
-    _G._ExamSetters.mapRedrawAuto = function(v)
-        mrAuto = v and true or false
-        _G._ExamStates.mapRedrawAuto = mrAuto
-        if mrAuto and mrEnabled then
-            mrStartWatch()
-        else
-            mrStopWatch()
-        end
-    end
-    _G._ExamStates.mapRedrawAuto = false
-
-    _G._ExamSetters.mapRedrawNow = function()
-        if not mrEnabled then
-            print("[地图重绘] 请先开启功能")
-            return
-        end
-        local n = mrRedraw()
-        print(string.format("[地图重绘] 重新绘制完成，共 %d 个", n))
-    end
-
-    -- 地图是流式加载的：刚进游戏 MinimapWorld 可能还没建好
-    --   延迟补一次
-    task.delay(3, function()
-        if mrEnabled then
-            pcall(mrRedraw)
-        end
-    end)
-end
 
 -- ============================================================
 -- 其他
@@ -9494,7 +9383,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.9.0"
+local CURRENT_VERSION = "1.9.1"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
