@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.9.3  绕过盾牌修复 + 电锯无敌不锁定 + 2D人体图字号放大
+-- Examination v1.9.4  移除绕过盾牌（服务端拒绝伤害，客户端无法绕过）
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -77,12 +77,6 @@ local shieldVMEnabled = false
 local noCDEnabled = false
 local noCDActiveUntil = 0
 local pierceShieldEnabled = true
--- 绕过怪物盾牌（Dave / Shielder 这类带 RiotShieldCollisionBody 的）
---   盾牌是焊在 HumanoidRootPart 上的隐形碰撞体（CanCollide=true），
---   子弹的物理碰撞由服务器判定，改客户端的射线没用。
---   真正有效的做法：把盾牌的 CanCollide 关掉 / 缩小 / 挪走。
---   实测服务器不会重置这三个属性。
-local bypassRiotShieldEnabled = true
 local pierceHelmetEnabled = true
 local pierceTeammateEnabled = true
 local pierceCorpseEnabled = true
@@ -540,7 +534,6 @@ local TOGGLE_KEY_MAP = {
     ["显示 3D 头框"] = "mbShowBox",
     ["掩体检测"] = "mbRequireVisible",
     ["穿透盾牌"] = "pierceShield",
-["绕过怪物盾牌"] = "bypassRiotShield",
     ["穿透SIN头盔"] = "pierceHelmet",
     ["穿透队友"] = "pierceTeammate",
     ["穿透尸体"] = "pierceCorpse",
@@ -5878,10 +5871,6 @@ end
         elseif outFov == candidates - visBlocked then findLastReason = "all-outFOV"
         else findLastReason = "no-target" end
         cachedTarget = best
-        -- 对外暴露当前锁定目标（绕过盾牌要用：只有锁定了才生效）
-        _G._ExamMB = _G._ExamMB or {}
-        _G._ExamMB.lockedModel = best and best.model or nil
-        _G._ExamMB.lockedAt = best and os.clock() or nil
         return best
     end
 
@@ -6447,8 +6436,6 @@ end
         mbSetup()
     end, UDim2.new(0, 290, 0, 28))
     _G._ExamMB.magicOffFn = function()
-        _G._ExamMB.lockedModel = nil
-        _G._ExamMB.lockedAt = nil
         getgenv()._mbDiag = (getgenv()._mbDiag or "") .. "|magicOffFn调用"
         if mbSetState then pcall(function() mbSetState(false) end) end
         _G._ExamStates.magicBullet = false
@@ -7056,192 +7043,6 @@ end
         end
     end)
 end)()
-
--- ============ 模块 17.5: 绕过怪物盾牌 ============
---   游戏里的怪物（Dave / Shielder / Riser 等 60 种）身上焊着一个
---   RiotShieldCollisionBody：隐形、CanCollide=true 的碰撞体，
---   会挡住子弹。它 CanQuery=false，所以客户端射线检测绕不过，
---   子弹的物理碰撞判定在服务器，改射线没用。
---
---   实测有效方案：直接改盾牌的三个属性，服务器不会重置。
---     ① CanCollide = false（最干净，子弹完全穿过）
---     ② 缩到 0.1（视觉上看不出来，物理上几乎不挡）
---     ③ 挪到高处（远离身体）
---   这里用 ①+② 组合，效果最稳。
-do
-    local bvsEnabled = true
-    local bvsLoop = nil
-    local bvsTouched = {}      -- [shieldPart] = { size, collide, pos }
-    local BVS_INTERVAL = 0.1   -- 扫得勤一点，锁定切换才跟得上
-    local BVS_SMALL = 0.1
-
-    -- 需要处理的容器
-    local BVS_CONTAINERS = { "Characters", "AI", "Reactor1", "Reactor2", "Reactor3", "Reactor4" }
-
-    -- 处理一个盾牌
-    local function bvsPatch(shield)
-        if not shield or not shield.Parent then return false end
-        if not shield:IsA("BasePart") then return false end
-
-        -- 记录原始值（第一次遇到时）
-        local rec = bvsTouched[shield]
-        if not rec then
-            -- 兜底：如果当前已经是"被改过"的状态（尺寸异常小 / 碰撞已关），
-            -- 说明之前的会话改过但没还原。用标准值作为原始值。
-            local curSize = shield.Size
-            local curCollide = shield.CanCollide
-            if curSize.X < 1 or not curCollide then
-                curSize = Vector3.new(2, 4, 2)
-                curCollide = true
-            end
-            rec = {
-                size = curSize,
-                collide = curCollide,
-                pos = shield.Position,
-            }
-            bvsTouched[shield] = rec
-        end
-
-        local changed = false
-        if shield.CanCollide then
-            pcall(function() shield.CanCollide = false end)
-            changed = true
-        end
-        if shield.Size.X > BVS_SMALL * 2 then
-            pcall(function() shield.Size = Vector3.new(BVS_SMALL, BVS_SMALL, BVS_SMALL) end)
-            changed = true
-        end
-        return changed
-    end
-
-    -- 还原一个盾牌
-    local function bvsRestore(shield, rec)
-        if not shield or not shield.Parent then return end
-        pcall(function()
-            shield.CanCollide = rec.collide
-            shield.Size = rec.size
-        end)
-    end
-
-    -- ============================================================
-    -- 只处理「魔法子弹当前锁定的目标」
-    --   没锁定的时候不能动盾牌 —— 那是正常的游戏行为，
-    --   乱改会让所有怪都不挡子弹，反而暴露/影响其他玩法。
-    --   锁定来源：_G._ExamMB.lockedModel（魔法子弹每帧更新）
-    -- ============================================================
-    local function bvsGetLocked()
-        local mb = _G._ExamMB
-        if not mb then return nil end
-        local m = mb.lockedModel
-        if not m or not m.Parent then return nil end
-        -- 太久没更新（魔法子弹关了/没在跑）就当没锁定
-        local at = mb.lockedAt
-        if not at or (os.clock() - at) > 1.5 then return nil end
-        return m
-    end
-
-    -- 扫一遍：只处理锁定目标的盾牌，并还原其他被处理过的
-    local function bvsScanOnce()
-        local locked = bvsGetLocked()
-        local n = 0
-
-        -- ① 遍历所有怪物，把「不是锁定目标」的盾牌还原
-        --   不能只遍历 bvsTouched：之前手动改过 / 上个会话残留的盾牌
-        --   不在记录里，永远还原不了。
-        for _, containerName in ipairs(BVS_CONTAINERS) do
-            local container = Workspace:FindFirstChild(containerName)
-            if container then
-                for _, model in ipairs(container:GetChildren()) do
-                    if model:IsA("Model") and model ~= locked then
-                        local shield = model:FindFirstChild("RiotShieldCollisionBody")
-                        if shield and shield:IsA("BasePart") then
-                            local rec = bvsTouched[shield]
-                            if rec then
-                                -- 有记录：按记录还原
-                                bvsRestore(shield, rec)
-                                bvsTouched[shield] = nil
-                            else
-                                -- 没记录但状态异常：说明是残留，用标准值还原
-                                local needFix = false
-                                if not shield.CanCollide then needFix = true end
-                                if shield.Size.X < 1 then needFix = true end
-                                if needFix then
-                                    pcall(function()
-                                        shield.CanCollide = true
-                                        shield.Size = Vector3.new(2, 4, 2)
-                                    end)
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-
-        -- ② 处理当前锁定目标
-        if locked then
-            local shield = locked:FindFirstChild("RiotShieldCollisionBody")
-            if shield and bvsPatch(shield) then
-                n = 1
-            end
-        end
-
-        return n
-    end
-
-    -- 全部还原
-    local function bvsRestoreAll()
-        for shield, rec in pairs(bvsTouched) do
-            bvsRestore(shield, rec)
-        end
-        bvsTouched = {}
-    end
-
-    local function bvsStart()
-        if bvsLoop then return end
-        bvsLoop = task.spawn(function()
-            while bvsEnabled do
-                pcall(bvsScanOnce)
-                task.wait(BVS_INTERVAL)
-            end
-            bvsLoop = nil
-        end)
-    end
-
-    local function bvsStop()
-        bvsEnabled = false
-        if bvsLoop then
-            -- 循环自己会退出
-            bvsLoop = nil
-        end
-        bvsRestoreAll()
-    end
-
-    -- ===== Setter =====
-    _G._ExamSetters.bypassRiotShield = function(v)
-        bypassRiotShieldEnabled = v and true or false
-        _G._ExamStates.bypassRiotShield = bypassRiotShieldEnabled
-        if bypassRiotShieldEnabled then
-            bvsEnabled = true
-            local n = bvsScanOnce()
-            bvsStart()
-            print(string.format("[绕过盾牌] 已处理 %d 个怪物的盾牌", n))
-        else
-            bvsStop()
-            print("[绕过盾牌] 已还原所有盾牌")
-        end
-    end
-    _G._ExamStates.bypassRiotShield = true
-
-    -- 启动时如果默认开着，直接跑
-    task.defer(function()
-        if bypassRiotShieldEnabled then
-            bvsEnabled = true
-            pcall(bvsScanOnce)
-            bvsStart()
-        end
-    end)
-end
 
 -- ============ 模块 18: 雷达页 ============
 do
@@ -9293,7 +9094,6 @@ tab:Expand({
         { Kind = "toggle", Key = "mbShowBox", Name = "显示 3D 头框", Default = true, Callback = function(v) CB("mbShowBox", v) end },
         { Kind = "toggle", Key = "mbRequireVisible", Name = "掩体检测", Default = true, Callback = function(v) CB("mbRequireVisible", v) end },
         { Kind = "toggle", Key = "pierceShield", Name = "穿透盾牌", Default = true, Callback = function(v) CB("pierceShield", v) end },
-        { Kind = "toggle", Key = "bypassRiotShield", Name = "绕过怪物盾牌", Default = true, Callback = function(v) CB("bypassRiotShield", v) end },
         { Kind = "toggle", Key = "pierceHelmet", Name = "穿透 SIN 头盔", Default = true, Callback = function(v) CB("pierceHelmet", v) end },
         { Kind = "toggle", Key = "pierceTeammate", Name = "穿透队友", Default = true, Callback = function(v) CB("pierceTeammate", v) end },
         { Kind = "toggle", Key = "pierceCorpse", Name = "穿透尸体", Default = true, Callback = function(v) CB("pierceCorpse", v) end },
@@ -9487,7 +9287,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.9.3"
+local CURRENT_VERSION = "1.9.4"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
