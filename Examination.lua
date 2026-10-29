@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.9.1  绕过怪物盾牌（关撞撞+缩小）
+-- Examination v1.9.2  绕过盾牌仅限魔法子弹锁定目标
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -5856,6 +5856,10 @@ end
         elseif outFov == candidates - visBlocked then findLastReason = "all-outFOV"
         else findLastReason = "no-target" end
         cachedTarget = best
+        -- 对外暴露当前锁定目标（绕过盾牌要用：只有锁定了才生效）
+        _G._ExamMB = _G._ExamMB or {}
+        _G._ExamMB.lockedModel = best and best.model or nil
+        _G._ExamMB.lockedAt = best and os.clock() or nil
         return best
     end
 
@@ -6421,6 +6425,8 @@ end
         mbSetup()
     end, UDim2.new(0, 290, 0, 28))
     _G._ExamMB.magicOffFn = function()
+        _G._ExamMB.lockedModel = nil
+        _G._ExamMB.lockedAt = nil
         getgenv()._mbDiag = (getgenv()._mbDiag or "") .. "|magicOffFn调用"
         if mbSetState then pcall(function() mbSetState(false) end) end
         _G._ExamStates.magicBullet = false
@@ -7044,7 +7050,7 @@ do
     local bvsEnabled = true
     local bvsLoop = nil
     local bvsTouched = {}      -- [shieldPart] = { size, collide, pos }
-    local BVS_INTERVAL = 1.0   -- 每秒扫一次（怪物会动态刷新）
+    local BVS_INTERVAL = 0.1   -- 扫得勤一点，锁定切换才跟得上
     local BVS_SMALL = 0.1
 
     -- 需要处理的容器
@@ -7087,22 +7093,49 @@ do
         end)
     end
 
-    -- 扫一遍所有怪物
+    -- ============================================================
+    -- 只处理「魔法子弹当前锁定的目标」
+    --   没锁定的时候不能动盾牌 —— 那是正常的游戏行为，
+    --   乱改会让所有怪都不挡子弹，反而暴露/影响其他玩法。
+    --   锁定来源：_G._ExamMB.lockedModel（魔法子弹每帧更新）
+    -- ============================================================
+    local function bvsGetLocked()
+        local mb = _G._ExamMB
+        if not mb then return nil end
+        local m = mb.lockedModel
+        if not m or not m.Parent then return nil end
+        -- 太久没更新（魔法子弹关了/没在跑）就当没锁定
+        local at = mb.lockedAt
+        if not at or (os.clock() - at) > 1.5 then return nil end
+        return m
+    end
+
+    -- 扫一遍：只处理锁定目标的盾牌，并还原其他被处理过的
     local function bvsScanOnce()
+        local locked = bvsGetLocked()
         local n = 0
-        for _, containerName in ipairs(BVS_CONTAINERS) do
-            local container = Workspace:FindFirstChild(containerName)
-            if container then
-                for _, model in ipairs(container:GetChildren()) do
-                    if model:IsA("Model") then
-                        local shield = model:FindFirstChild("RiotShieldCollisionBody")
-                        if shield and bvsPatch(shield) then
-                            n = n + 1
-                        end
-                    end
+
+        -- 先还原所有「不是当前锁定目标」的盾牌
+        for shield, rec in pairs(bvsTouched) do
+            if not shield or not shield.Parent then
+                bvsTouched[shield] = nil
+            else
+                local owner = shield.Parent
+                if owner ~= locked then
+                    bvsRestore(shield, rec)
+                    bvsTouched[shield] = nil
                 end
             end
         end
+
+        -- 再处理当前锁定目标
+        if locked then
+            local shield = locked:FindFirstChild("RiotShieldCollisionBody")
+            if shield and bvsPatch(shield) then
+                n = 1
+            end
+        end
+
         return n
     end
 
@@ -9383,7 +9416,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.9.1"
+local CURRENT_VERSION = "1.9.2"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
