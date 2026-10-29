@@ -8894,8 +8894,10 @@ end
 --   关掉后加载动画只是装饰，不执行任何预热
 local USE_REAL_WARMUP = true
 
+-- Title     = 主UI里的大标题（游戏名字）
+-- TopbarText = 左上角顶栏按钮的文字（固定「控制面板」）
 local win = CDMUI.Create({
-    Title = "控制面板",
+    Title = "试炼",
     TopbarText = "控制面板",
     RealLoading = USE_REAL_WARMUP,
     Tasks = USE_REAL_WARMUP and buildWarmupTasks() or nil,
