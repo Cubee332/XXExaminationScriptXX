@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.10.6  人物半无敌默认关闭
+-- Examination v1.10.7  修复滑铲倍率初始值不一致
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -82,7 +82,7 @@ local pierceTeammateEnabled = true
 local pierceCorpseEnabled = true
 local pierceExecutingEnabled = true   -- 穿透正在处决/被处决的目标
 local headSize = 4
-local slideDistanceMult = 2
+local slideDistanceMult = 1
 local shieldVMAlpha = 0.9
 local slideSteerMode = "camera"
 local mbTargetMode = 1
@@ -3072,12 +3072,18 @@ do
     slideDistInput.FocusLost:Connect(function()
         local val = tonumber(slideDistInput.Text)
         if val and val >= 1 and val <= 10 then
-            slideDistanceMult = val; slideDistInput.Text = tostring(slideDistanceMult)
-        else slideDistInput.Text = tostring(slideDistanceMult) end
+            slideDistanceMult = val
+            slideDistInput.Text = tostring(slideDistanceMult)
+            _G._ExamStates.slideDistanceMult = slideDistanceMult
+        else
+            slideDistInput.Text = tostring(slideDistanceMult)
+        end
     end)
     _G._ExamSetters.slideDistanceMult = function(v)
         if type(v) == "number" and v >= 1 and v <= 10 then
-            slideDistanceMult = v; slideDistInput.Text = tostring(v)
+            slideDistanceMult = v
+            slideDistInput.Text = tostring(v)
+            _G._ExamStates.slideDistanceMult = v
         end
     end
     _G._ExamStates.slideDistanceMult = slideDistanceMult
@@ -9401,7 +9407,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.10.6"
+local CURRENT_VERSION = "1.10.7"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
