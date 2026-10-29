@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.9.2  绕过盾牌仅限魔法子弹锁定目标
+-- Examination v1.9.3  绕过盾牌修复 + 电锯无敌不锁定 + 2D人体图字号放大
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -5405,6 +5405,28 @@ end
         local br = m:FindFirstChild("IsBusyResurrecting")
         if br and br:IsA("BoolValue") and br.Value then return true end
 
+        -- ============================================================
+        -- 电锯无敌检测（Dave / Mikhail 这类带 Chainsaw 的 BOSS）
+        --   游戏用音效 + 粒子特效标记无敌窗口，客户端能读到：
+        --     · Torso.ChainsawPrepare  拉电锯准备（无敌开始）
+        --     · Torso.ChainsawEnd      收起电锯（无敌结束）
+        --     · Torso.Aura             无敌粒子（Enabled=true 时无敌）
+        --     · Parry                  格挡音效
+        --   这些期间打不动，锁了也没意义，直接跳过。
+        -- ============================================================
+        local torso = m:FindFirstChild("Torso")
+        if torso then
+            -- 拉电锯 / 收电锯 音效
+            local prep = torso:FindFirstChild("ChainsawPrepare")
+            if prep and prep:IsA("Sound") and prep.IsPlaying then return true end
+            -- 无敌粒子
+            local aura = torso:FindFirstChild("Aura")
+            if aura and aura:IsA("ParticleEmitter") and aura.Enabled then return true end
+        end
+        -- 格挡音效（有些怪的 Parry 直接挂在模型上）
+        local parry = m:FindFirstChild("Parry") or (torso and torso:FindFirstChild("Parry"))
+        if parry and parry:IsA("Sound") and parry.IsPlaying then return true end
+
         -- 下面这些只对 BOSS 生效（普通怪不会有护盾阶段）
         if not BOSS_DOWNED_NAMES[m.Name] then return false end
         if m:FindFirstChildOfClass("ForceField") then return true end
@@ -7064,9 +7086,17 @@ do
         -- 记录原始值（第一次遇到时）
         local rec = bvsTouched[shield]
         if not rec then
+            -- 兜底：如果当前已经是"被改过"的状态（尺寸异常小 / 碰撞已关），
+            -- 说明之前的会话改过但没还原。用标准值作为原始值。
+            local curSize = shield.Size
+            local curCollide = shield.CanCollide
+            if curSize.X < 1 or not curCollide then
+                curSize = Vector3.new(2, 4, 2)
+                curCollide = true
+            end
             rec = {
-                size = shield.Size,
-                collide = shield.CanCollide,
+                size = curSize,
+                collide = curCollide,
                 pos = shield.Position,
             }
             bvsTouched[shield] = rec
@@ -7115,20 +7145,40 @@ do
         local locked = bvsGetLocked()
         local n = 0
 
-        -- 先还原所有「不是当前锁定目标」的盾牌
-        for shield, rec in pairs(bvsTouched) do
-            if not shield or not shield.Parent then
-                bvsTouched[shield] = nil
-            else
-                local owner = shield.Parent
-                if owner ~= locked then
-                    bvsRestore(shield, rec)
-                    bvsTouched[shield] = nil
+        -- ① 遍历所有怪物，把「不是锁定目标」的盾牌还原
+        --   不能只遍历 bvsTouched：之前手动改过 / 上个会话残留的盾牌
+        --   不在记录里，永远还原不了。
+        for _, containerName in ipairs(BVS_CONTAINERS) do
+            local container = Workspace:FindFirstChild(containerName)
+            if container then
+                for _, model in ipairs(container:GetChildren()) do
+                    if model:IsA("Model") and model ~= locked then
+                        local shield = model:FindFirstChild("RiotShieldCollisionBody")
+                        if shield and shield:IsA("BasePart") then
+                            local rec = bvsTouched[shield]
+                            if rec then
+                                -- 有记录：按记录还原
+                                bvsRestore(shield, rec)
+                                bvsTouched[shield] = nil
+                            else
+                                -- 没记录但状态异常：说明是残留，用标准值还原
+                                local needFix = false
+                                if not shield.CanCollide then needFix = true end
+                                if shield.Size.X < 1 then needFix = true end
+                                if needFix then
+                                    pcall(function()
+                                        shield.CanCollide = true
+                                        shield.Size = Vector3.new(2, 4, 2)
+                                    end)
+                                end
+                            end
+                        end
+                    end
                 end
             end
         end
 
-        -- 再处理当前锁定目标
+        -- ② 处理当前锁定目标
         if locked then
             local shield = locked:FindFirstChild("RiotShieldCollisionBody")
             if shield and bvsPatch(shield) then
@@ -7667,7 +7717,23 @@ local function BodyPartPicker(tab, cfg)
     local key = cfg.Key or cfg.key
     local selected = cfg.Default or 1
 
-    -- 尺寸
+    -- ============================================================
+    -- 2D 人体图标准布局（请勿随意改动，改之前先看这段）
+    --   基准宽度 180 → S=45，实际渲染后（含 UI 缩放）约 213x282
+    --
+    --   横向排布（左→右）：左臂 | 躯干 | 右臂
+    --   纵向排布（上→下）：头 / 躯干+双臂 / 双腿
+    --
+    --   各块尺寸（以 S=45 为基准）：
+    --     头    HX x HY  = 60 x 60   （1.35S，居中于躯干上方）
+    --     躯干  TW x TH  = 90 x 90   （2S）
+    --     手臂  AW x AH  = 45 x 90   （1S x 2S，左右各一）
+    --     腿    LW x LH  = 45 x 90   （1S x 2S，躯干下方左右并排）
+    --     间隙  GAP      = 3
+    --
+    --   编号：1=头 2=躯干 3=左臂 4=右臂 5=左腿 6=右腿
+    --   字号：按块宽 x0.42，限 13~22（头/躯干 22，四肢 18）
+    -- ============================================================
     local TOTAL_W = 180
     local S = math.floor(TOTAL_W / 4)
     local TW, TH = 2 * S, 2 * S
@@ -7725,7 +7791,12 @@ local function BodyPartPicker(tab, cfg)
                 lbl.Text = label or ""
                 lbl.TextColor3 = Color3.fromRGB(150, 150, 162)
                 lbl.Font = Enum.Font.GothamBold
-                lbl.TextSize = 12
+                -- 字号按格子宽度自适应（文字是横排的，宽度才是瓶颈）
+                --   上限 22，避免"躯干"这种大方块字太大
+                local fs = math.floor(w * 0.42)
+                if fs > 22 then fs = 22 end
+                if fs < 13 then fs = 13 end
+                lbl.TextSize = fs
                 lbl.TextXAlignment = Enum.TextXAlignment.Center
                 lbl.TextYAlignment = Enum.TextYAlignment.Center
                 lbl.ZIndex = 7
@@ -9416,7 +9487,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.9.2"
+local CURRENT_VERSION = "1.9.3"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
