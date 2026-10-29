@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.10.7  修复滑铲倍率初始值不一致
+-- Examination v1.10.8  人物半无敌连发上限 10、默认 3、改为滑动条
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -1188,7 +1188,7 @@ do
     local godConn = nil
     local TauntEvent = nil
     local fireCount = 0
-    local BURST = 10                 -- 每帧连发次数（默认拉满）
+    local BURST = 3                  -- 每帧连发次数
 
     local function ensureTaunt()
         if TauntEvent and TauntEvent.Parent then return TauntEvent end
@@ -1252,7 +1252,7 @@ do
     _G._ExamSetters.godBurst = function(v)
         local n = tonumber(v)
         if n then
-            BURST = math.clamp(math.floor(n), 1, 50)
+            BURST = math.clamp(math.floor(n), 1, 10)
         end
     end
 
@@ -9080,7 +9080,7 @@ tab:Expand({
     Default = false,
     Callback = function(v) CB("godMode", v) end,
     Children = {
-        { Kind = "number", Key = "godBurst", Name = "每帧连发次数", Min = 1, Max = 50, Default = 10,
+        { Kind = "slider", Key = "godBurst", Name = "每帧连发次数", Min = 1, Max = 10, Default = 3, Step = 1,
           Callback = function(v) CB("godBurst", v) end },
     },
 
@@ -9407,7 +9407,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.10.7"
+local CURRENT_VERSION = "1.10.8"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
