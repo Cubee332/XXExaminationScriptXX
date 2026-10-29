@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.10.8  人物半无敌连发上限 10、默认 3、改为滑动条
+-- Examination v1.10.9  HUD 自愈（修复偶尔不加载）
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -8122,6 +8122,7 @@ do
         hudGui.Enabled = true
         pcall(function() hudGui.Active = false end)
         hudGui.Parent = parent
+        getgenv().__ExamHUDGui = hudGui
 
         hudFrame = Instance.new("Frame")
         hudFrame.Name = "HudBox"
@@ -8698,6 +8699,7 @@ do
     end
 
     function HUD.DestroyHUD()
+    getgenv().__ExamHUDGui = nil
         showFPS, showPing, showPlayers = false, false, false
         stopLoop(); destroyHud()
     end
@@ -8811,6 +8813,66 @@ do
             for _ = 1, 3 do
                 pcall(HUD.SetHUDAll, hudOn, hudOn, hudOn)
                 task.wait(0.3)
+            end
+        end
+    end)
+
+    -- ============================================================
+    -- HUD 自愈：定期检查，消失了就重建
+    --   解决「有时候不加载」：夜视仪晚出现、重载时序错乱等情况
+    -- ============================================================
+    task.spawn(function()
+        local failCount = 0
+        while true do
+            task.wait(2.0)
+
+            -- 只在开关打开时检查
+            if hudOn then
+                -- 快速路径：先查已知引用（O(1)）
+                local exists = false
+                pcall(function()
+                    local gui = getgenv().__ExamHUDGui
+                    if gui and gui.Parent and gui:FindFirstChild("HudBox") then
+                        exists = true
+                    end
+                end)
+
+                -- 慢速路径：引用失效才全扫（只在出问题时走）
+                if not exists then
+                    pcall(function()
+                        local pgv = lp and lp:FindFirstChild("PlayerGui")
+                        local cg = game:GetService("CoreGui")
+                        for _, root in ipairs({pgv, cg}) do
+                            if root then
+                                for _, d in ipairs(root:GetChildren()) do
+                                    if d.Name == "CDMUI_HUD" and d:FindFirstChild("HudBox") then
+                                        exists = true
+                                        getgenv().__ExamHUDGui = d
+                                        break
+                                    end
+                                end
+                            end
+                            if exists then break end
+                        end
+                    end)
+                end
+
+                if not exists then
+                    failCount = failCount + 1
+                    if failCount >= 2 then
+                        -- 连续 2 次（4 秒）都没找到 → 重建
+                        pcall(function()
+                            if HUD and HUD.SetHUDAll then
+                                HUD.SetHUDAll(hudOn, hudOn, hudOn)
+                            end
+                        end)
+                        failCount = 0
+                    end
+                else
+                    failCount = 0
+                end
+            else
+                failCount = 0
             end
         end
     end)
@@ -9407,7 +9469,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.10.8"
+local CURRENT_VERSION = "1.10.9"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
