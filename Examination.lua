@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.9.4  移除绕过盾牌（服务端拒绝伤害，客户端无法绕过）
+-- Examination v1.10.6  人物半无敌默认关闭
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -1170,6 +1170,105 @@ do
     table.insert(cleanupFns, function()
         fallEnabled = false
         if fallConn then pcall(function() fallConn:Disconnect() end) end
+    end)
+end
+
+-- ============ 模块 0.4: 人物半无敌（TauntEvent 高速触发）============
+-- 原理：嘲讽动作（TauntEvent）在服务端会回满血。
+--   触发越快，受伤到回满的间隙越小。
+--
+-- 触发方式（按速度排序）：
+--   1) RenderStepped（每帧一次，60fps → 60 次/秒）
+--   2) 同帧内连发 N 次（默认 3 次，相当于 180 次/秒）
+--      → 覆盖同帧内的多次伤害
+--
+-- 只碰 Remote，不改任何客户端属性。
+do
+    local godEnabled = false
+    local godConn = nil
+    local TauntEvent = nil
+    local fireCount = 0
+    local BURST = 10                 -- 每帧连发次数（默认拉满）
+
+    local function ensureTaunt()
+        if TauntEvent and TauntEvent.Parent then return TauntEvent end
+        TauntEvent = nil
+        pcall(function()
+            local rep = game:GetService("ReplicatedStorage")
+            local t = rep:FindFirstChild("TauntEvent")
+            if t and t:IsA("RemoteEvent") then
+                TauntEvent = t
+            end
+        end)
+        return TauntEvent
+    end
+
+    local function startLoop()
+        if godConn then
+            pcall(function() godConn:Disconnect() end)
+            godConn = nil
+        end
+
+        godConn = RunService.RenderStepped:Connect(function()
+            if not godEnabled then return end
+
+            local char = lp.Character
+            if not char then return end
+            local t = ensureTaunt()
+            if t then
+                for _ = 1, BURST do
+                    pcall(function()
+                        t:FireServer()
+                    end)
+                    fireCount = fireCount + 1
+                end
+            end
+        end)
+    end
+
+    local function stopLoop()
+        if godConn then
+            pcall(function() godConn:Disconnect() end)
+            godConn = nil
+        end
+    end
+
+    _G._ExamSetters.godMode = function(v)
+        godEnabled = v and true or false
+        _G._ExamStates.godMode = godEnabled
+        if godEnabled then
+            ensureTaunt()
+            fireCount = 0
+            startLoop()
+        else
+            stopLoop()
+        end
+    end
+    _G._ExamStates.godMode = false
+
+    _G._ExamSetters.godInterval = function(v) end
+
+    -- 每帧连发次数可调（1~10）
+    _G._ExamSetters.godBurst = function(v)
+        local n = tonumber(v)
+        if n then
+            BURST = math.clamp(math.floor(n), 1, 50)
+        end
+    end
+
+    _G._ExamGodStats = function()
+        return {
+            enabled = godEnabled,
+            fires = fireCount,
+            burst = BURST,
+            hasTaunt = TauntEvent ~= nil and TauntEvent.Parent ~= nil,
+            mode = "renderstepped-burst",
+        }
+    end
+
+    table.insert(cleanupFns, function()
+        godEnabled = false
+        stopLoop()
     end)
 end
 
@@ -8948,6 +9047,7 @@ _G._CP_RefreshFns.magicBullet = function()
 end
 
 
+
 local tab
 
 -- ── 基础 ──
@@ -8967,6 +9067,18 @@ tab:Toggle({ Key = "elephantImmune", Name = "免疫象脚", Desc = "免疫象脚
     Callback = function(v) CB("elephantImmune", v) end })
 tab:Toggle({ Key = "forceReset", Name = "无条件重置", Desc = "随时可以重置角色", Default = false,
     Callback = function(v) CB("forceReset", v) end })
+tab:Expand({
+    Key = "godMode",
+    Name = "人物半无敌",
+    Desc = "自动回满血量",
+    Default = false,
+    Callback = function(v) CB("godMode", v) end,
+    Children = {
+        { Kind = "number", Key = "godBurst", Name = "每帧连发次数", Min = 1, Max = 50, Default = 10,
+          Callback = function(v) CB("godBurst", v) end },
+    },
+
+})
 
 tab:Section({ Name = "移动" })
 tab:Expand({
@@ -9289,7 +9401,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.9.4"
+local CURRENT_VERSION = "1.10.6"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
