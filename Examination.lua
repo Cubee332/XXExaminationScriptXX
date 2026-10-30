@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.10.11  修复 HUD 重载叠层
+-- Examination v1.10.15  无限体力改为每帧强制写入
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -44,6 +44,15 @@ do
         pcall(_G._ExamLastCleanup)
         _G._ExamLastCleanup = nil
     end
+    -- 2.5) 清掉旧的 ExamHiddenDock（toggle 按钮容器）
+    pcall(function()
+        local cgv = game:GetService("CoreGui")
+        for _, d in ipairs(cgv:GetChildren()) do
+            if d.Name == "ExamHiddenDock" then
+                pcall(function() d:Destroy() end)
+            end
+        end
+    end)
     -- 3) 兜底：彻底清掉所有残留的 HUD ScreenGui
     --    注意：要连子对象一起查，防止 ScreenGui 改名
     pcall(function()
@@ -63,6 +72,9 @@ do
     getgenv().__ExamHUDGui = nil
 end
 getgenv().__ExamHUDModule = nil
+-- 生成唯一实例 ID：cleanup 只清自己这代的数据
+local __EXAM_GEN = tostring(tick()) .. "_" .. tostring(math.random(1, 999999))
+_G._ExamGen = __EXAM_GEN
 _G._ExamSetters = {}
 _G._ExamStates = {}
 
@@ -372,9 +384,12 @@ local function safeCleanup()
             end
         end
     end
-    _G._ExamSetters = {}
-    _G._ExamStates = {}
-    _G._CP_RefreshFns = {}
+    -- 同样加代次检查：避免误清新脚本的表
+    if _G._ExamGen == __EXAM_GEN then
+        _G._ExamSetters = {}
+        _G._ExamStates = {}
+        _G._CP_RefreshFns = {}
+    end
 end
 pcall(safeCleanup)
 
@@ -420,9 +435,20 @@ _G._ExamLastCleanup = function()
         pcall(function() _G.ExamRadiusTip:Destroy() end)
     end
     _G.ExamRadiusTip = nil
-    _G._ExamSetters = {}
-    _G._ExamStates = {}
-    _G._CP_RefreshFns = {}
+    -- 销毁隐藏 dock（所有 toggle 按钮的父容器）
+    pcall(function()
+        if _hiddenDock and _hiddenDock.Parent then
+            _hiddenDock:Destroy()
+        end
+    end)
+
+    -- 关键修复：只有"自己还是当前代"时才清空全局表
+    --   否则新脚本已启动，旧 cleanup 会把新的 setter 全清掉
+    if _G._ExamGen == __EXAM_GEN then
+        _G._ExamSetters = {}
+        _G._ExamStates = {}
+        _G._CP_RefreshFns = {}
+    end
     cleanupFns = {}
 end
 
@@ -1113,7 +1139,7 @@ do
 
     -- 兜底：每 2 秒检查一次，开关开着但相机被拉回去了就补上
     task.spawn(function()
-        while gui.Parent do
+        while _hiddenDock.Parent do
             task.wait(2)
             if _G._ExamStates.thirdPerson then
                 if not thirdConn then
@@ -1418,22 +1444,29 @@ do
         originalStamina = {}; _G._ExamStaminaBackup = nil
     end
     local loopToken = 0
+    local staminaConn = nil
     local function setupLoop()
         -- 每次启动递增 token，旧循环检测到 token 变化就自行退出
         loopToken = loopToken + 1
         local myToken = loopToken
         staminaLoop = true
+
+        -- 断开旧连接
+        if staminaConn then
+            pcall(function() staminaConn:Disconnect() end)
+            staminaConn = nil
+        end
         if not infStaminaEnabled then return end
-        spawn(function()
-            while infStaminaEnabled and loopToken == myToken and gui.Parent do
-                local s = getStaminaState()
-                if s and infStaminaEnabled and loopToken == myToken then
-                    saveOrig(s)
-                    applyInf(s)
-                end
-                wait(0.5)
+
+        -- 关键修复：必须用 Stepped（游戏逻辑之前执行）
+        --   RenderStepped / Heartbeat / BindToRenderStep 都会被游戏覆盖
+        staminaConn = RunService.Stepped:Connect(function()
+            if not infStaminaEnabled or loopToken ~= myToken then return end
+            local s = getStaminaState()
+            if s then
+                saveOrig(s)
+                applyInf(s)
             end
-            if loopToken == myToken then staminaLoop = nil end
         end)
     end
     toggleBase("无限体力", "stamina", false, function(v)
@@ -1449,6 +1482,10 @@ do
             -- 先让循环失效，再等一帧确保它不会把值刷回去
             loopToken = loopToken + 1
             staminaLoop = nil
+            if staminaConn then
+                pcall(function() staminaConn:Disconnect() end)
+                staminaConn = nil
+            end
             task.wait()
             restoreOrig()
             -- 再等一帧后补一次，防止引擎自动回填
@@ -1464,6 +1501,10 @@ do
         infStaminaEnabled = false
         loopToken = loopToken + 1
         staminaLoop = nil
+        if staminaConn then
+            pcall(function() staminaConn:Disconnect() end)
+            staminaConn = nil
+        end
         restoreOrig()
     end)
 end
@@ -2168,7 +2209,7 @@ do
     end
 
     spawn(function()
-        while gui.Parent do
+        while _hiddenDock.Parent do
             task.wait(espLowLoad and 1.0 or 0.3)
             _G.__ExamESPTick = (_G.__ExamESPTick or 0) + 1
             if espEnabled then
@@ -2627,7 +2668,7 @@ do
     local function startCrateLoop()
         if crateLoop then return end
         task.spawn(function()
-            while crateEnabled and gui.Parent do
+            while crateEnabled and _hiddenDock.Parent do
                 task.wait(CRATE_RESCAN)
                 if not crateEnabled then break end
                 pcall(buildCrates)
@@ -2753,7 +2794,7 @@ do
 
     -- 玩家血量/名称需要持续刷新（血量会变）
     spawn(function()
-        while gui.Parent do
+        while _hiddenDock.Parent do
             task.wait(0.5)
             if espEnabled and showPlayers then
                 refreshPlayerESP()
@@ -2762,7 +2803,7 @@ do
     end)
     -- 兜底轮询：只在开启状态下检查异常残留，关闭时由 clearESP 即时处理
     spawn(function()
-        while gui.Parent do
+        while _hiddenDock.Parent do
             wait(2)
             if not espEnabled then
                 -- 双保险：万一有漏网的 ESP 节点（比如别的脚本加的），清掉
@@ -3042,7 +3083,7 @@ do
     end)
     lp.CharacterAdded:Connect(function() wait(2); if slideEnabled then setup() end end)
     spawn(function()
-        while gui.Parent do
+        while _hiddenDock.Parent do
             wait(0.2)
             if slideEnabled then
                 if needsRefresh then
@@ -3266,7 +3307,7 @@ do
     local _nvgTok = _G._InfNVG_Token
     _G._InfNVG_Loop = true
     spawn(function()
-            while nvgEnabled and _G._InfNVG_Token == _nvgTok and gui.Parent do
+            while nvgEnabled and _G._InfNVG_Token == _nvgTok and _hiddenDock.Parent do
                 makeCloaker()
                 if not _G._InfNVG_TextSignalConn then bindBattery() end
                 wait(0.3)
@@ -3398,7 +3439,7 @@ do
         local _elTok = elephantToken
         killPartScanLoop = true
         spawn(function()
-            while elephantImmuneEnabled and elephantToken == _elTok and gui.Parent do
+            while elephantImmuneEnabled and elephantToken == _elTok and _hiddenDock.Parent do
                 wait(2)
                 if not elephantImmuneEnabled then break end
                 local function scanOne(inst)
@@ -3501,7 +3542,7 @@ do
         frLoopToken = frLoopToken + 1
         local my = frLoopToken
         spawn(function()
-            while frEnabled and gui.Parent and frLoopToken == my do
+            while frEnabled and _hiddenDock.Parent and frLoopToken == my do
                 frPush(); wait(0.15)
             end
         end)
@@ -3725,7 +3766,7 @@ do
         recoilZeroLoop = true
         spawn(function()
             local frame = 0
-            while recoilEnabled and recoilToken == _rcTok and gui.Parent do
+            while recoilEnabled and recoilToken == _rcTok and _hiddenDock.Parent do
                 frame = frame + 1
                 if frame % 3 == 0 then
                     for inst in pairs(recoilPatchedInsts) do
@@ -4453,7 +4494,7 @@ do
         loopToken = (loopToken or 0) + 1
         local my = loopToken
         task.spawn(function()
-            while autoBashEnabled and gui.Parent and loopToken == my do
+            while autoBashEnabled and _hiddenDock.Parent and loopToken == my do
                 -- 我们自己在处决流程里 → 完全停止肘击
                 --   处决动画期间按 G 会打断处决，而且 PlatformStand 下按键无效
                 if iAmInExecution() then
@@ -4768,7 +4809,7 @@ do
     local function startPush()
         if pushLoop then return end
         pushLoop = spawn(function()
-            while shieldFixEnabled and gui.Parent do
+            while shieldFixEnabled and _hiddenDock.Parent do
                 pcall(pushAttrs); wait(0.05)
             end
             pushLoop = nil
@@ -4845,7 +4886,7 @@ do
     local function startHudFix()
         if hudLoop then return end
         hudLoop = spawn(function()
-            while shieldFixEnabled and gui.Parent do
+            while shieldFixEnabled and _hiddenDock.Parent do
                 local char = lp.Character
                 if char then
                     local state = char:GetAttribute("RiotShieldState")
@@ -4929,7 +4970,7 @@ do
         end)
     end
     spawn(function()
-        while gui.Parent do
+        while _hiddenDock.Parent do
             wait(0.5)
             for p in pairs(tracked) do
                 if not p or not p.Parent then tracked[p] = nil end
@@ -5060,7 +5101,7 @@ do
         end)
     end
     spawn(function()
-        while gui.Parent do
+        while _hiddenDock.Parent do
             wait(0.05)
             if noCDEnabled and noCDActiveUntil > 0 and noCDActiveUntil <= tick() then
                 local char = lp.Character
@@ -5247,7 +5288,7 @@ end
         tracerLoopStarted = true
         spawn(function()
             local frame = 0
-            while gui.Parent do
+            while _hiddenDock.Parent do
                 RunService.RenderStepped:Wait()
                 frame = frame + 1
                 local now = tick()
@@ -7101,7 +7142,7 @@ end
         end
     end)
     spawn(function()
-        while gui.Parent do
+        while _hiddenDock.Parent do
             wait(1)
             local pg2 = lp:FindFirstChild("PlayerGui")
             local mc = pg2 and pg2:FindFirstChild("MobileControls")
@@ -7404,7 +7445,7 @@ do
         pcall(rpUpdateOnce)
     end)
     spawn(function()
-        while gui.Parent do
+        while _hiddenDock.Parent do
             if rpEnabled and not rpUseHeartbeat then
                 pcall(rpUpdateOnce); wait(RP_SAMPLE_INTERVAL)
             else wait(0.05) end
@@ -7546,7 +7587,7 @@ do
         local _rbTok = rbToken
         rbMainLoop = true
         spawn(function()
-            while radarBoostEnabled and gui.Parent do
+            while radarBoostEnabled and _hiddenDock.Parent do
                 local zones = rbGetZones()
                 if zones then
                     for _, z in ipairs(zones:GetDescendants()) do
@@ -8398,10 +8439,16 @@ do
                         hudFrame.Visible = false
                         local sc = ensureScale()
                         if sc then sc.Scale = 1 end
+                        -- 修复：动画结束后强制归位，防止下次显示跑到屏幕外
+                        local fh = PAD_Y * 2 + 3 * ROW_H + 2 * ROW_GAP
+                        hudFrame.Position = UDim2.new(0, BOX_X, 0, math.max(0, BOX_TOP_Y - fh) + getInsetY())
                     end
                 end)
             else
                 hudFrame.Visible = false
+                -- 修复：直接隐藏时也归位
+                local fh = PAD_Y * 2 + 3 * ROW_H + 2 * ROW_GAP
+                hudFrame.Position = UDim2.new(0, BOX_X, 0, math.max(0, BOX_TOP_Y - fh) + getInsetY())
             end
             return
         end
@@ -8410,14 +8457,32 @@ do
         hudFrame.Visible = true
         hudVisible = true
 
+        -- 修复：每次显示都强制恢复位置/尺寸/缩放
+        --   之前只恢复 Size，Position 可能停在屏幕外（popOut 没归位）
+        local fullH = PAD_Y * 2 + 3 * ROW_H + 2 * ROW_GAP
+        local homeX = BOX_X
+        local homeY = math.max(0, BOX_TOP_Y - fullH) + getInsetY()
+
+        -- 如果位置在屏幕外（X < 0 或偏离 home 超过 50），强制归位
+        local curX = hudFrame.Position.X.Offset
+        if curX < -10 or math.abs(curX - homeX) > 200 then
+            hudFrame.Position = UDim2.new(0, homeX, 0, homeY)
+        end
+
+        -- 确保高度正常
+        if hudFrame.Size.Y.Offset < 1 then
+            hudFrame.Size = UDim2.fromOffset(BOX_W, desiredHeight(3))
+        end
+
+        -- 确保缩放是 1
+        local sc = ensureScale()
+        if sc and sc.Scale < 0.5 then
+            sc.Scale = 1
+        end
+
         -- 首次出现时播入场动画
         if not wasVisible then
             popIn()
-        else
-            -- 已经显示时，确保高度是满的（防止之前被缩没）
-            if hudFrame.Size.Y.Offset < 1 then
-                hudFrame.Size = UDim2.fromOffset(BOX_W, desiredHeight(3))
-            end
         end
 
         -- 逐行同步显隐：新出现的行做淡入
@@ -9504,7 +9569,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.10.11"
+local CURRENT_VERSION = "1.10.15"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
