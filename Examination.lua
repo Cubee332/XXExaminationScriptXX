@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.10.27  完全恢复 v1.10.16 的自动开火逻辑
+-- Examination v1.10.31  透视加入 Barnacles（Mutant_Specials）
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -1749,6 +1749,9 @@ do
             local f = Workspace:FindFirstChild(fn)
             if f then for _, c in ipairs(f:GetChildren()) do refreshIn(c) end end
         end
+        -- 特殊变异体（Barnacles 等，无 Humanoid）
+        local ms = Workspace:FindFirstChild("Mutant_Specials")
+        if ms then for _, c in ipairs(ms:GetChildren()) do refreshIn(c) end end
         local map = Workspace:FindFirstChild("Map")
         local btr = map and map:FindFirstChild("BTR-82 (BOSS)")
         if btr then refreshIn(btr) end
@@ -1771,6 +1774,9 @@ do
             local f = Workspace:FindFirstChild(fn)
             if f then for _, c in ipairs(f:GetChildren()) do cleanIn(c) end end
         end
+        -- 特殊变异体
+        local ms = Workspace:FindFirstChild("Mutant_Specials")
+        if ms then for _, c in ipairs(ms:GetChildren()) do cleanIn(c) end end
 
         -- 兜底：全场景扫一遍，把任何残留的 ESP 节点都清掉
         -- （BTR 重生、实体换容器等情况下，上面的定点清理会漏）
@@ -2101,6 +2107,25 @@ do
                 end))
             end
         end
+        -- 特殊变异体（Barnacles 等，无 Humanoid 但有 GrabField）
+        local ms = Workspace:FindFirstChild("Mutant_Specials")
+        if ms then
+            for _, v in ipairs(ms:GetChildren()) do
+                if isAICharacter(v) then
+                    local c, t = classify(v)
+                    highlightAI(v, c, t)
+                end
+            end
+            table.insert(espConnections, ms.ChildAdded:Connect(function(v)
+                task.wait(0.1)
+                if espEnabled and isAICharacter(v) then
+                    local c, t = classify(v)
+                    highlightAI(v, c, t)
+                end
+                if not espEnabled then cleanAllESP() end
+            end))
+        end
+
         local btr = getBTRModel()
         if btr then highlightBTR(btr) end
         local map = Workspace:FindFirstChild("Map")
@@ -3932,9 +3957,29 @@ do
         if not char then return false end
         local h = char:FindFirstChildOfClass("Humanoid")
         if h then
-            if h.PlatformStand == true then return true end
+            -- 修复：PlatformStand 单独不足以判定「处决中」
+            --   被打倒（downed/knocked）时 PlatformStand 也是 true，
+            --   但那时候应该允许自动肘击
+            --   真正的处决中：有处决标记 或 状态是 PlatformStanding 且有 Executing 子对象
+            local hasExecMark = char:FindFirstChild("Executing") ~= nil
+                or char:FindFirstChild("IsExecuting") ~= nil
+                or char:GetAttribute("IsExecuting") == true
+                or char:FindFirstChild("BeingExecuted") ~= nil
+                or char:FindFirstChild("IsBeingExecuted") ~= nil
+                or char:GetAttribute("BeingExecuted") == true
+
+            -- 有明确的处决标记 → 真的在处决
+            if hasExecMark then return true end
+
+            -- PlatformStand 但没有处决标记 → 被打倒，不算处决
+            --   但如果状态是 PlatformStanding 且血量 > 0，说明是在被处决流程
             local ok, st = pcall(function() return h:GetState() end)
-            if ok and st == Enum.HumanoidStateType.PlatformStanding then return true end
+            if ok and st == Enum.HumanoidStateType.PlatformStanding then
+                -- 再检查一次：游戏是否在处决（有 Executing 属性/子对象）
+                if char:GetAttribute("ExecutionTarget") ~= nil then return true end
+                if char:FindFirstChild("ExecutionTarget") ~= nil then return true end
+                if char:FindFirstChild("ExecutingTarget") ~= nil then return true end
+            end
         end
         if char:FindFirstChild("BeingExecuted") ~= nil then return true end
         if char:FindFirstChild("IsBeingExecuted") ~= nil then return true end
@@ -4341,13 +4386,28 @@ do
                                 if myApproach < 0 then myApproach = 0 end
                             end
                             local rel = approach + myApproach
-                            -- 到达时间：没在靠近就按距离算
+                            -- 到达时间：用怪物真实速度算（不用固定 50 假设）
+                            --   慢速怪物到达时间会很长 → 优先级自然降低
+                            local monsterSpeed = thrp.AssemblyLinearVelocity.Magnitude
                             local eta
                             if rel > 1 then
+                                -- 有相对接近速度：按真实速度算
                                 eta = math.max(0, d - PANIC_RANGE) / rel
+                            elseif monsterSpeed > 1 then
+                                -- 怪物在动但没朝我：按它自身速度算
+                                eta = d / monsterSpeed
                             else
-                                eta = d / 50
+                                -- 完全静止：给一个很大的 eta，优先级最低
+                                eta = d / 2
                             end
+
+                            -- 慢速怪额外惩罚：速度 < 10 的怪，eta 乘以惩罚系数
+                            --   避免"怪走得很慢但离得近"被误判为高威胁
+                            if monsterSpeed < 10 then
+                                local slowPenalty = 1 + (10 - monsterSpeed) / 10 * 1.5
+                                eta = eta * slowPenalty
+                            end
+
                             -- 背后来的要提前发现：看正前方向和它位置的夹角
                             local score = eta
                             local look = hrp.CFrame.LookVector
@@ -4361,8 +4421,8 @@ do
                                     score = score * 0.8
                                 end
                             end
-                            -- 超近直接置顶
-                            if d <= PANIC_RANGE then score = -1 end
+                            -- 超近直接置顶（含提前量范围）
+                            if d <= PANIC_RANGE + 2 then score = -1 end
 
                             if score < bestScore then
                                 bestScore = score
@@ -4384,7 +4444,8 @@ do
     --   相对速度同时考虑：怪物冲过来 + 我自己冲过去
     local function shouldBashNow(target, dist)
         if not target then return false end
-        local eff = PANIC_RANGE
+        -- 危险距离：比 PANIC_RANGE 稍大，留出肘击判定时间
+        local eff = PANIC_RANGE + 2
         if dist <= eff then return true end
         if dist > SCAN_RANGE then return false end
 
@@ -4409,13 +4470,33 @@ do
         -- 相对接近速度
         local approach = monsterApproach + myApproach
 
+        -- 怪物自身速度（判断它是不是真的在快速接近）
+        local monsterSpeed = thrp.AssemblyLinearVelocity.Magnitude
+
         if approach < 1 then
             -- 双方都没在靠近，等它近一点再说
+            --   慢速怪要求更近才触发（避免提前打空）
+            if monsterSpeed < 8 then
+                return dist <= PANIC_RANGE
+            end
             return dist <= PANIC_RANGE + 3
         end
 
-        -- 预判提前量（固定公式）
+        -- 预判提前量：按怪物接近速度动态调整
+        --   快速怪（fury 之类）要打得更早，否则会被它先砍到
         local lead = 0.28 + math.min(myApproach / 40, 0.22)
+
+        if monsterApproach < 8 then
+            -- 怪物自己没在快速靠近：不加提前量，等它进危险区
+            lead = 0
+        else
+            -- 快速怪：接近速度越快，提前量越大
+            --   monsterApproach = 20 → +0.25s
+            --   monsterApproach = 40 → +0.50s
+            --   monsterApproach = 60 → +0.75s（上限）
+            local speedBonus = math.min(monsterApproach / 80, 0.75)
+            lead = lead + speedBonus
+        end
 
         -- 预测 lead 秒后会不会进入危险距离
         local eta = dist - approach * lead
@@ -9607,7 +9688,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.10.27"
+local CURRENT_VERSION = "1.10.31"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
