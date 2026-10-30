@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.10.9  HUD 自愈（修复偶尔不加载）
+-- Examination v1.10.11  修复 HUD 重载叠层
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -24,32 +24,43 @@ local lp = Players.LocalPlayer
 -- 重载时的清理
 --   旧 HUD 要先播退场动画再销毁，否则会和新 HUD 叠在一起
 do
-    local oldHudCleaned = false
-    -- 1) 先让旧 HUD 播退场动画
+    -- 1) 先让旧 HUD 播退场动画，并【同步等待】播完
+    --    之前是异步的，新脚本立刻建新 HUD → 两个叠在一起
     local oldHUD = getgenv().__ExamHUDModule
     if oldHUD and oldHUD.DestroyHUDWithAnim then
+        local done = false
         pcall(function()
-            oldHUD.DestroyHUDWithAnim(function() oldHudCleaned = true end)
+            oldHUD.DestroyHUDWithAnim(function() done = true end)
         end)
+        -- 最多等 0.5 秒（动画 0.32s + 余量）
+        local waited = 0
+        while not done and waited < 0.5 do
+            task.wait(0.02)
+            waited = waited + 0.02
+        end
     end
-    -- 2) 再跑完整清理（里面会兜底销毁 HUD）
+    -- 2) 再跑完整清理
     if _G._ExamLastCleanup then
         pcall(_G._ExamLastCleanup)
         _G._ExamLastCleanup = nil
     end
-    -- 3) 兜底：手动清掉可能残留的 HUD 实例
+    -- 3) 兜底：彻底清掉所有残留的 HUD ScreenGui
+    --    注意：要连子对象一起查，防止 ScreenGui 改名
     pcall(function()
         local pgv = lp and lp:FindFirstChild("PlayerGui")
         for _, root in ipairs({game:GetService("CoreGui"), pgv}) do
             if root then
                 for _, d in ipairs(root:GetChildren()) do
-                    if d.Name == "CDMUI_HUD" then
+                    if d.Name == "CDMUI_HUD" or (d:IsA("ScreenGui") and d:FindFirstChild("HudBox")) then
                         pcall(function() d:Destroy() end)
                     end
                 end
             end
         end
     end)
+    -- 4) 清掉旧模块引用，防止下次重载拿到失效对象
+    getgenv().__ExamHUDModule = nil
+    getgenv().__ExamHUDGui = nil
 end
 getgenv().__ExamHUDModule = nil
 _G._ExamSetters = {}
@@ -8112,6 +8123,19 @@ do
         end
         if not parent then parent = guiParent() end
 
+        -- 修复：创建新 HUD 前先清掉残留的同名 ScreenGui，防止叠层
+        pcall(function()
+            for _, root in ipairs({game:GetService("CoreGui"), parent}) do
+                if root then
+                    for _, d in ipairs(root:GetChildren()) do
+                        if d.Name == "CDMUI_HUD" then
+                            pcall(function() d:Destroy() end)
+                        end
+                    end
+                end
+            end
+        end)
+
         hudGui = Instance.new("ScreenGui")
         hudGui.Name = "CDMUI_HUD"
         hudGui.ResetOnSpawn = false
@@ -8449,7 +8473,11 @@ do
     local function updateText()
         if not hudFrame or not hudFrame.Parent then return end
         if showFPS and hudRows.fps then
-            hudRows.fps.value.Text = string.format("%d", math.floor(curFPS + 0.5))
+            if curFPS and curFPS > 0 then
+                hudRows.fps.value.Text = string.format("%d", math.floor(curFPS + 0.5))
+            else
+                hudRows.fps.value.Text = "--"
+            end
         end
         if showPing and hudRows.ping then
             hudRows.ping.value.Text = (curPing > 0)
@@ -8532,6 +8560,12 @@ do
         end
 
         local acc, pingAcc = 0, 0
+        -- 修复：先断开旧连接，避免两个循环同时累加 frameCount/fpsWindow
+        if hudConn then
+            pcall(function() hudConn:Disconnect() end)
+            hudConn = nil
+        end
+        frameCount, fpsWindow = 0, 0
         hudConn = RunService.RenderStepped:Connect(function(dt)
             frameCount = frameCount + 1
             fpsWindow = fpsWindow + dt
@@ -8601,6 +8635,7 @@ do
         -- 3. 确保采样循环在跑
         if not hudConn then
             local acc, pingAcc = 0, 0
+            frameCount, fpsWindow = 0, 0
             hudConn = RunService.RenderStepped:Connect(function(dt)
                 frameCount = frameCount + 1
                 fpsWindow = fpsWindow + dt
@@ -9469,7 +9504,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.10.9"
+local CURRENT_VERSION = "1.10.11"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
@@ -9663,7 +9698,8 @@ local function doUnload()
                     if root then
                         for _, d in ipairs(root:GetDescendants()) do
                             if d.Name == "ControlPanelUI" or d.Name == "CDMUIGuide"
-                               or d.Name == "CDMUIWidget" or d.Name == "ControlPanelBtn" then
+                               or d.Name == "CDMUIWidget" or d.Name == "ControlPanelBtn"
+                               or d.Name == "CDMUI_HUD" then
                                 pcall(function() d:Destroy() end)
                             end
                         end
