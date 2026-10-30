@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.10.15  无限体力改为每帧强制写入
+-- Examination v1.10.16  修复 HUD 有框无内容（startLoop 提前返回）
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -8586,13 +8586,9 @@ do
     end
 
     local function startLoop()
-        -- 判 hudFrame 而不是 hudConn：
-        --   destroyHud 会把 hudFrame 清空但 hudConn 可能还在，
-        --   之前只判 hudConn 就会直接 return，UI 永远建不出来
-        if hudFrame and hudFrame.Parent then
-            ensureHud()
-            return
-        end
+        -- 修复：移除"已存在就 return"的早退
+        --   之前 hudFrame 存在时直接 return，跳过了下面的 sync 和循环创建
+        --   导致 HUD 有框但没内容（行定义了但没 updateText、没连接）
         ensureHud()
         bindDrag()
         setLocked(hudLocked)
@@ -9569,7 +9565,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.10.15"
+local CURRENT_VERSION = "1.10.16"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
