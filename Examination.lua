@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.10.16  修复 HUD 有框无内容（startLoop 提前返回）
+-- Examination v1.10.27  完全恢复 v1.10.16 的自动开火逻辑
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -5586,6 +5586,31 @@ end
         if m:FindFirstChild("DeathForceField") then return true end
         return false
     end
+    -- 扫描 Mouse.Button1Down 的连接（这是游戏真正的开火路径）
+    --   安全措施：
+    --     1) 只扫描一次，缓存结果（不每帧扫）
+    --     2) 调用前检查函数是否还有效
+    --     3) 用 xpcall 包住，捕获所有错误
+    local scanCache = { conns = {}, lastScan = 0 }
+    local SCAN_TTL = 3   -- 3 秒内不重复扫描
+
+    -- 收集一个事件的连接函数
+    local function collectConns(signal, out)
+        if not getconnections then return end
+        local ok, list = pcall(getconnections, signal)
+        if not ok or type(list) ~= "table" then return end
+        for _, c in ipairs(list) do
+            local fn = nil
+            pcall(function() fn = c.Function end)
+            if type(fn) ~= "function" then
+                pcall(function() fn = c["function"] end)
+            end
+            if type(fn) == "function" then
+                table.insert(out, { conn = c, fn = fn })
+            end
+        end
+    end
+
     local function scanConnsFresh()
         local Mouse = lp:GetMouse()
         if not Mouse or not getconnections then return end
@@ -5608,6 +5633,7 @@ end
         end
         if #newConns > 0 then conns = newConns end
     end
+
     local function releaseFire()
         local tool = getTool()
         if not tool then return end
@@ -5647,6 +5673,7 @@ end
         if isEmergency then return true, "紧急开火!" end
         return true, "开火"
     end
+
     local AIM_PARTS = {
         { name = "Head",      label = "头部" },
         { name = "Torso",     label = "躯干" },
@@ -6744,13 +6771,27 @@ end
         end
     end)
     _G._ExamSetters.autoFire = function(v)
-        if v and not magicBulletEnabled then return end
-        if v and not mbRequireVisible then return end
+        v = v and true or false
+        if v and not magicBulletEnabled then
+            _G._ExamStates.autoFire = false
+            autoFireStatus = "需先开魔法子弹"
+            return
+        end
+        if v and not mbRequireVisible then
+            _G._ExamStates.autoFire = false
+            autoFireStatus = "需开启掩体检测"
+            return
+        end
         autoFireEnabled = v
+        _G._ExamStates.autoFire = v          -- 修复：同步状态
         autoFireBtn.Text = v and "自动开火: 开" or "自动开火: 关（需开掩体检测）"
         autoFireBtn.BackgroundColor3 = v and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(70, 70, 70)
-        if v then scanConnsFresh(); autoFireStatus = "启动中"
-        else releaseFire(); releaseFire(); autoFireStatus = "关" end
+        if v then
+            autoFireStatus = "已开启"
+        else
+            releaseFire()
+            autoFireStatus = "关"
+        end
     end
     _G._ExamStates.autoFire = false
     local radiusBtn = Instance.new("TextButton", magicPage)
@@ -7052,6 +7093,7 @@ end
         end
     end
     _G._ExamStates.mbParams = mbFovRadius
+    _G._ExamStates.mbFovRadius = mbFovRadius
     do
         local ev = ReplicatedStorage:FindFirstChild("Events")
         local qteIn = ev and ev:FindFirstChild("QTEInput")
@@ -9565,7 +9607,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.10.16"
+local CURRENT_VERSION = "1.10.27"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
