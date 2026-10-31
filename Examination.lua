@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.10.41  HUD 边框与夜视仪无缝衔接 + 无闪烁
+-- Examination v1.10.42  HUD 入场即正确位置（消除突兀修正）
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -8094,10 +8094,9 @@ do
         return math.floor(vpY * 0.841)
     end
 
-    -- HUD 底边与夜视仪顶部的间隙
-    --   两者用同一张九宫格边框图，间距 0 时边框能连成一体
+    -- HUD 底边与夜视仪顶部的间隙（studs）
     local function getHudGap()
-        return 0
+        return 10
     end
     -- 修复：改成函数，每次定位时实时读夜视仪位置
     --   原来只在加载时算一次，如果那时夜视仪还没创建就会用错值
@@ -8293,7 +8292,6 @@ do
     -- 入场：从左滑入 + 展开（高度从 0 撑到满）
     -- 入场：从左侧平移滑入（高度不变）
     local function popIn()
-        -- 修复：用自适应缩放，不再强制 1
         applyHudScale()
         if not hudFrame then return end
 
@@ -8302,9 +8300,29 @@ do
         -- 高度先给满
         hudFrame.Size = UDim2.fromOffset(BOX_W, fullH)
 
-        -- 关键修复：先计算出「正确的终点位置」，而不是读当前位置
-        --   原来读 hudFrame.Position 作为终点，如果那时位置是错的
-        --   （脚本刚加载、夜视仪还没布局好），动画就会停在错误位置
+        -- 关键：夜视仪没就绪就「不播动画」
+        --   否则会先按错误位置滑入，之后才被修正，非常突兀
+        local nvgX0, nvgW0, nvgTop0 = getNvgFrame()
+        if not nvgX0 or not nvgW0 or not nvgTop0 then
+            -- 夜视仪还没好：先藏在屏幕外，等自愈校准触发
+            hudFrame.Position = UDim2.new(0, -BOX_W - 60, 0, 0)
+            hudFrame.Visible = false
+            -- 轮询等夜视仪就绪，然后重播
+            task.spawn(function()
+                for _ = 1, 100 do
+                    task.wait(0.05)
+                    if not hudFrame or not hudFrame.Parent then return end
+                    local nx, nw, nt = getNvgFrame()
+                    if nx and nw and nt then
+                        if hudVisible then pcall(popIn) end
+                        return
+                    end
+                end
+            end)
+            return
+        end
+
+        -- 夜视仪就绪：算出正确终点
         positionHud(fullH)
 
         local homeX = hudFrame.Position.X.Offset
@@ -8320,33 +8338,6 @@ do
         tw:Play()
         hudTweens.size = tw
 
-        -- 关键：动画期间实时跟随夜视仪位置
-        --   夜视仪 UI 是异步创建的，动画播放时它的位置可能还在变
-        --   如果不跟随，动画结束停在旧位置，之后才被自愈校准修正
-        task.spawn(function()
-            local startT = tick()
-            while tick() - startT < 0.6 do
-                task.wait(0.03)
-                if not hudFrame or not hudFrame.Parent then return end
-                if not hudFrame.Visible then return end
-                -- 只在 X 已经接近终点时修正 Y（避免干扰滑入动画）
-                local curX = hudFrame.Position.X.Offset
-                if math.abs(curX - homeX) < 60 then
-                    local nvgX, nvgW, nvgTop = getNvgFrame()
-                    if nvgTop then
-                        local sc3 = ensureScale()
-                        local scale3 = sc3 and sc3.Scale or 1
-                        local visualH = hudFrame.Size.Y.Offset * scale3
-                        local wantY = math.max(0, nvgTop - getHudGap() - visualH) + getInsetY()
-                        if math.abs(curX - (nvgX or BOX_X)) > 1 then
-                            hudFrame.Position = UDim2.new(0, nvgX or BOX_X, 0, wantY)
-                        elseif math.abs(hudFrame.Position.Y.Offset - wantY) > 2 then
-                            hudFrame.Position = UDim2.new(0, hudFrame.Position.X.Offset, 0, wantY)
-                        end
-                    end
-                end
-            end
-        end)
     end
 
     -- 出场：两段动画，连贯执行
@@ -8807,20 +8798,34 @@ do
         end
 
         local wasVisible = hudVisible
+
+        -- 关键：夜视仪没就绪就先不显示
+        --   否则会出现在错误位置，之后才被修正，非常突兀
+        local nvgXr, nvgWr, nvgTopr = getNvgFrame()
+        if not nvgXr or not nvgWr or not nvgTopr then
+            hudFrame.Visible = false
+            hudVisible = false
+            -- 轮询等就绪
+            task.spawn(function()
+                for _ = 1, 100 do
+                    task.wait(0.05)
+                    if not hudFrame or not hudFrame.Parent then return end
+                    local nx, nw, nt = getNvgFrame()
+                    if nx and nw and nt then
+                        pcall(refreshLayout, instant)
+                        return
+                    end
+                end
+            end)
+            return
+        end
+
         hudFrame.Visible = true
         hudVisible = true
 
-        -- 修复：每次显示都强制恢复位置/尺寸/缩放
-        --   之前只恢复 Size，Position 可能停在屏幕外（popOut 没归位）
+        -- 用统一定位函数（含 X/宽度/垂直间距）
         local fullH = PAD_Y * 2 + 3 * ROW_H + 2 * ROW_GAP
-        local homeX = BOX_X
-        local homeY = math.max(0, getBoxTopY() - fullH) + getInsetY()
-
-        -- 如果位置在屏幕外（X < 0 或偏离 home 超过 50），强制归位
-        local curX = hudFrame.Position.X.Offset
-        if curX < -10 or math.abs(curX - homeX) > 200 then
-            hudFrame.Position = UDim2.new(0, homeX, 0, homeY)
-        end
+        positionHud(fullH)
 
         -- 确保高度正常
         if hudFrame.Size.Y.Offset < 1 then
@@ -10003,7 +10008,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.10.41"
+local CURRENT_VERSION = "1.10.42"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
