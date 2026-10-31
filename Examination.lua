@@ -8132,6 +8132,12 @@ do
     -- 夜视仪布局稳定性跟踪
     local _nvgStable = { x = nil, w = nil, top = nil, count = 0 }
 
+    -- 原子闸门：保证「首次显示」只发生一次
+    --   HUD 有多条启动路径（startLoop / SetHUDAll / 自愈重建），
+    --   它们都会调 ensureHud + refreshLayout，导致 HUD 出现两次。
+    --   这里用状态机挡住：idle → creating → shown
+    local _hudPhase = "idle"
+
     -- 读取夜视仪边框的位置和尺寸（用于 HUD 对齐）
     --   返回 x, width, topY, isStable
     local function getNvgFrame()
@@ -8813,6 +8819,15 @@ do
 
         local wasVisible = hudVisible
 
+        -- 闸门：已经 shown 过，就不再走「首次显示」流程
+        --   只做静默定位，不动 Visible、不播动画
+        if _hudPhase == "shown" then
+            if hudFrame.Visible then
+                positionHud(hudFrame.Size.Y.Offset)
+            end
+            return
+        end
+
         -- 关键：夜视仪没就绪就先不显示
         --   否则会出现在错误位置，之后才被修正，非常突兀
         local nvgXr, nvgWr, nvgTopr, nvgStable = getNvgFrame()
@@ -8836,6 +8851,7 @@ do
 
         hudFrame.Visible = true
         hudVisible = true
+        _hudPhase = "shown"    -- 标记：首次显示已完成，后续不再重复
 
         -- 用统一定位函数（含 X/宽度/垂直间距）
         local fullH = PAD_Y * 2 + 3 * ROW_H + 2 * ROW_GAP
