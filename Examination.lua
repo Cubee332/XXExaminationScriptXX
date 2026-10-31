@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.10.31  透视加入 Barnacles（Mutant_Specials）
+-- Examination v1.10.38  HUD 定位修复（缩放+自愈校准）
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -8025,9 +8025,51 @@ do
             local me = plrs and plrs.LocalPlayer
             pgv = me and me:FindFirstChild("PlayerGui")
         end)
+
+        local cam = workspace.CurrentCamera
+        local vpY = cam and cam.ViewportSize.Y or 1009
+
         if pgv then
             local nvg = pgv:FindFirstChild("NightVisionHUD")
             if nvg then
+                local container = nvg:FindFirstChild("Container")
+
+                -- ① 优先：Status 子对象（真正的左下角信息框）
+                --   Container 是整个夜视仪区域，顶部有大量空白
+                --   Status 才是实际显示 血量/状态 的地方
+                if container then
+                    local status = container:FindFirstChild("Status")
+                    if status and status:IsA("GuiObject") then
+                        local sy = status.AbsolutePosition.Y
+                        local sh = status.AbsoluteSize.Y
+                        -- 必须是有实际尺寸的可见框
+                        if sy > 50 and sh > 5 then
+                            return sy
+                        end
+                    end
+                end
+
+                -- ② 兜底：找其他内容子容器
+                if container then
+                    for _, name in ipairs({"NVG", "Main", "Info"}) do
+                        local sub = container:FindFirstChild(name)
+                        if sub then
+                            local sy = sub.AbsolutePosition.Y
+                            if sy > 50 then return sy end
+                        end
+                    end
+                end
+
+                -- ③ 再兜底：Container 本身
+                if container then
+                    local cy = container.AbsolutePosition.Y
+                    local ch = container.AbsoluteSize.Y
+                    if cy > 50 and ch > 10 then
+                        return cy
+                    end
+                end
+
+                -- ③ 再兜底：Borders（旧的逻辑）
                 local stack = {nvg}
                 while #stack > 0 do
                     local cur = table.remove(stack)
@@ -8041,14 +8083,19 @@ do
                 end
             end
         end
-        -- 兜底：按屏幕高度比例算（夜视仪在底部约 84% 处）
-        local cam = workspace.CurrentCamera
-        local vh = cam and cam.ViewportSize.Y or 1009
-        return math.floor(vh * 0.841)
+
+        -- ④ 最后兜底：按视口高度比例（夜视仪在底部约 84%）
+        return math.floor(vpY * 0.841)
     end
 
     local HUD_GAP  = 8                       -- HUD 底边与夜视仪顶部的间隙
-    local BOX_TOP_Y = getNvgTopY() - HUD_GAP  -- HUD 底边停在这里
+    -- 修复：改成函数，每次定位时实时读夜视仪位置
+    --   原来只在加载时算一次，如果那时夜视仪还没创建就会用错值
+    local function getBoxTopY()
+        return getNvgTopY() - HUD_GAP
+    end
+    -- 兼容旧代码：保留变量名，但每次使用时都会重新取值
+    local BOX_TOP_Y = getNvgTopY() - HUD_GAP
     local PAD_X    = IS_MOBILE and 14 or 12
     local PAD_Y    = IS_MOBILE and 6 or 5
     local ROW_H    = IS_MOBILE and 26 or 22
@@ -8100,11 +8147,51 @@ do
         return hudScale
     end
 
+    -- 计算当前视口下的 HUD 缩放比例
+    --   基准 1920x1009（PC 全屏），小屏按比例缩小
+    local function calcHudScale()
+        local cam = workspace.CurrentCamera
+        local vpY = cam and cam.ViewportSize.Y or 1009
+        if vpY >= 1009 then return 1 end
+        return math.clamp(vpY / 1009, 0.7, 1)
+    end
+
+    -- 应用自适应缩放（不播放动画，直接设）
+    local function applyHudScale()
+        local sc = ensureScale()
+        if sc then
+            local want = calcHudScale()
+            if math.abs(sc.Scale - want) > 0.01 then
+                sc.Scale = want
+            end
+        end
+        return sc
+    end
+
+    -- 统一的 HUD 定位：把底边贴到夜视仪顶部上方 HUD_GAP 处
+    --   contentH 是「未缩放」的内容高度
+    --   渲染后的视觉高度 = contentH * scale
+    --   所以 Position.Y = getBoxTopY() - contentH * scale + insetY
+    local function positionHud(contentH)
+        if not hudFrame then return end
+        local sc = ensureScale()
+        local scale = sc and sc.Scale or 1
+        local h = contentH or hudFrame.Size.Y.Offset
+        local visualH = h * scale
+        local insetY = 58
+        pcall(function()
+            local ins = game:GetService("GuiService"):GetGuiInset()
+            if typeof(ins) == "Vector2" then insetY = ins.Y end
+        end)
+        hudFrame.Position = UDim2.new(0, BOX_X, 0,
+            math.max(0, getBoxTopY() - visualH) + insetY)
+    end
+
     -- 入场：从左滑入 + 展开（高度从 0 撑到满）
     -- 入场：从左侧平移滑入（高度不变）
     local function popIn()
-        local sc = ensureScale()
-        if sc then sc.Scale = 1 end
+        -- 修复：用自适应缩放，不再强制 1
+        local sc = applyHudScale()
         if not hudFrame then return end
 
         local homeX = hudFrame.Position.X.Offset
@@ -8136,7 +8223,7 @@ do
         -- 默认位置（左下角，夜视仪上方）
         local homeX = BOX_X
         local fullH = PAD_Y * 2 + 3 * ROW_H + 2 * ROW_GAP
-        local homeY = math.max(0, BOX_TOP_Y - fullH) + getInsetY()
+        local homeY = math.max(0, getBoxTopY() - fullH) + getInsetY()
 
         local curX = hudFrame.Position.X.Offset
         local curY = hudFrame.Position.Y.Offset
@@ -8180,8 +8267,8 @@ do
         if not hudFrame then return nil end
         local targetH = target.Y.Offset
         local insetY = getInsetY()
-        -- 底边固定在 BOX_TOP_Y，所以左上角 Y = BOX_TOP_Y - 高度
-        local targetTop = math.max(0, BOX_TOP_Y - targetH) + insetY
+        -- 底边固定在 getBoxTopY()，所以左上角 Y = getBoxTopY() - 高度
+        local targetTop = math.max(0, getBoxTopY() - targetH) + insetY
         local targetPos = UDim2.new(0, BOX_X, 0, targetTop)
 
         if instant then
@@ -8193,7 +8280,7 @@ do
 
         killTween("size")
         hudFrame.Position = UDim2.new(0, hudFrame.Position.X.Offset,
-            0, math.max(0, BOX_TOP_Y - hudFrame.Size.Y.Offset) + insetY)
+            0, math.max(0, getBoxTopY() - hudFrame.Size.Y.Offset) + insetY)
 
         local info = TweenInfo.new(dur or 0.42,
             style or Enum.EasingStyle.Back,
@@ -8207,23 +8294,13 @@ do
         return tw
     end
 
-    -- 按当前高度算左上角 Y，让底边固定落在 BOX_TOP_Y
+    -- 按当前高度算左上角 Y，让底边固定落在 getBoxTopY()
     local function placeHud()
         if not hudFrame then return end
         local h = hudFrame.Size.Y.Offset
         if h < 1 then h = hudFrame.AbsoluteSize.Y end
-
-        -- 实测：AbsolutePosition.Y = Position.Y.Offset - GuiInset.Y
-        -- （IgnoreGuiInset=true 时 Position 从屏幕顶算起，Absolute 却从 inset 下算起）
-        -- 所以要让 Absolute 落在 wantTop，Position 要给 wantTop + insetY
-        local insetY = 58
-        pcall(function()
-            local ins = game:GetService("GuiService"):GetGuiInset()
-            if typeof(ins) == "Vector2" then insetY = ins.Y end
-        end)
-
-        local wantTop = math.max(0, BOX_TOP_Y - h)
-        hudFrame.Position = UDim2.new(0, BOX_X, 0, wantTop + insetY)
+        -- 统一走 positionHud（自动处理缩放）
+        positionHud(h)
     end
 
     -- 高度固定 84（和夜视仪同高），四角不会变形
@@ -8324,8 +8401,19 @@ do
                 local ins = game:GetService("GuiService"):GetGuiInset()
                 if typeof(ins) == "Vector2" then insetY = ins.Y end
             end)
-            local topY = getNvgTopY() - HUD_GAP - 84 + insetY
-            hudFrame.Position = UDim2.new(0, BOX_X, 0, math.max(0, topY))
+            -- 自适应缩放（和 Relayout 一致）
+            local vpY2 = (workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize.Y) or 1009
+            local sc0 = ensureScale()
+            local scale0 = 1
+            if sc0 then
+                if vpY2 < 1009 then
+                    scale0 = math.clamp(vpY2 / 1009, 0.7, 1)
+                end
+                sc0.Scale = scale0
+            end
+
+            -- 统一定位（自动处理缩放）
+            positionHud(84)
         end
         hudFrame.BackgroundTransparency = 1
         hudFrame.BorderSizePixel = 0
@@ -8564,14 +8652,14 @@ do
                         if sc then sc.Scale = 1 end
                         -- 修复：动画结束后强制归位，防止下次显示跑到屏幕外
                         local fh = PAD_Y * 2 + 3 * ROW_H + 2 * ROW_GAP
-                        hudFrame.Position = UDim2.new(0, BOX_X, 0, math.max(0, BOX_TOP_Y - fh) + getInsetY())
+                        positionHud(fh)
                     end
                 end)
             else
                 hudFrame.Visible = false
                 -- 修复：直接隐藏时也归位
                 local fh = PAD_Y * 2 + 3 * ROW_H + 2 * ROW_GAP
-                hudFrame.Position = UDim2.new(0, BOX_X, 0, math.max(0, BOX_TOP_Y - fh) + getInsetY())
+                positionHud(fh)
             end
             return
         end
@@ -8584,7 +8672,7 @@ do
         --   之前只恢复 Size，Position 可能停在屏幕外（popOut 没归位）
         local fullH = PAD_Y * 2 + 3 * ROW_H + 2 * ROW_GAP
         local homeX = BOX_X
-        local homeY = math.max(0, BOX_TOP_Y - fullH) + getInsetY()
+        local homeY = math.max(0, getBoxTopY() - fullH) + getInsetY()
 
         -- 如果位置在屏幕外（X < 0 或偏离 home 超过 50），强制归位
         local curX = hudFrame.Position.X.Offset
@@ -8597,11 +8685,8 @@ do
             hudFrame.Size = UDim2.fromOffset(BOX_W, desiredHeight(3))
         end
 
-        -- 确保缩放是 1
-        local sc = ensureScale()
-        if sc and sc.Scale < 0.5 then
-            sc.Scale = 1
-        end
+        -- 修复：确保缩放是自适应值（不是强制 1）
+        applyHudScale()
 
         -- 首次出现时播入场动画
         if not wasVisible then
@@ -8739,8 +8824,7 @@ do
             -- 直接算好尺寸和位置，首帧就是正确的
             local initH = desiredHeight(#rows0)
             hudFrame.Size = UDim2.fromOffset(BOX_W, initH)
-            hudFrame.Position = UDim2.new(0, BOX_X, 0,
-                math.max(0, BOX_TOP_Y - initH) + getInsetY())
+            positionHud(initH)
         end
 
         local acc, pingAcc = 0, 0
@@ -8845,6 +8929,30 @@ do
         updateText()
     end
 
+    -- 窗口大小变化时重新定位 + 自适应缩放
+    --   小窗口（手机/窗口化）时缩小，大屏时保持原尺寸
+    function HUD.Relayout()
+        if not hudFrame or not hudFrame.Parent then return end
+
+        -- 自适应缩放
+        applyHudScale()
+
+        local fh = hudFrame.Size.Y.Offset
+        if fh <= 0 then return end
+
+        -- 立即定位一次
+        positionHud(fh)
+
+        -- 延迟重试：夜视仪 UI 可能还没布局完（Status 的 AbsolutePosition 会变）
+        task.spawn(function()
+            for i = 1, 8 do
+                task.wait(0.1)
+                if not hudFrame or not hudFrame.Parent then return end
+                positionHud(hudFrame.Size.Y.Offset)
+            end
+        end)
+    end
+
     function HUD.SetHUDAll(fps, ping, players)
         showFPS = fps and true or false
         showPing = ping and true or false
@@ -8900,7 +9008,7 @@ do
         if not hudFrame then return end
         local h = hudFrame.Size.Y.Offset
         if h < 1 then h = hudFrame.AbsoluteSize.Y end
-        local target = UDim2.new(0, BOX_X, 0, math.max(0, BOX_TOP_Y - h) + getInsetY())
+        local target = UDim2.new(0, BOX_X, 0, math.max(0, getBoxTopY() - h) + getInsetY())
 
         killTween("pos")
         -- 用 Quad 而不是 Back：Back 的过冲太大，看着像甩出去
@@ -8958,6 +9066,63 @@ do
             end
         end)
     end
+end
+
+-- ============================================================
+-- 窗口大小变化：重新计算 HUD 位置
+--   全屏/窗口化切换、手机横竖屏切换时，夜视仪位置会变，
+--   HUD 必须跟着重新定位，否则会和夜视仪重叠
+-- ============================================================
+do
+    local _lastVP = nil
+    pcall(function()
+        local cam = workspace.CurrentCamera
+        _lastVP = cam and cam.ViewportSize
+    end)
+
+    -- 启动后强制校准几次（夜视仪 UI 是异步创建的，加载时位置可能还没定）
+    task.spawn(function()
+        for _, d in ipairs({0.3, 0.8, 1.5, 2.5, 4.0}) do
+            task.wait(d)
+            if HUD.Relayout then pcall(HUD.Relayout) end
+        end
+    end)
+
+    -- 定期校准：每 2 秒检查一次 HUD 底边是否贴合夜视仪
+    --   这样即使某次布局变化没被 ViewportSize 监听捕获，也能自愈
+    local _lastVP = nil
+    pcall(function()
+        local cam = workspace.CurrentCamera
+        _lastVP = cam and cam.ViewportSize
+    end)
+
+    local _vpConn = RunService.Heartbeat:Connect(function()
+        local cam = workspace.CurrentCamera
+        if not cam then return end
+        local vp = cam.ViewportSize
+        if _lastVP and (vp.X ~= _lastVP.X or vp.Y ~= _lastVP.Y) then
+            _lastVP = vp
+            if HUD.Relayout then
+                task.delay(0.15, function() pcall(HUD.Relayout) end)
+                task.delay(0.5, function() pcall(HUD.Relayout) end)
+                task.delay(1.2, function() pcall(HUD.Relayout) end)
+            end
+        end
+    end)
+
+    -- 定期自愈：每 2 秒校准一次（防止位置漂移）
+    local _healAcc = 0
+    local _healConn = RunService.Heartbeat:Connect(function(dt)
+        _healAcc = _healAcc + dt
+        if _healAcc < 2 then return end
+        _healAcc = 0
+        if HUD.Relayout then pcall(HUD.Relayout) end
+    end)
+
+    table.insert(cleanupFns, function()
+        if _vpConn then pcall(function() _vpConn:Disconnect() end) end
+        if _healConn then pcall(function() _healConn:Disconnect() end) end
+    end)
 end
 
 -- 注册到全局：下次重载时可以拿到它播退场动画
@@ -9688,7 +9853,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.10.31"
+local CURRENT_VERSION = "1.10.38"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
