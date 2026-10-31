@@ -5,7 +5,7 @@
 -- 倒卖脚本私冯！！！
 
 --!nolint
--- Examination v1.10.42  HUD 入场即正确位置（消除突兀修正）
+-- Examination v1.10.44  HUD 创建即隐藏，消除「闪现+动画」两次出现
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -1741,9 +1741,14 @@ do
             local _, tag = classify(obj)
             local hum = obj:FindFirstChildOfClass("Humanoid")
             local txt = genText(obj, hum, tagToPre(tag))
-            tl.Text = txt
-            -- 文本为空时把整个 BillboardGui 隐藏，避免留下空白框
-            bb.Enabled = (txt ~= "")
+            -- 性能优化：文本没变就不写（写 Text 会触发 UI 重排，很贵）
+            if tl.Text ~= txt then
+                tl.Text = txt
+            end
+            local wantEnabled = (txt ~= "")
+            if bb.Enabled ~= wantEnabled then
+                bb.Enabled = wantEnabled
+            end
         end
         for _, fn in ipairs(AI_CONTAINERS) do
             local f = Workspace:FindFirstChild(fn)
@@ -2235,7 +2240,8 @@ do
 
     spawn(function()
         while _hiddenDock.Parent do
-            task.wait(espLowLoad and 1.0 or 0.3)
+            -- 性能优化：0.3 -> 0.5（透视文字不需要那么频繁刷新）
+            task.wait(espLowLoad and 1.2 or 0.5)
             _G.__ExamESPTick = (_G.__ExamESPTick or 0) + 1
             if espEnabled then
                 for i = #labelRefreshList, 1, -1 do
@@ -2270,15 +2276,25 @@ do
                                     table.insert(txtParts, tostring(math.floor(hp)))
                                 end
                             end
+                            local btxt
                             if #txtParts > 0 then
-                                item.tl.Text = (showESPName and "[BOSS] " or "")
+                                btxt = (showESPName and "[BOSS] " or "")
                                     .. table.concat(txtParts, " | ")
                             else
-                                item.tl.Text = ""
+                                btxt = ""
+                            end
+                            if item._lastTxt ~= btxt then
+                                item._lastTxt = btxt
+                                item.tl.Text = btxt
                             end
                         end
                     else
-                        local hum = m:FindFirstChildOfClass("Humanoid")
+                        -- 性能优化：缓存 Humanoid 引用
+                        local hum = item._hum
+                        if not hum or not hum.Parent then
+                            hum = m:FindFirstChildOfClass("Humanoid")
+                            item._hum = hum
+                        end
                         if hum then
                             if hum.Health <= 0 then
                                 for _, c in ipairs(m:GetChildren()) do
@@ -2286,10 +2302,19 @@ do
                                 end
                                 table.remove(labelRefreshList, i)
                             elseif item.isDrone then
-                                item.tl.Text = "[无人机] " .. math.floor(hum.Health)
+                                local dtxt = "[无人机] " .. math.floor(hum.Health)
                                     .. " / " .. math.floor(hum.MaxHealth)
+                                if item._lastTxt ~= dtxt then
+                                    item._lastTxt = dtxt
+                                    item.tl.Text = dtxt
+                                end
                             else
-                                item.tl.Text = genText(m, hum, item.pre)
+                                -- 性能优化：文本没变就不设置（避免 UI 重排）
+                                local newTxt = genText(m, hum, item.pre)
+                                if item._lastTxt ~= newTxt then
+                                    item._lastTxt = newTxt
+                                    item.tl.Text = newTxt
+                                end
                             end
                         end
                     end
@@ -8128,14 +8153,13 @@ do
         local ap, as = borders.AbsolutePosition, borders.AbsoluteSize
         if as.X < 20 or as.Y < 10 then return nil end
 
-        -- 稳定性检测：必须连续多次采样完全一致
-        --   夜视仪 UI 创建后位置会跳变好几次
+        -- 稳定性检测
         local st = _nvgStable
 
-        -- 一旦锁定过，就永久稳定（避免后续微调导致反复隐藏/显示闪烁）
+        -- 已锁定：直接返回锁定的值（不再读实时值）
+        --   夜视仪布局完成后偶尔还会有微小抖动，用锁定值保证稳定
         if st.locked then
-            st.x, st.w, st.top = ap.X, as.X, ap.Y
-            return ap.X, as.X, ap.Y, true
+            return st.x, st.w, st.top, true
         end
 
         local same = st.x ~= nil
@@ -8146,14 +8170,14 @@ do
         if same then
             st.count = st.count + 1
         else
-            st.count = 1   -- 本次是新的基准
+            st.count = 1
         end
         st.x, st.w, st.top = ap.X, as.X, ap.Y
 
-        -- 连续 10 次一致（约 2 秒 @ 5Hz）→ 锁定
-        if st.count >= 10 then
+        -- 连续 8 次一致 → 锁定
+        if st.count >= 8 then
             st.locked = true
-            return ap.X, as.X, ap.Y, true
+            return st.x, st.w, st.top, true
         end
         return ap.X, as.X, ap.Y, false
     end
@@ -8291,42 +8315,29 @@ do
 
     -- 入场：从左滑入 + 展开（高度从 0 撑到满）
     -- 入场：从左侧平移滑入（高度不变）
-    local function popIn()
+    -- popIn 接收「已经算好的目标位置」，自己不再调用 positionHud
+    --   避免两次计算得到不同结果（getNvgFrame 有稳定性状态，结果可能不一致）
+    local function popIn(targetX, targetY)
         applyHudScale()
         if not hudFrame then return end
 
         local fullH = PAD_Y * 2 + 3 * ROW_H + 2 * ROW_GAP
-
-        -- 高度先给满
         hudFrame.Size = UDim2.fromOffset(BOX_W, fullH)
 
-        -- 关键：夜视仪没就绪就「不播动画」
-        --   否则会先按错误位置滑入，之后才被修正，非常突兀
-        local nvgX0, nvgW0, nvgTop0 = getNvgFrame()
-        if not nvgX0 or not nvgW0 or not nvgTop0 then
-            -- 夜视仪还没好：先藏在屏幕外，等自愈校准触发
-            hudFrame.Position = UDim2.new(0, -BOX_W - 60, 0, 0)
-            hudFrame.Visible = false
-            -- 轮询等夜视仪就绪，然后重播
-            task.spawn(function()
-                for _ = 1, 100 do
-                    task.wait(0.05)
-                    if not hudFrame or not hudFrame.Parent then return end
-                    local nx, nw, nt = getNvgFrame()
-                    if nx and nw and nt then
-                        if hudVisible then pcall(popIn) end
-                        return
-                    end
-                end
-            end)
-            return
+        -- 没传目标位置就自己算（兜底）
+        if not targetX or not targetY then
+            local nvgX0, nvgW0, nvgTop0 = getNvgFrame()
+            if not nvgX0 or not nvgW0 or not nvgTop0 then
+                hudFrame.Visible = false
+                return
+            end
+            positionHud(fullH)
+            targetX = hudFrame.Position.X.Offset
+            targetY = hudFrame.Position.Y.Offset
         end
 
-        -- 夜视仪就绪：算出正确终点
-        positionHud(fullH)
-
-        local homeX = hudFrame.Position.X.Offset
-        local homeY = hudFrame.Position.Y.Offset
+        local homeX = targetX
+        local homeY = targetY
 
         -- 起点：完全在屏幕左侧外
         hudFrame.Position = UDim2.new(0, homeX - BOX_W - 30, 0, homeY)
@@ -8526,6 +8537,9 @@ do
         hudFrame.Name = "HudBox"
         hudFrame.AnchorPoint = Vector2.new(0, 0)   -- 左上角锚点
         hudFrame.Size = UDim2.fromOffset(BOX_W, 84)
+        -- 关键：创建后立刻隐藏，等 refreshLayout 确认夜视仪就绪后再显示
+        --   否则会先以默认位置闪一下（瞬间出现，无动画），然后再播入场动画
+        hudFrame.Visible = false
         -- 位置：底边贴住夜视仪顶部上方 6px
         --   AbsolutePosition.Y = Position.Y.Offset - GuiInset.Y（实测差 58）
         do
@@ -8801,17 +8815,17 @@ do
 
         -- 关键：夜视仪没就绪就先不显示
         --   否则会出现在错误位置，之后才被修正，非常突兀
-        local nvgXr, nvgWr, nvgTopr = getNvgFrame()
-        if not nvgXr or not nvgWr or not nvgTopr then
+        local nvgXr, nvgWr, nvgTopr, nvgStable = getNvgFrame()
+        if not nvgXr or not nvgWr or not nvgTopr or not nvgStable then
             hudFrame.Visible = false
             hudVisible = false
-            -- 轮询等就绪
+            -- 轮询等夜视仪稳定
             task.spawn(function()
-                for _ = 1, 100 do
+                for _ = 1, 150 do
                     task.wait(0.05)
                     if not hudFrame or not hudFrame.Parent then return end
-                    local nx, nw, nt = getNvgFrame()
-                    if nx and nw and nt then
+                    local nx, nw, nt, ns = getNvgFrame()
+                    if nx and nw and nt and ns then
                         pcall(refreshLayout, instant)
                         return
                     end
@@ -8835,9 +8849,9 @@ do
         -- 修复：确保缩放是自适应值（不是强制 1）
         applyHudScale()
 
-        -- 首次出现时播入场动画
+        -- 首次出现时播入场动画（传入刚算好的位置，避免重复计算）
         if not wasVisible then
-            popIn()
+            popIn(hudFrame.Position.X.Offset, hudFrame.Position.Y.Offset)
         end
 
         -- 逐行同步显隐：新出现的行做淡入
@@ -8951,11 +8965,11 @@ do
         bindDrag()
         setLocked(hudLocked)
 
-        -- 创建完行后立刻同步一次显隐和高度（避免首帧行全是 hidden）
+        -- 创建完行后同步显隐和高度
+        --   修复：不要在这里直接显示，交给 refreshLayout 统一处理
+        --   （refreshLayout 会等夜视仪稳定后才显示，避免出现在错误位置）
         local rows0 = activeRows()
         if #rows0 > 0 and hudFrame then
-            hudFrame.Visible = true
-            hudVisible = true
             local o = 0
             local function sync(key, on)
                 local r = hudRows[key]
@@ -10008,7 +10022,7 @@ end
 -- ============================================================
 -- 版本检测
 -- ============================================================
-local CURRENT_VERSION = "1.10.42"
+local CURRENT_VERSION = "1.10.44"
 local VERSION_URL = "https://raw.githubusercontent.com/Cubee332/XXExaminationScriptXX/main/Examination.lua"
 
 local function parseVersion(s)
